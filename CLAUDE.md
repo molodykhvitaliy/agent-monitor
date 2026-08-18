@@ -83,6 +83,8 @@ Sources/
 Apps/
   AgentBar/              app target — assembly, entitlements, Info.plist
   agentbar-helper/       compiled Codex hook bridge, must stay sub-10ms
+Tests/
+  ArchitectureTests/     module-boundary guards the compiler cannot express
 schemas/appserver/       checked-in App Server schema, synced via make schema-sync
 docs/dev/                long-lived engineering knowledge
 docs/adr/                architecture decision records
@@ -102,12 +104,16 @@ The Xcode project is **generated** from `project.yml` and is not committed.
 make bootstrap    # install xcodegen, generate the project
 make build        # build the app
 make test         # SPM tests, no Xcode needed
-make lint         # swift-format / swiftlint
+make lint         # swiftlint --strict, then swift-format lint --strict
+make format       # apply swift-format in place
 make tos-check    # ToS boundary scan
 make check        # lint + test + tos-check — run before every commit
 ```
 
 Never edit a generated `.xcodeproj`. Change `project.yml` and regenerate.
+
+Module layout, toolchain settings, bundle layout and CI pinning are documented in
+[docs/dev/build.md](docs/dev/build.md).
 
 ## Platform targets
 

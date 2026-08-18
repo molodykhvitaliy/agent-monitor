@@ -27,11 +27,12 @@ permissions:
   contents: read
 
 env:
-  # The project targets macOS 26 and records Xcode 26.6 as its verified toolchain.
-  # Runner images rotate, so the build step selects this version explicitly and
-  # reports what it actually got — image drift must be visible, not silent.
-  # Pinning the runner label instead would risk an image whose SDK is too old to
-  # build for macOS 26 at all. Revisit in step 01 against real runner images.
+  # Resolved in step 01 against the real image: macos-26 carries Xcode
+  # 26.0.1-26.6 with macOS SDKs 26.0-26.5, and 26.6 (17F113) is its default —
+  # the same build the platform facts were verified against. The label is pinned
+  # rather than tracking macos-latest so a future image rotation cannot silently
+  # change the SDK the release artifact is built with, and the version is still
+  # selected explicitly so drift shows up in the log instead of in a bug report.
   XCODE_VERSION: '26.6'
 
 jobs:
@@ -113,21 +114,36 @@ jobs:
     name: Build and test
     needs: guard
     if: needs.guard.outputs.code_changed == 'true'
-    runs-on: macos-latest
+    runs-on: macos-26
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      # Non-fatal here and fatal in release.yml, deliberately: an image rotation
+      # should not block every pull request, but it must never reach a
+      # distributable. The check asserts the *effective* version rather than the
+      # presence of a directory, so a switch that silently failed still shows up,
+      # and it writes to the step summary because nobody reads a log warning.
       - name: Select Xcode ${{ env.XCODE_VERSION }}
         run: |
+          set -uo pipefail
           app="/Applications/Xcode_${XCODE_VERSION}.app"
-          if [ ! -d "$app" ]; then
-            echo "::warning::Xcode ${XCODE_VERSION} not on this image; using the default. Available:"
-            ls -d /Applications/Xcode*.app
-          else
+          if [ -d "$app" ]; then
             sudo xcode-select -s "$app"
           fi
-          xcodebuild -version
+          # `xcodebuild -version | head -1` is a trap: head closes the pipe after
+          # the first line, xcodebuild takes EPIPE on the second, and it does not
+          # handle that — it throws NSFileHandleOperationException and aborts with
+          # 134. The race is usually won on a fast machine and lost on a runner.
+          # Capture the whole output and split it in the shell instead.
+          version_output=$(xcodebuild -version)
+          selected=${version_output%%$'\n'*}
+          echo "$selected"
+          if [ "$selected" != "Xcode ${XCODE_VERSION}" ]; then
+            note="Toolchain drift: expected Xcode ${XCODE_VERSION}, building with '${selected}'. The platform facts in docs/dev/platform-integration.md were verified against ${XCODE_VERSION}."
+            echo "::warning::$note"
+            { echo "### ⚠️ $note"; echo; echo "Available:"; echo '```'; ls -d /Applications/Xcode*.app; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Cache SPM build products
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -138,12 +154,13 @@ jobs:
           key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved', 'Package.swift') }}
           restore-keys: spm-${{ runner.os }}-
 
+      # xcbeautify ships on the image; swift-format comes with the toolchain.
       - name: Install tooling
-        run: brew install xcodegen swiftlint xcbeautify
+        run: brew install xcodegen swiftlint
 
       # These delegate to the Makefile so local and CI share one definition of
       # "green", and they no-op cleanly until step 01 lands the manifests.
-      - name: Lint
+      - name: Lint and check formatting
         run: make lint
 
       - name: Test SPM modules
@@ -151,3 +168,10 @@ jobs:
 
       - name: Build app bundle
         run: make build
+
+      # Codex keys hook trust to the SHA of the hook definition, which contains
+      # the helper's path. Moving it costs every existing user a re-trust prompt
+      # and a silently dead integration until they notice, so the bundle layout
+      # is asserted rather than assumed. See docs/dev/platform-integration.md §2.5.
+      - name: Verify app bundle layout
+        run: make verify-bundle

@@ -3,8 +3,8 @@
 Native macOS menu-bar app for monitoring [Claude Code](https://code.claude.com)
 and [OpenAI Codex](https://learn.chatgpt.com) coding sessions.
 
-> **Status: in development.** Nothing is implemented yet — the repository
-> currently holds the plan, the architecture and the verified platform research.
+> **Status: in development.** The build foundation is in place — a clean
+> checkout produces a launchable menu-bar app — but no monitoring exists yet.
 
 ## What it does
 
@@ -62,6 +62,7 @@ The Xcode project is generated from `project.yml` and is not committed.
 |---|---|
 | [CLAUDE.md](CLAUDE.md) | project instructions (also `AGENTS.md`) |
 | [docs/dev/architecture.md](docs/dev/architecture.md) | module boundaries, domain model |
+| [docs/dev/build.md](docs/dev/build.md) | build system, toolchain, bundle layout |
 | [docs/dev/platform-integration.md](docs/dev/platform-integration.md) | verified platform facts |
 | [docs/dev/tos-boundary.md](docs/dev/tos-boundary.md) | hard project limits |
 | [docs/adr/](docs/adr/) | architecture decision records |

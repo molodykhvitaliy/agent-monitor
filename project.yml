@@ -1,0 +1,129 @@
+# Generated into AgentBar.xcodeproj by `make generate`; the project itself is
+# never committed (ADR-0003). Change this file, never the .xcodeproj.
+#
+# Only the two bundles live here. Everything with logic in it is an SPM module
+# in Package.swift so `swift test` runs it without an Xcode build.
+
+name: AgentBar
+
+options:
+  bundleIdPrefix: com.molodykhvitalii
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+  minimumXcodeGenVersion: "2.42.0"
+
+packages:
+  # The repository root is the package. Xcode resolves it as a local package, so
+  # a module edit rebuilds without any publish step.
+  AgentBar:
+    path: .
+
+configs:
+  Debug: debug
+  Release: release
+
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    MACOSX_DEPLOYMENT_TARGET: "26.0"
+
+    # Swift 6 language mode. Xcode derives SWIFT_STRICT_CONCURRENCY=complete from
+    # it, so strict concurrency needs no per-target opt-in; it is restated below
+    # only to keep the guarantee visible in a diff.
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+
+    ALWAYS_SEARCH_USER_PATHS: NO
+    DEAD_CODE_STRIPPING: YES
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    CLANG_ENABLE_OBJC_WEAK: YES
+
+    # Ad-hoc signing keeps a clean checkout buildable with no Apple Developer
+    # account, on CI as much as locally. Developer ID signing and the hardened
+    # runtime arrive with step 12.
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"
+    DEVELOPMENT_TEAM: ""
+
+targets:
+  AgentBar:
+    type: application
+    platform: macOS
+    sources:
+      - path: Apps/AgentBar
+        excludes:
+          - Info.plist
+          - AgentBar.entitlements
+    settings:
+      base:
+        PRODUCT_NAME: AgentBar
+        PRODUCT_BUNDLE_IDENTIFIER: com.molodykhvitalii.AgentBar
+        INFOPLIST_FILE: Apps/AgentBar/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_ENTITLEMENTS: Apps/AgentBar/AgentBar.entitlements
+        COMBINE_HIDPI_IMAGES: YES
+        # The app is AppKit- and SwiftUI-facing throughout, so main-actor by
+        # default costs nothing and removes annotation noise. Library modules
+        # stay nonisolated by default; only AgentBarUI opts in, in Package.swift.
+        SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+        SWIFT_APPROACHABLE_CONCURRENCY: YES
+    dependencies:
+      # The app links every module because it is the assembly point. Linking
+      # them all now also proves the whole graph builds under Xcode, not only
+      # under SwiftPM.
+      - package: AgentBar
+        product: AgentBarCore
+      - package: AgentBar
+        product: AgentBarIngest
+      - package: AgentBar
+        product: ClaudeCodeAdapter
+      - package: AgentBar
+        product: CodexAdapter
+      - package: AgentBar
+        product: CodexAppServer
+      - package: AgentBar
+        product: AgentBarNotifications
+      - package: AgentBar
+        product: AgentBarPower
+      - package: AgentBar
+        product: AgentBarUI
+      # Codex records hook trust against the SHA of the hook definition, which
+      # contains the helper's path. Shipping it at a fixed location inside the
+      # bundle from the very first build keeps that path stable across updates
+      # instead of re-triggering the trust prompt (step 09).
+      - target: agentbar-helper
+        link: false
+        embed: true
+        codeSign: true
+        copy:
+          destination: executables
+
+  agentbar-helper:
+    type: tool
+    platform: macOS
+    sources:
+      - Apps/agentbar-helper
+    settings:
+      base:
+        PRODUCT_NAME: agentbar-helper
+        PRODUCT_BUNDLE_IDENTIFIER: com.molodykhvitalii.AgentBar.helper
+        # A hook process that must finish in single-digit milliseconds: no
+        # main-actor default, and nothing linked that is not needed.
+        SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
+
+schemes:
+  AgentBar:
+    build:
+      targets:
+        AgentBar: all
+    run:
+      config: Debug
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
