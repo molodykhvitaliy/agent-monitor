@@ -156,6 +156,15 @@ still shows up. CI treats a mismatch as a warning written to the job summary, an
 `release.yml` treats it as fatal: an image rotation should not block every pull
 request, but it must never reach a distributable.
 
+> **`xcodebuild | head` aborts.** `xcodebuild` does not survive `EPIPE`: when a
+> downstream reader closes the pipe early it throws
+> `NSFileHandleOperationException` and dies with exit 134. `xcodebuild -version |
+> head -1` therefore fails intermittently — it is a race, usually won on a
+> developer's machine and lost on a runner, which is exactly how it reached CI.
+> Capture the full output and split it in the shell. The same applies to
+> `-showBuildSettings`: `make verify-bundle` reads the whole stream rather than
+> `awk … exit`-ing out of it.
+
 ## Linux
 
 Answering a question ADR-0003 left open: **AgentBarCore builds on Linux today**

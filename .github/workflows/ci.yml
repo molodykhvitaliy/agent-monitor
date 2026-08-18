@@ -131,7 +131,13 @@ jobs:
           if [ -d "$app" ]; then
             sudo xcode-select -s "$app"
           fi
-          selected=$(xcodebuild -version | head -1)
+          # `xcodebuild -version | head -1` is a trap: head closes the pipe after
+          # the first line, xcodebuild takes EPIPE on the second, and it does not
+          # handle that — it throws NSFileHandleOperationException and aborts with
+          # 134. The race is usually won on a fast machine and lost on a runner.
+          # Capture the whole output and split it in the shell instead.
+          version_output=$(xcodebuild -version)
+          selected=${version_output%%$'\n'*}
           echo "$selected"
           if [ "$selected" != "Xcode ${XCODE_VERSION}" ]; then
             note="Toolchain drift: expected Xcode ${XCODE_VERSION}, building with '${selected}'. The platform facts in docs/dev/platform-integration.md were verified against ${XCODE_VERSION}."
