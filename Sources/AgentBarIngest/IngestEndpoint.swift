@@ -23,10 +23,14 @@ public struct BoundEndpoint: Sendable, Hashable {
 
 public enum IngestEndpointError: Error, Sendable, Hashable, CustomStringConvertible {
     case alreadyRunning
+    /// The service was asked to stop while this start was still binding, so the
+    /// listeners it had just brought up were taken down again.
+    case stoppedWhileStarting
 
     public var description: String {
         switch self {
         case .alreadyRunning: "the endpoint is already running"
+        case .stoppedWhileStarting: "the endpoint was stopped while it was starting"
         }
     }
 }

@@ -22,6 +22,12 @@ public actor IngestService {
     private var endpoint: IngestEndpoint?
     private var bound: BoundEndpoint?
     private var credentialOrigin: IngestCredentialOrigin?
+    private var token: IngestToken?
+    /// Set by `stop()`. An actor call suspends, so a stop issued while `start()`
+    /// is waiting on a bind would otherwise be overtaken by the start it was
+    /// meant to cancel — which republishes the discovery file the stop had just
+    /// retracted, leaving a dead pid pointing at a port nobody holds.
+    private var stopRequested = false
 
     /// Provider decoders passed in `decoders` are added to AgentBar's own native
     /// route rather than replacing it. Steps 04 and 09 register theirs here, and
@@ -61,9 +67,20 @@ public actor IngestService {
 
     public var boundEndpoint: BoundEndpoint? { bound }
 
+    /// Where the endpoint is and what proves a caller may reach it, together.
+    ///
+    /// The pair an installer needs: a hook configuration has to carry both, and
+    /// reading the token file a second time behind this actor's back would be a
+    /// second source of truth for a secret this one may have just replaced.
+    public var boundCredential: (endpoint: BoundEndpoint, token: IngestToken)? {
+        guard let bound, let token else { return nil }
+        return (bound, token)
+    }
+
     @discardableResult
     public func start() async throws -> BoundEndpoint {
         guard endpoint == nil else { throw IngestEndpointError.alreadyRunning }
+        stopRequested = false
         if configuration.socketPath == nil, paths.socketPathFits == false {
             diagnostics.record(
                 .unixSocketUnavailable(
@@ -82,8 +99,15 @@ public actor IngestService {
             clock: clock,
             diagnostics: diagnostics)
         let bound = try await service.start()
+        guard !stopRequested else {
+            // A stop arrived while the bind was in flight. Publishing now would
+            // undo the retraction it already performed.
+            await service.stop()
+            throw IngestEndpointError.stoppedWhileStarting
+        }
         endpoint = service
         self.bound = bound
+        token = credential.token
 
         try discovery.publish(
             EndpointDescriptor(
@@ -96,11 +120,13 @@ public actor IngestService {
     }
 
     public func stop() async {
+        stopRequested = true
         // Retracted before the listeners go down, so there is no window in which
         // a reader is told about an endpoint that has already stopped answering.
         try? discovery.retract()
         await endpoint?.stop()
         endpoint = nil
         bound = nil
+        token = nil
     }
 }

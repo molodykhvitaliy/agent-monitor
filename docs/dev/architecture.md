@@ -366,6 +366,130 @@ p99 1.6 ms on a kept-alive connection, and p99 1.6 ms including connection setup
 Every one of those is three orders of magnitude inside the smallest budget either
 agent gives a hook.
 
+## The Claude Code adapter
+
+The first adapter, and the shape the Codex one follows. It owns two jobs that
+look unrelated and are not: the payloads Claude Code sends, and the file that
+makes it send them.
+
+### The one edge that does not point straight at the core
+
+`ClaudeCodeAdapter` depends on **AgentBarIngest** as well as AgentBarCore.
+`EventDecoding` is the seam the ingest layer publishes for adapters, and
+implementing it where the payload knowledge already lives is what keeps the
+stronger invariant true — that raw provider JSON stops at the adapter. The
+alternative, a pure function in the adapter and a conformance in the app target,
+spreads one seam across three modules to preserve a rule written before the seam
+existed, and puts the glue somewhere `swift test` does not reach.
+
+`ModuleBoundaryTests` records the edge explicitly. No adapter depends on another
+adapter, and nothing imports `Network` outside AgentBarIngest.
+
+### What the decoder decides
+
+The mapping is in `ClaudeCodeEventDecoder`. Four decisions in it are not
+mechanical:
+
+- **`PostToolUseFailure` closes a tool call, exactly like `PostToolUse`.**
+  `PostToolUse` fires only on success, so subscribing to it alone leaves a failed
+  call open for the rest of the turn and the row showing a tool that stopped
+  running.
+- **`PreToolUse` for `AskUserQuestion` is `waitingInput`, not `toolStarted`.**
+  That tool exists to block on a person, and nothing else in Claude Code
+  announces it: `Notification` covers permission prompts, and `Stop` has not
+  happened. Without the special case, "an agent asked you a question" — one of
+  the three things AgentBar exists to say — reads as ordinary work until the
+  watchdog gives up. The set of such tools is injectable rather than hard-coded.
+- **`Notification/idle_prompt` is ignored.** It fires a minute after `Stop`
+  already moved the session to idle, and only if nobody has typed since. It
+  describes the human, not the agent.
+- **Every event is stamped on receipt.** No Claude Code payload carries a
+  timestamp and `prompt_id` is a UUID, so there is nothing better available —
+  and a stamp a caller chose is a stamp that can freeze a session in `working`
+  for ever.
+
+The invocation line a row shows is built per tool from the identifying argument —
+a command, a path, a pattern — and never from content. `Write` and `Edit` arrive
+with the whole file in `tool_input`; only the path survives. The diagnostic
+summary that goes into `RawPayload` is narrower still: an event name and a
+discriminator, nothing a person typed, because a diagnostic is the thing most
+likely to be pasted into a bug report.
+
+### The installer, and the file it does not own
+
+`~/.claude/settings.json` belongs to the user, so the installer holds three rules
+everywhere:
+
+1. **Never rewrite what it could not read.** A settings file that fails to parse
+   is left exactly as it is, and the error says so.
+2. **Never write when nothing would change.** Install builds the document it
+   wants and compares it with the one it read; equal means no write, no backup,
+   no mtime change. That is what makes a second install a genuine no-op rather
+   than an idempotent-looking one.
+3. **Never rewrite what it would have to guess at.** `hooks` and
+   `allowedHttpHookUrls` are read through optional casts, so a value of an
+   unexpected type would be silently replaced rather than merged into. Both are
+   refused instead.
+4. **Never lose a foreign entry.** AgentBar appends its own matcher group rather
+   than joining somebody else's, so a foreign group survives install and
+   uninstall without a byte changing — verified against the developer's real
+   settings file, where install produced a purely additive diff and uninstall
+   returned the file to the same SHA-256 it started with.
+
+Its own entries are recognised by **URL**: `type: "http"` with our path on a
+loopback host. A marker key would be a cleaner signature and buys nothing —
+Claude Code validates handler objects, and no other tool posts to
+`/v1/hooks/claude-code` on 127.0.0.1. Matching ignores the port, because the
+ladder moving the port is precisely the case that has to be recognised in order
+to be repaired.
+
+`allowedHttpHookUrls` is the trap in this file, and the installer's answer is to
+refuse to spring it: **it extends the list and never creates it.** An absent key
+permits every http hook, so AgentBar's handlers run without one. Defining it
+switches allow-listing on at every settings level at once — including for an
+http hook in a project's settings AgentBar cannot see — and an uninstaller
+cannot afterwards tell an entry it copied in from one the user added, so the
+switch would stay flipped for ever. That is the safe-superset rule failing in
+the one way that outlives the app.
+
+Because the lists merge across levels, the installer reads
+`settings.local.json` too: a list defined next door governs the handlers written
+here, and an entry written here satisfies it. A list in a project's own settings
+stays invisible, so the report carries a warning whenever any visible list is in
+effect. Uninstall removes AgentBar's entry and leaves the key, for the symmetric
+reason: switching allow-listing off on the way out is the same unasked-for
+policy change in the other direction.
+
+### Why the JSON goes through a hand-written reader
+
+`JSONSerialization` returns a dictionary that has forgotten the order its keys
+arrived in and a `Double` that has forgotten whether `5` was written `5` or
+`5.0`. Writing that back reformats every line of a file AgentBar is supposed to
+add two entries to. `JSONValue` keeps key order and keeps each number as the text
+it was written as, and `JSONWriter` renders what `JSON.stringify(value, null, 2)`
+renders — which is what these files already look like.
+
+The reader is also the payload reader, which is the part that matters for safety:
+it parses bytes from a socket any local process can reach, so its recursion is
+depth-capped. A parser that follows the input's own nesting is an unbounded
+stack, and a stack overflow is a process kill past every `catch` — the same class
+of defect as the arithmetic overflow found in step 03.
+
+The files it creates are its own to bound. A backup holds a live bearer token,
+so it is written `0600` even when the file it copies is not — the user's
+permissions on their own file are their decision (ADR-0004); a backup is not
+their file. Backups are pruned to the most recent few, the temporary file is
+created private and widened to the destination's mode rather than the other way
+round, and a temporary left behind by a killed process is swept on the next
+write.
+
+### Install status without a probe
+
+`ClaudeCodeInstaller.report(for:)` takes the endpoint AgentBar has bound right
+now, or `nil`. Everything the panel needs — installed, not installed, repairable
+drift, or configured-but-unreachable — is derived from that plus one read of the
+file. AgentBar originates no HTTP request, not even to itself.
+
 ## Concurrency
 
 Swift 6 strict concurrency. `SessionStore` is an actor and the single source of

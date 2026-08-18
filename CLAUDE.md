@@ -66,7 +66,10 @@ Raw provider JSON must not leak past an adapter.
 
 See [docs/dev/architecture.md](docs/dev/architecture.md) for module boundaries and
 [docs/dev/platform-integration.md](docs/dev/platform-integration.md) for verified
-platform facts.
+platform facts. The interface is specified in
+[docs/dev/design-system.md](docs/dev/design-system.md) (tokens) and
+[docs/dev/design-spec.md](docs/dev/design-spec.md) (every surface, every state,
+and the domain value each element comes from).
 
 ## Layout
 

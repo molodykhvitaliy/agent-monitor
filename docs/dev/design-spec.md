@@ -1,0 +1,1004 @@
+# Interface specification
+
+Every surface AgentBar renders, the geometry it renders at, the English copy it
+renders, and the domain value each element comes from.
+
+The token set is in [design-system.md](design-system.md); this file is what
+those tokens are assembled into. Together they are meant to be complete enough
+that step 06 makes no visual decisions of its own.
+
+Derived from the Claude Design canvas against
+[design-brief.md](design-brief.md), 2026-08-18, step 05. The canvas disagrees
+with its own design-system document in several places; each resolution is
+recorded inline under **Deviation**, and the type-scale one — the largest — is in
+[design-system.md](design-system.md#typography). Where the canvas mocks a value
+the domain cannot produce, that is said in place so nobody implements against it.
+
+The canvas itself is not committed. Everything it carries is transcribed here and
+in the token document; nothing in either file cites a path that is not in the
+repository.
+
+---
+
+## Vocabulary
+
+Fixed by the brief and by `AgentBarCore`. These words appear verbatim in the UI
+and in code:
+
+**Provider · Session · Project · Subagent · Working · Waiting · Idle · Failed ·
+Unknown.**
+
+The provider is "Claude Code" or "Codex" — never "OpenAI Codex" inside the
+panel, never abbreviated, never localised.
+
+There are five state words and no sixth. [design-brief.md](design-brief.md) §4.2
+writes `finished` in its session-row table where its own §8 vocabulary and
+`SessionStateKind` both say **Idle** — the brief's §8 definition of Idle is
+literally "Finished its turn, nothing pending". The brief is left as the input it
+was; this is the correction. Do not introduce a `finished` state.
+
+The notification verbs are a separate, smaller set and may say `Finished`: they
+name an event, not a state.
+
+Copy conventions: buttons and menu items in title case; labels, statuses and
+notification bodies in sentence case with no terminal period, except the two
+full-sentence explanations which keep theirs. The separator between a state and
+its context is U+00B7 MIDDLE DOT with ordinary spaces around it, from one shared
+constant so it cannot drift to a hyphen.
+
+---
+
+## Status item
+
+The most important element: it answers "does anything need me?" before the panel
+is opened. One monochrome template image (`isTemplate = true`) so AppKit tints
+it for light, dark and a tinted menu bar.
+
+**Priority — the icon shows the single most urgent state present:**
+Waiting → Failed → Working → Unknown → Idle. This is
+`StoreSnapshot.mostUrgentState`, and `SessionStateKind.attentionRank` already
+encodes exactly this order.
+
+| State | Glyph |
+|---|---|
+| Idle | thin hollow ring at 40 % opacity — nearly invisible |
+| Working | solid filled disc, full opacity, no badge |
+| Waiting | solid disc + filled **circle** badge, top-right, with a ring gap punched around it |
+| Failed | solid disc + filled **rounded-square** badge, top-right, same ring gap |
+| Unknown | dashed ring outline — never solid, must not read as Working |
+
+Geometry, on an 18 pt menu-bar canvas with the glyph occupying the central
+60–70 %:
+
+| Element | Value |
+|---|---|
+| Canvas | 18 × 18 pt |
+| Glyph outer diameter | 12 pt, centred — 67 % of the canvas |
+| Working disc | 12 pt, filled |
+| Idle ring | 12 pt outer, 1.3 pt stroke, 40 % opacity |
+| Unknown ring | 12 pt outer, 1.4 pt stroke, dashed 2 pt on / 2 pt off |
+| Waiting badge | 4.8 pt circle — 40 % of the glyph |
+| Failed badge | 4.0 pt square, 0.8 pt corners — 33 % of the glyph |
+| Badge centre | on the glyph's circumference at 45° upper-right |
+| Badge gap | 1 pt of cleared space, punched **out** of the glyph rather than stroked — a template image is one channel of alpha and has no second colour to stroke with |
+
+The badge ratios are the canvas's own (12/30 and 10/30 on its 30 pt specimen) and
+scale down cleanly. The knockout is what replaces the canvas's coloured badge and
+background-coloured ring: neither survives a template image, and the shape alone
+is what the state-shape language relies on anyway.
+
+Draw all five with `NSBezierPath` rather than shipping five PDFs. That settles the
+light/dark asset-pair question by construction, and it removes the reachability
+question hanging over `StatusItemController`'s current `"AB"` text fallback: an SF
+Symbol name can be withdrawn between macOS releases, a path cannot.
+
+> **Deviation.** The canvas draws the badge bottom-right in the menu-bar strip
+> and top-right in the zoomed specimens. Top-right is normative: it is what
+> the canvas's screens document states in prose, and it is where macOS puts
+> badges.
+
+**Optional waiting count.** When `StoreSnapshot.waitingSessionCount > 1`, a
+numeral may sit to the right of the glyph, battery-percentage style. Only above
+one — the common case is a single waiting session and a permanent "1" is noise.
+Implemented as a composited image or an attributed title on the status item;
+status items have no native badge.
+
+**Accessibility label** — a full sentence, set on the status item, recomputed on
+every state change. VoiceOver gets nothing from the silhouette.
+
+| Aggregate state | Label |
+|---|---|
+| One waiting | `AgentBar: 1 session waiting in agentbar-web` |
+| Several waiting | `AgentBar: 2 sessions waiting` |
+| Failed | `AgentBar: 1 session failed in growth-scripts` |
+| Working | `AgentBar: 3 sessions working` |
+| Unknown | `AgentBar: 1 session unknown in infra-scripts` |
+| Idle / empty | `AgentBar: nothing running` |
+
+The project name is named only when exactly one session is in the leading state;
+otherwise the count carries it.
+
+---
+
+## Panel
+
+`NSPopover`, `behavior = .transient`, **380 pt** wide, height intrinsic to
+content. It is a live list, not an `NSMenu`: rows appear, change and leave while
+it is open.
+
+**It must not steal focus.** Do not call `NSApp.activate` when showing it. The
+whole product is worthless if opening the panel pulls the user out of their
+editor.
+
+**Liveness has to be driven, and mostly by push.** `StoreSnapshot` is an immutable
+reading; the store owns no timer and is forbidden one by the module boundaries.
+Nothing today re-reads it, and — more importantly — `EventIngestHandler` counts
+the `[ApplyOutcome]` that `apply()` returns for a diagnostic and then throws it
+away. There is nothing to subscribe to.
+
+| Signal | Carries | Latency |
+|---|---|---|
+| **Push** — the ingest boundary forwards `apply()`'s `.changed(StateChange)` outcomes to an app-level observer | every state move an event caused, including a session becoming `waiting` | immediate |
+| Timer, panel open, 1 s | `snapshot()`, republish — the durations tick | 1 s |
+| Timer, panel closed, 30–60 s | `sweep()`, then `snapshot()`; the status item is redrawn **only when `mostUrgentState` or `waitingSessionCount` actually changed** | up to a minute |
+
+Push is not an optimisation. Without it a waiting agent — the one signal the
+product exists for — would sit unannounced behind the closed-panel poll.
+
+The timers cover only what time alone changes. `unknown` is not among them: it is
+derived on every read, so a reading taken before a sweep already shows it. What a
+missing `sweep()` actually costs is retirement and the went-quiet transitions;
+what a missing re-read costs is a panel frozen at the moment it opened. And the
+closed-panel interval is not the watchdog's: the tightest allowance is fifteen
+*minutes*, so 30–60 s is ample once push exists.
+
+Container: panel radius 18, glass material, 1 pt hairline, contents clipped.
+
+**Structure, top to bottom:** project groups → Limits → footer. The onboarding
+card replaces the project groups entirely; it does not sit above them.
+
+### Project group
+
+Header, then that project's sessions. A hairline divider between groups; no card
+border — the divider is enough.
+
+| Element | Value |
+|---|---|
+| Block padding | 12 top / 16 sides / 8 bottom |
+| Header bottom margin | 6 |
+| Folder glyph | 11 × 9, 1.3 pt stroke, `ink400`, corner radii 1 / 3 / 2 / 2 |
+| Glyph → name gap | 6 |
+| Name | Row title (13 / 590), `ink900` — `ProjectRef.name`, the folder name. `PathProjectResolver` falls back to the full path only for a session rooted at `/`, where there is no component to show |
+| Session count | Caption, `ink400`, right-aligned — `1 session` / `N sessions` |
+| Divider between groups | 1 pt, inset 16 each side, 6 above and below |
+
+Groups are ordered by project name, sessions inside them oldest first. That is
+`StoreSnapshot`'s own ordering and it is deliberate: a list sorted by urgency
+would reshuffle under the cursor. Urgency is the status item's job.
+
+**Two groups can share a name.** `ProjectRef.name` is the last path component, so
+`~/code/app` and `~/worktrees/feature-x/app` both render as `app` — adjacent,
+identical headers with nothing to tell them apart, which is exactly the case a
+developer using worktrees hits.
+
+The disambiguator comes from `root`, never from `worktree`. When two or more
+visible groups share a case-insensitive name, append the shortest trailing path
+components of `root` that make the colliding set distinct — start at the parent
+component and walk one further up while the suffixes still tie, since `~/a/x/app`
+and `~/b/x/app` both yield `x` and the rule has to be able to reach `a` and `b`.
+The suffix is muted, Caption / `ink400`: `app · feature-x`.
+
+`worktree.repositoryName` is the wrong disambiguator in precisely the case that
+triggers the rule: a linked worktree whose leaf equals the repository's own name
+gives `app · app`, which distinguishes nothing. Once a git-aware resolver fills
+`worktree` it is worth showing as extra context when it differs from the computed
+name — never as the primary disambiguator. Today it is always `nil`, so the
+`root` rule is the one that runs.
+
+Two things follow, or the ambiguity merely moves:
+
+- The disambiguated label is **one computed presentation value**, reused
+  everywhere the project is named: the group header, the row's
+  `Open {project} in your editor` tooltip, and the `{Project}` slot of the row's
+  accessibility label. Rendering it only in the header leaves a VoiceOver user
+  with two identical `app`s.
+- A notification cannot use a snapshot-relative rule — it is emitted per event,
+  with no view of what else is on screen. Notification titles keep the bare name
+  and accept the ambiguity; see [Notifications](#notifications).
+
+Every header carries `root.path` as its tooltip and accessibility hint,
+unconditionally and whether or not it is ambiguous.
+
+> **Deviation.** The canvas has a second, compact group header
+> (`agentbar-web · 3 sessions`, no glyph) in its scrolling mock. Only the full
+> header ships. One row design and one header design, at every list length —
+> the panel scrolls instead of densifying, and step 06 gets no branch.
+
+### Session row
+
+One row per `Session`. Radius 10, padding 9 vertical / 4 horizontal, badge and
+text column with a 10 pt gap, badge top-aligned.
+
+| Element | Source | Rendering |
+|---|---|---|
+| Provider badge | `Session.provider` | 26 × 26, radius 7, provider colour and glyph |
+| State shape | `Session.state.kind` | the shape from the state-shape table, 6 pt gap to the label |
+| State label | `Session.state.kind` | Row title — `Working` · `Waiting` · `Idle` · `Failed` · `Unknown` |
+| Subagent pill | `Session.activeSubagentCount` | `+2`, Caption on `fillQuiet`, full pill, 1 / 6 padding, 2 pt after the label. **Only when > 0** |
+| Duration | `Session.timeInState` | Caption, `ink400`, tabular, right end of the top line |
+| Detail line | per state, below | 3 pt under the top line, single line, truncated with an ellipsis |
+
+**Row tint** per the design system: waiting, failed and unknown rows take a
+full-row wash of their accent; working and idle rows take none.
+
+**The detail line, per state** — one line, and the typeface is itself a signal:
+**monospace is text a machine produced**, proportional is text AgentBar composed
+or a person wrote.
+
+| State | Detail line | Type | From |
+|---|---|---|---|
+| Working | the tool call | Mono | `currentTool.invocation`, falling back to `currentTool.name` |
+| Waiting | none today; the question once it exists | Caption | scheduled — see [Obligations](#step-06-or-07--the-question-line) |
+| Failed | the failure reason | Mono | `SessionState.failed(reason:)` |
+| Unknown | `Stopped reporting · last seen 18m ago` | Caption | `Session.timeSinceLastEvent` |
+| Idle | none | — | — |
+
+The failure reason is monospace because the design system assigns "error text" to
+the Mono token, and because the reason really can be a machine string:
+`NativeEventDecoder` passes an arbitrary caller-supplied `failureReason` straight
+through, and Codex's shape is not written yet. What it will *not* usually be for
+Claude Code is `ModuleNotFoundError: pandas`, as the canvas mocks. A tool's own
+stderr never reaches the domain — `PostToolUseFailure` is decoded as
+`toolFinished` on purpose — so what arrives is
+`ClaudeCodeEventDecoder.failureReason`'s taxonomy: `Rate limit reached`,
+`The API is overloaded`, `Server error`. Short English sentences, set in mono. The
+example copy in the canvas should not be implemented against.
+
+**But the reason is not bounded.** `failureReason`'s `default` branch passes an
+unrecognised provider error type through with nothing but underscores replaced and
+the first letter capitalised — deliberately, so a value Claude Code adds later
+still reads as something — and `NativeEventDecoder` applies no length limit at
+all. The row truncates to one line, so it is safe. **The notification body is not
+safe and must clamp**: take the first 60 characters on a word boundary and drop
+the rest. Step 07 must not assume a short sentence arrives.
+
+`ToolRef.invocation` is `nil` more often than the canvas suggests:
+`ToolInvocation.summarise` has no rule for `TodoWrite`, `AskUserQuestion`,
+`ExitPlanMode` or any tool it does not recognise, and `TodoWrite` is among the
+most frequently called. Fall back to the bare tool name rather than dropping the
+line.
+
+**And a working row often has no tool at all.** `currentTool` is
+`openTools.last?.tool`, so it is `nil` from `turnStarted` until the first tool
+call opens, and again between every `toolFinished` and the next `toolStarted` —
+which on a busy turn is many times a second. There is no string for those
+moments and none may be invented.
+
+The rule: **a working row reserves the detail line's height for as long as it is
+working**, and shows the tool when one is open and nothing when none is. Not a
+placeholder, not "Thinking" — the line is simply empty. Reserving it is what
+stops the row jumping every time a tool call ends, which is the real failure
+here; a row that changes height twice a second is worse than one that carries a
+blank line. Idle rows, which never have a detail line, are one line tall.
+
+`Session.currentTool` is `nil` in every state but `working` by construction
+(`SessionStore.reading`), so "only while Working" is enforced by the domain and
+not by the view.
+
+**The Waiting row has no second line today, and is complete without one.** The
+canvas's hero rows show a quoted question there, but its own dense variant draws
+Waiting as tint, state and duration with nothing beneath, and its closing note
+credits the full-row wash — not a detail line — with making the row catch the
+eye. The wash is what makes it unmissable; the question is what makes the
+*notification* worth reading. The line is scheduled for the sake of the
+notification and the row inherits it when it lands; see
+[Obligations](#step-06-or-07--the-question-line).
+
+**Idle and Failed rows are ordinary rows.** They persist for as long as the store
+holds them — eight hours of silence before the watchdog even considers them
+`unknown` — and the panel never hides a session the store still has, nor offers a
+per-row dismiss. An ordinary working day is mostly Idle rows, and the design has
+to be calm at that, not just at the hero case: an Idle row is badge, hollow ring,
+`Idle`, duration, no tint, no second line. A Failed row keeps its wash for as long
+as it is listed.
+
+For an unknown session the two numbers mean different things and must not be
+swapped. The corner shows `timeInState`, which `SessionStore.reading` redefines
+for a derived `unknown` as `silence − allowance` — *how long it has read as
+unknown*, an overdue-by figure. The detail line shows `timeSinceLastEvent`, the
+full silence. The second is always the larger, by exactly the watchdog's
+allowance for that state.
+
+The canvas mock has them the other way round (`14m` in the corner, "last seen 6m
+ago"), and both numbers are unreachable besides: the shortest silence that can
+produce `unknown` is `workingTimeout`, fifteen minutes. A reachable pair is `3m`
+in the corner and `last seen 18m ago`.
+
+**Row action** — exactly one, and the whole row is the click target.
+
+The mechanism is not free. `ProjectRef.root` is a directory, and
+`NSWorkspace.shared.open(root)` opens **Finder**, not an editor — so the obvious
+implementation would make the copy a lie. AgentBar does not know which editor the
+user is in, and the setting that would say is deferred.
+
+The MVP therefore does the honest thing: it opens the project with whatever
+application is registered for the directory, and says so. Copy is
+`Open agentbar-web`, tooltip `Open agentbar-web in the default application` —
+neither promises an editor. Prefer
+`NSWorkspace.shared.open(configuration:)` with the frontmost known editor when one
+can be identified without configuration; otherwise fall through to the default
+handler. When the settings screen lands and can name an editor, the copy becomes
+`Open agentbar-web in Visual Studio Code` and the promise becomes true.
+
+**Hover and focus.** Both composite *over* the state tint; neither replaces it. A
+focused Waiting row must still read as waiting, which is exactly the row a
+keyboard user is most likely to be reaching for.
+
+- Hover: `hoverOverlay` at the row radius — translucent by construction. Not
+  `fillQuiet`, which is opaque in light and would erase a failed row's 7 % wash
+  and punch through the glass with it.
+- Focus: a 2 pt `focusRing` inset on the row bounds, shaped to the 10 pt row
+  radius. That is the macOS system accent, not one of ours — `stateWorking` is
+  the same blue as the Working dot, so using it would put a Working-coloured ring
+  around a focused Waiting row.
+
+**The row's other numbers.** `Session` carries `uptime`, `startedAt` and
+`lastEventAt` as well, and none of them earns a place in a resting row. They go in
+the tooltip and the long accessibility description:
+`Started 14:02, running 41m`. That absorbs all three without adding a pixel.
+
+**Accessibility label**, composed per row:
+`{Provider}, {State}, {Project}, {duration}[, {n} subagents]` →
+`Claude Code, Waiting, agentbar-web, 38 seconds, 2 subagents`. The duration is
+spelled out for VoiceOver; `4m 12s` is read as letters.
+
+**Keyboard**: arrow keys move between rows, Return triggers the row action,
+Escape closes the popover.
+
+**How the panel gets to receive those keys.** It cannot, by default: a popover
+shown without activating the app has no key window, so arrow keys go to whatever
+the user was editing. The two requirements — *never steal focus* and *fully
+keyboard-navigable* — are in direct tension, and the resolution is to let the
+input method that opened the panel decide:
+
+| Opened by | Key status |
+|---|---|
+| Clicking the status item | not key. Focus stays in the editor, which is the whole point. There is nothing to navigate with, and nothing was asked for |
+| A keyboard shortcut | key. Reaching for the keyboard *is* the request for keyboard focus |
+
+Escape closes and returns focus wherever it came from. This is a real constraint,
+not a compromise: a panel that took key status on a mouse click would break the
+one rule the product cannot break.
+
+**The shortcut itself is not specified here, and no default is picked.** Nothing
+in the repository registers a global hotkey, there is no dependency that would,
+and the settings screen that should configure it is deferred — choosing a
+system-wide key combination on the user's behalf is not a decision to bury in a
+design document. What step 06 owes is the *capability*: the panel must be able to
+open as key window, with the trigger left as a seam. Until a shortcut exists the
+panel is mouse-only, and the row list is reachable by VoiceOver rather than by
+arrow keys.
+
+### Durations
+
+`DateComponentsFormatter`, `.abbreviated`, `.dropLeading`, at most two units.
+
+| Range | Form |
+|---|---|
+| < 1 min | `38s` |
+| 1–10 min | `4m 12s` — never zero-padded; `1m 3s`, not `1m 03s` |
+| > 10 min | `14m` |
+| > 1 h | `1h 20m` |
+
+Tabular figures throughout, so a ticking row does not jitter. Reset times take
+the same units with a preposition: `resets in 2h 10m`, `resets in 3d`.
+
+### Limits
+
+Section label `Limits`, then Codex's windows, then the Claude Code row. Section
+padding 0 top / 16 sides / 10 bottom, label margin 8 below.
+
+**Codex** — a **repeating** component. Render one row per window the App Server
+returned: one, two, or more. Never a fixed two-slot layout.
+
+| Element | Value |
+|---|---|
+| Bucket spacing | 10 between buckets |
+| Name | Caption, medium, left — the server's own name, verbatim |
+| Meta | Caption, `ink400`, right — `34% · resets in 2h 10m` |
+| Bar | 4 pt tall, fully rounded, `meterTrack` groove, `meterFill` fill |
+| Bar spacing | 4 under the top line |
+
+Every field is optional and degrades by **omission**, never by a placeholder:
+
+- percent missing → no bar at all, and the meta line becomes a standalone
+  `Resets in 2h 10m`;
+- reset missing → meta is a bare `34%`, with the separator dropped too;
+- name missing → `Usage`;
+- no windows at all → the Codex part of the section is absent. It is not an
+  error and gets no error styling.
+
+**Claude Code** — one quiet row, the lowest-emphasis element in the panel. Whole
+row at 70 % opacity, a 13 pt `ⓘ` outline glyph, an 8 pt gap, then Caption in
+`ink400`:
+
+> Claude Code doesn't report remaining quota
+
+The `ⓘ` reveals one sentence:
+
+> Claude Code provides no supported way to read remaining usage, and AgentBar
+> never contacts Anthropic to find out.
+
+Accessibility label on the glyph: `About Claude Code limits`.
+
+No bar, no zero, no error colour, no retry, and **no log line** — this is
+permanent correct behaviour, not a fault (ADR-0002). Present tense throughout;
+nothing in the copy may read as a transient outage. `Unknown` in particular is
+reserved for session state and must not be reused here.
+
+### Footer
+
+Padding 9 vertical / 16 horizontal, 1 pt divider above, install status on the
+left, buttons on the right.
+
+- Indicator in a 6 pt box, 6 pt gap, Caption in `ink400`. The indicator carries
+  the **state shape**, not only the colour — a filled circle for healthy, the
+  waiting triangle, the failed rounded square. Colour never carries state alone,
+  in the footer as anywhere else. 6 pt is the bounding box, so the shapes are
+  scaled down from their row sizes to fit it: circle 6 pt, triangle 6 × 5, square
+  5 pt with 1.5 pt corners.
+- Healthy reads `2 of 2 connected`. **Both numbers are computed from the
+  integrations the app assembly actually registers**, never from the constant 2 —
+  only Claude Code exists today, so the honest reading is `1 of 1 connected` until
+  step 09 lands. A hardcoded denominator would show a permanent `1 of 2` and
+  report an unbuilt feature as a broken install. That is also why rule 6 says
+  "of several": with one integration, rule 1 already covers it.
+- A problem **replaces** the count rather than appending to it. The footer has
+  room for one of the two, and the problem is the actionable half. Several
+  conditions can hold at once, so this is ordered and **the first match wins**:
+
+  | # | Condition | Indicator | Text |
+  |---|---|---|---|
+  | 1 | No provider is set up at all | `stateWaiting` triangle | `Not connected` |
+  | 2 | `boundEndpoint` is nil, the bind failed, or any report is `endpointUnavailable` | `stateFailed` square | `Not receiving events` |
+  | 3 | Any report is `settingsUnreadable` | `stateFailed` square | `Can't read settings` |
+  | 4 | Any report is `needsRepair` | `stateWaiting` triangle | `Repair needed` |
+  | 5 | A provider is installed but not trusted | `stateWaiting` triangle | `Codex not trusted` |
+  | 6 | One provider of several is not set up | `stateWaiting` triangle | `Claude Code not connected` |
+  | 7 | Everything healthy | `connected` circle | `N of N connected` |
+
+  Rule 1 comes first deliberately: a user who has installed nothing needs to be
+  told that before being told the endpoint is not receiving events they were never
+  going to send. Rules 2 and 3 are both faults rather than warnings — a file
+  AgentBar cannot read is not a repair it can offer.
+
+  `endpointUnavailable` is *defined* as "hooks configured, no endpoint bound", so
+  it is the nil-`boundEndpoint` case and belongs on the red rung with it, not on
+  the amber one. `settingsUnreadable` is a third broken state that is neither of
+  the others, and `isInstalled` returns `false` for it — without a rung of its
+  own it would silently deflate the connected count with no explanation
+  anywhere.
+
+  This is the whole diagnostics surface, and deliberately so — the restraint
+  requirement rules out a diagnostics panel. Pressing the status opens the
+  integration card, whose per-provider drift list explains why in prose the
+  adapter already wrote.
+- **The drift only resurfaces if the report is re-read.** Nothing re-reads it
+  today. The footer refreshes every provider's report on panel open and after
+  every successful `IngestService.start()` — the two moments at which
+  `endpointChanged` and `tokenChanged` become true.
+- The status text is itself a button: pressing it opens the integration status
+  card in place. That is the answer to "why is nothing appearing?" being one
+  click from the thing that says something is wrong.
+- Buttons: 22 × 22, radius 6, 2 pt apart — `Settings` (gear) and
+  `Quit AgentBar` (power). Both need tooltips and accessibility labels; neither
+  has a visible text label.
+
+Settings is the entry point reserved for the deferred settings screen, and the
+footer is where a future dashboard entry point goes. Nothing more: the brief's
+restraint requirement is a hard one.
+
+---
+
+## Panel states
+
+### Empty
+
+The resting state, and it must feel calm rather than broken.
+
+Content padding 44 top / 24 sides / 36 bottom, centred. Two concentric rings —
+40 pt outer, 22 pt inner, both 1.6 pt in `ringQuiet` — 16 pt above the text.
+
+> **All quiet**
+> No sessions are running
+
+Then the ordinary footer, and the Limits section as always — the Claude Code
+caveat row is permanent, so Limits never disappears entirely.
+
+### Many sessions
+
+Rows scroll: a `ScrollView` capped at **340 pt**, with a 36 pt fade at the bottom
+edge hinting at more below. The footer never scrolls.
+
+It has to be a real **mask**, not an overlay:
+`.mask(LinearGradient(colors: [.black, .clear], …))` plus
+`.allowsHitTesting(false)`. An overlay would need a colour to fade *to*, and on
+glass there is none — fading to an opaque neutral would band against the material,
+the same mistake `hoverOverlay` exists to avoid. The canvas's `pointer-events`
+is a CSS artefact of the mock.
+
+> **Deviation.** The canvas mock caps at 280; its screens document says ~340 in
+> prose. The prose wins — 340 shows one more group without making the panel
+> unwieldy.
+
+### Unknown session
+
+An ordinary row, dashed-ring shape, unknown tint, and a prose detail line rather
+than a bare duration:
+
+> Stopped reporting · last seen 18m ago
+
+This is a real state, not an error path: AgentBar genuinely has no opinion. The
+row stays until the watchdog evicts it.
+
+### Integration status and onboarding
+
+The card that answers "why is nothing appearing?". Its content is one row per
+provider, built from that provider's install report — `ClaudeCodeInstallReport`
+today, its Codex counterpart at step 09.
+
+**When it is shown.** Empty list and "not installed" are different facts, and
+conflating them turns a quiet morning into a broken app. The precedence, in
+order — the first matching rule wins:
+
+1. **The snapshot is not empty** → the session list, always. Never the card. Any
+   degraded integration is carried by the footer instead; a user with sessions
+   running does not need to be told to install anything.
+2. **The snapshot is empty and any integration is in a state that guarantees no
+   event can arrive** — `notInstalled`, `endpointUnavailable`,
+   `settingsUnreadable`, or `needsRepair` carrying `urlNotAllowed` → the card.
+   These are the states where "nothing is running" would be a lie.
+3. **The snapshot is empty and every integration is `installed`** → *All quiet*.
+
+Neither half of that decision is in `StoreSnapshot`: `isEmpty` answers only the
+first clause, and the rest lives in each provider's install report, which is disk
+I/O and is called by nothing in the app today. That is a step 06 obligation — see
+[Obligations](#step-06--menu-bar-ui).
+
+The footer status is itself a button: pressing it opens this same card in place,
+so the surface is reachable at any time and not only on first run.
+
+Card padding 20 top / 18 sides / 6 bottom.
+
+> **Get Started**
+> Sessions and notifications appear once every step below is done
+
+("both" would be wrong the moment the number of integrations is not two — and it
+is one today.)
+
+Then one row per provider — 26 pt badge, name in Row title, status in Caption, a
+button on the right — separated by 1 pt dividers, 10 pt of vertical padding
+each. Buttons: padding 6 / 12, radius 7, Body medium, no wrapping.
+
+| Install state | Status line | Action |
+|---|---|---|
+| `.notInstalled` | `Not connected` | `Connect`, filled `stateWorking` |
+| `.installed` | `Connected`, filled circle in `connected` | none |
+| `.needsRepair([drift])` | `Needs repair`, in `stateWaiting`, with the first drift's own sentence on a second line | `Repair` |
+| `.endpointUnavailable` | `Installed, not receiving` | `Retry` |
+| `.settingsUnreadable(reason)` | `Can't read settings.json`, in `stateFailed`, with `reason` on a second line | `Reveal in Finder` |
+| Installed, not trusted — **Codex only** | `Installed, not trusted`, in `stateWaiting`, preceded by the waiting triangle | `Trust`, filled `stateWaiting` |
+
+Every drift case already carries a finished English sentence in its
+`description`; the card renders it and formats nothing itself. When several
+drifts are present, show the first and append `and N more`.
+
+`.settingsUnreadable` gets **no write action of any kind**. AgentBar refuses to
+write over a file it could not read, and the UI must not offer to.
+
+#### What an action leaves behind
+
+An action that writes has three outcomes and all three need a face. `install`
+throws six `ClaudeCodeInstallerError` cases, and one of them —
+`claudeDirectoryMissing` — is reachable from the `.notInstalled` row's own
+`Connect` button, because a machine with no `~/.claude` at all reads as
+"not installed" and then fails at the write.
+
+| Result | Row becomes |
+|---|---|
+| `ClaudeCodeInstallOutcome.changed == true` | the state its next report gives, normally `Connected` |
+| `changed == false` — the file already said what AgentBar wanted | `Connected`, with `Nothing to change` as a transient second line. A no-op must not look like a failure |
+| a thrown `ClaudeCodeInstallerError` | the row keeps its previous state and gains the error's own text as a second line in `stateFailed`. The action stays available |
+
+`Retry` on `.endpointUnavailable` is **not** a bare `IngestService.start()`: that
+throws `alreadyRunning` when an endpoint is already bound. It means "bind if not
+bound, then re-read every report" — and if an endpoint *is* bound, re-reading the
+report is the whole of the work, because the state was stale.
+
+`backupURL` is not shown. A backup is AgentBar's own artefact, and telling the
+user about a file they did not ask for is noise; the installer's own log has it.
+
+`Installed, not trusted` is a hard requirement, not a nicety: writing Codex's
+config is not enough, and without this row the user gets an app that silently
+shows nothing.
+
+Footnote below the card, Caption, `ink400`, 1.5 line height:
+
+> Codex only runs hooks you've explicitly trusted — until then it stays silent.
+
+#### Warnings
+
+`ClaudeCodeInstallWarning` values are not faults and must not take a fault's
+colour. They render as Caption lines in `ink400` beneath their provider row,
+each prefixed by the `ⓘ` glyph, using the warning's own `description`. There are
+at most two.
+
+#### Coexistence
+
+`ClaudeCodeInstallReport.overlaps` is the "detect and report, change nothing"
+rule made visible. When the list is non-empty the card gains one Caption line:
+
+> Other hooks are installed here: 2 notifiers, 1 keep-awake, 3 others
+
+with the individual `ForeignHookOverlap.summary` lines revealed on click. The
+three nouns map to `ForeignHookOverlap.Family`: `notifier` → "notifier",
+`caffeine` → "keep-awake", `other` → "other". `.other` is the *common* case, not
+the rare one — any foreign handler on an event AgentBar watches is reported — so
+it needs a real noun rather than being folded into the first two. Each is
+pluralised through a `.stringsdict` entry, including its zero case, and a family
+with no members is simply absent from the line. It is
+informational, in `ink400`, and offers no action — AgentBar does not touch a
+foreign entry, and the UI must not imply that it might. Its value is explaining
+a doubled notification or a competing power assertion before the user files it
+as a bug.
+
+#### What is deliberately not surfaced
+
+`IngestDiagnostic` has seventeen cases across three severities and gets no panel
+of its own in the MVP; it goes to the log. The two a user must act on already
+reach them through the install report, which is the right place because the fix
+is a write to their settings file:
+
+| Diagnostic | Reaches the user as |
+|---|---|
+| `portMoved` | `.needsRepair([.endpointChanged])` → `Repair` |
+| `credentialReplaced` | `.needsRepair([.tokenChanged])` → `Repair` |
+
+A failure to start ingest at all surfaces as `.endpointUnavailable` on every
+installed provider. That is the honest reading: the hooks are fine, AgentBar is
+not listening.
+
+---
+
+## Notifications
+
+`UNMutableNotificationContent`. macOS owns the chrome; the design owns content
+and hierarchy: **what needs me → which agent → where →** one line of detail.
+
+| Field | Content |
+|---|---|
+| `title` | `{What} · {project}` |
+| `body` | the one relevant detail line |
+| attachment | the provider badge, pre-rendered per provider |
+| `categoryIdentifier` | one per event type |
+
+The four verbs: **Question · Waiting · Finished · Failed**. Each is the first
+word, so a banner truncated at ~30 characters still delivers the meaning. The
+longest realistic title, `Finished · agentbar-web`, is 23.
+
+**`Question` is not selectable until the question line exists.** Both waiting
+paths — `PreToolUse(AskUserQuestion)` and `Notification(permission_prompt |
+elicitation_*)` — decode to the same `EventKind.waitingInput`, and the push
+signal this design specifies, `StateChange`, carries only session, provider,
+project, from, to and time. Nothing distinguishes them. The one available hint,
+`tool?.name == "AskUserQuestion"`, is a provider tool name that nothing above the
+adapter may branch on.
+
+So the verb is chosen by **the presence of the question line, not by the event**:
+a waiting notification that has a line is titled `Question`, one without is
+titled `Waiting`. Until the line lands, every waiting event is titled `Waiting` —
+which is true, and is the whole of what AgentBar knows. This is folded into the
+question-line obligation rather than left as a separate problem.
+
+Each verb is a predicate on the `StateChange`, not a vibe. `from` and `to` are
+both optional and both nils are reachable, so they are named explicitly:
+
+| Verb | Fires when | Body |
+|---|---|---|
+| `Question` | `to.kind == .waiting` **and** a question line is present | the question line |
+| `Waiting` | `to.kind == .waiting` and no line | none — the title is the whole message |
+| `Finished` | `from != nil` **and** `to == .idle` | none — nothing counts what a turn changed |
+| `Failed` | `to` is `.failed` | the reason |
+
+Two `StateChange` shapes fire **nothing**, and both are reachable:
+
+- **`from == nil`** means the store adopted a session it had not seen — AgentBar
+  launching beside an agent already running, or a bare session announcement. It
+  produces `nil → idle`, which would otherwise fire `Finished` for a turn that
+  never happened here.
+- **`to == nil`** means the session left the store, by `sessionEnded` or by the
+  watchdog evicting it. Neither is news: nothing needs the user.
+
+`unknown` also gets no notification. It is the absence of information, and waking
+someone to tell them you have stopped knowing is not worth an interruption; the
+row and the status glyph carry it.
+
+The canvas's `3 files changed` example has no source and is not implementable —
+see [Obligations](#step-07--notifications). macOS renders a title-only
+notification cleanly, so an absent body costs nothing but an invented one would
+cost the product its honesty.
+
+Provider error strings pass through verbatim: never localised, never prettified —
+but **clamped**. `failureReason` passes an unrecognised error type through with no
+length bound and `NativeEventDecoder` applies none either, so the body takes the
+first 60 characters on a word boundary and drops the rest. The system truncates
+anyway; doing it deliberately means the cut lands somewhere readable.
+
+The provider is carried by the attachment image, not by the title — except in
+the fallback, where the image could not be rendered and the title becomes
+`Question · Claude Code · agentbar-web` so the provider is not simply lost.
+
+The `{project}` slot is the bare `ProjectRef.name`, **not** the panel's
+disambiguated label. A notification is emitted per event and has no view of what
+else is on screen, so the panel's collision rule is not available to it; and
+appending a path fragment to every title would cost the glanceability that the
+`what → which agent → where` hierarchy exists for. Two worktrees of one
+repository therefore produce two identically-titled notifications. That is
+accepted, not overlooked: the panel is one click away and disambiguates.
+
+**Leading image.** The canvas mocks a Messages-style large provider avatar with
+a small AgentBar badge in its corner: 38 pt image at radius 10, 16 pt badge at
+radius 5 offset −3 / −3, ringed 2 pt in the banner's own background. That
+composite has to be generated and attached as a `UNNotificationAttachment` — one
+static PNG per provider, rendered once. **Verify it in a real banner before
+committing to it.** If the OS will not place it that way, fall back to the
+standard leading-icon slot with the provider glyph and drop the composite: match
+the intent, not the pixel.
+
+**Reserved.** Two `UNNotificationAction`s — `Approve` and `Deny` — are planned
+and out of scope. One category per event type exists so they can be added
+without restructuring. Nothing in the layout may assume they exist, and nothing
+may break when they appear.
+
+**Never auto-approve.** No notification path — timeout, dismissal, dropped
+delivery, failure to render — may ever resolve into granting a permission. This
+applies pre-emptively to those reserved buttons.
+
+---
+
+## Domain coverage
+
+The step's own validation criterion: walk every domain state and confirm it has a
+representation. Everything `AgentBarCore`, `AgentBarIngest` and
+`ClaudeCodeAdapter` can hand a view, and where it lands.
+
+### Session state
+
+| Domain | Representation |
+|---|---|
+| `SessionState.idle` | hollow-ring row, no tint, no detail line |
+| `SessionState.working` | filled-dot row, mono detail line |
+| `SessionState.waitingInput` | triangle row, waiting wash |
+| `SessionState.waitingPermission(_)` | **the same row.** Both collapse to `SessionStateKind.waiting`, and that is right: from the user's side both mean "go look at that agent". The distinction earns a visual only when it becomes actionable — `waitingPermission` is what grows the Approve/Deny affordance and the `summary` detail line |
+| `SessionState.failed(reason:)` | rounded-square row, failed wash, reason in the detail line |
+| `SessionState.unknown` | dashed-ring row, unknown wash, silence in the detail line |
+| `SessionStateKind` | the five row shapes, the five status glyphs, the notification verbs |
+| `attentionRank` | status-item priority, unchanged |
+
+### Session fields
+
+| Domain | Representation |
+|---|---|
+| `provider` | badge colour and glyph |
+| `project` | group header |
+| `state` | shape, label, tint |
+| `currentTool` | detail line, working only |
+| `activeSubagentCount` | `+N` pill when > 0 |
+| `timeInState` | the row's duration |
+| `timeSinceLastEvent` | the unknown row's detail line |
+| `uptime`, `startedAt` | row tooltip and long accessibility description |
+| `lastEventAt` | not rendered — `timeSinceLastEvent` says the same thing in the form the row needs |
+| `model` | **deliberately not rendered.** The row already carries five things, and every element has to earn its place. It is also `nil` for every Claude Code session: it arrives only on `SessionStart`, which takes no `http` handler. Kept for Codex and for the dashboard |
+
+### Store
+
+| Domain | Representation |
+|---|---|
+| `StoreSnapshot.projects` | the list, in the store's own order |
+| `isEmpty` | half of the empty-vs-onboarding decision |
+| `mostUrgentState` | the status glyph |
+| `waitingSessionCount` | the optional numeral, when > 1 |
+| `isAnyAgentWorking` | not drawn — it drives the power assertion |
+| `finished`, `FinishedSession`, `FinishOutcome` | **no MVP surface.** The dashboard is deferred; the footer gear is the entry point left for it |
+| `ApplyOutcome`, `IgnoreReason`, `StateChange`, `RawPayload` | not drawn, on purpose. A stream of `duplicate` ignores — the one a user could act on — reaches them as `ClaudeCodeInstallDrift.duplicateHandler` on the integration card, which is the actionable form |
+| `ProjectRef.root` | the group header's disambiguating suffix, and its tooltip |
+| `ProjectRef.worktree` | extra context on a disambiguated header when it differs from the computed name. Always `nil` today — `PathProjectResolver` never fills it — and never the disambiguator |
+
+### Install and ingest
+
+| Domain | Representation |
+|---|---|
+| `ClaudeCodeInstallState`, all five cases | one row of the integration card each |
+| `ClaudeCodeInstallDrift`, all eight cases | the `needsRepair` row's second line, using each case's own `description` |
+| `ClaudeCodeInstallWarning`, both cases | muted `ⓘ` lines under the provider row |
+| `ForeignHookOverlap` | the coexistence line, expandable |
+| `ClaudeCodeInstallOutcome` | the row after a write: `changed == false` becomes a transient `Nothing to change` rather than looking like a failure. `backupURL` is not shown — a backup is AgentBar's artefact, not the user's business |
+| `ClaudeCodeInstallerError`, 6 cases | a second line on the provider row in `stateFailed`, using the error's own text, with the action left available. `claudeDirectoryMissing` is the reachable one: a machine with no `~/.claude` reads as `notInstalled` and then fails at the write |
+| `IngestDiagnostic`, 17 cases | the log. Two of them resurface through the install report as drift; a dead endpoint resurfaces as `endpointUnavailable` and as the footer's `Not receiving events` |
+| `IngestEndpointError.alreadyRunning` | never shown. It is what makes `Retry` mean "bind if unbound, then re-read", not a bare `start()` |
+
+### Not represented, and why
+
+| Domain | Why not |
+|---|---|
+| `Session.model` | earns no place in the row; always `nil` for Claude Code |
+| `StoreSnapshot.finished` | the dashboard is out of scope for this pass |
+| `ApplyOutcome` / `IgnoreReason` | diagnostics, not status |
+| Subagent names | the store keeps `Set<AgentID>`, so `AgentRef.subagent(id:type:)`'s `type` is discarded before the UI could see it. `+2` rather than `+2 (Explore, Plan)` is a deliberate ceiling, and lifting it is a domain change |
+| Watchdog timeouts | not explained anywhere in the panel; the unknown row's "last seen" is the user-facing form |
+
+---
+
+## Obligations on later steps
+
+What this design requires that does not exist yet. Each is a contract, not a
+suggestion — the surface above cannot be built honestly without it.
+
+### Step 06 — menu-bar UI
+
+1. A view model holding both the latest `StoreSnapshot` **and** an integration
+   status per provider. Neither alone decides what the panel shows. Statuses are
+   refreshed on panel open and after any install action, never on a timer:
+   `report(for:)` is disk I/O.
+2. **A push leg out of the ingest boundary.** `EventIngestHandler` counts the
+   `[ApplyOutcome]` that `apply()` returns and discards it; nothing can observe a
+   state change. Forward the `.changed(StateChange)` outcomes to an app-level
+   observer. Without it the status item — and step 07's notifications — learn
+   about a waiting agent only when the next poll comes round.
+3. The timers in [Panel](#panel): 1 s while open, 30–60 s while closed. Nothing
+   calls `sweep()` today either.
+4. The five status glyphs drawn with `NSBezierPath` from the geometry in
+   [Status item](#status-item), `isTemplate = true`. Drawing rather than shipping
+   five PDFs also settles the light/dark pair question, and it makes
+   `StatusItemController`'s current `"AB"` text fallback unreachable — a symbol
+   name can be withdrawn between releases, a path cannot.
+5. Both provider glyphs drawn in code, sized as a fraction of the badge so one
+   implementation serves every badge size: the sparkle's bars at 12 % of badge
+   width and 54 % of its height, crossed and rotated 45°; `</>` as SF Mono at
+   46 % of badge height, tracking −1.
+6. The integration card built against that same UI-owned type, so the Codex row
+   can render before step 09 exists without the card being restructured.
+7. **A panel that can open either way**, because key status depends on which was
+   used — see [Session row](#session-row). A click on the status item must not
+   activate the app; opening as key window must be possible for when a shortcut
+   exists. Build the capability and leave the trigger as a seam; do not pick a
+   global key combination here. A single code path that always does one or the
+   other breaks either the focus rule or the keyboard requirement.
+#### Where the integration status lives
+
+`AgentBarUI` cannot hold a `ClaudeCodeInstallReport`. Its only permitted import
+is `AgentBarCore`, and `ModuleBoundaryTests.allowedInternalDependencies` fails the
+build if that changes; CLAUDE.md's rule that nothing above the adapter knows the
+providers exist says the same thing from the other direction. A view model that
+took an install report would be an architecture violation caught by a test, not a
+style question.
+
+So the abstraction is **declared in `AgentBarUI` and populated by the app
+target**, which is already the assembly point and already links every module:
+
+- `AgentBarUI` declares a plain value type — `Provider`, a status line, an
+  optional second line, an indicator state drawn from `SessionStateKind`'s own
+  palette, and an action identified by a UI-level case (`connect`, `repair`,
+  `trust`, `retry`, `revealInFinder`, `none`). `Provider` is legitimate here:
+  `Provider.swift` sanctions it as a label, and only the UI attaches a colour and
+  a glyph to it.
+- `Apps/AgentBar` maps each provider's own report onto it — the switch over
+  `ClaudeCodeInstallState`, its drift and its warnings lives there, next to the
+  installer it belongs to.
+- The action cases come back to the app target, which knows which installer to
+  call.
+
+That keeps every provider word out of `AgentBarUI`, needs no new module and no
+change to the dependency table, and lets a preview construct a status directly —
+which matters, because `ClaudeCodeInstallReport` has no public initialiser.
+
+**Do not put the type in `AgentBarCore`.** The core is the domain and owns no
+install vocabulary; adding one there to satisfy the view would be exactly the
+kind of leak the boundary test exists to prevent.
+
+### Step 06 or 07 — the question line
+
+The `Question` notification is specified to carry "the question asked" as its
+body, and nothing in AgentBar can produce that string.
+
+The facts, all verified: `SessionState.waitingInput` carries no payload;
+`ClaudeCodeEventDecoder` never returns `.waitingPermission`, so no adapter
+produces a `PermissionRequestRef` even though `NativeEventDecoder` can already
+decode one off the wire; `ToolInvocation.summarise` deliberately returns `nil`
+for `AskUserQuestion`; and `SessionStore.reading` clears `currentTool` outside
+`working`. Four independent reasons, any one of which is sufficient.
+
+The decision is to close it rather than ship around it, because "an agent asked
+you something" is the single event the product exists for, and a notification
+whose body is empty on that event is the one place the design's
+*what → which agent → where → one line of detail* hierarchy loses its last term.
+
+The decision, its three rejected alternatives and its consequences are recorded
+in [ADR-0005](../adr/ADR-0005-waiting-input-carries-a-question-line.md), status
+`proposed` until the step that implements it. What follows is the summary.
+
+Required, as a bounded addendum to steps 02 and 04:
+
+- `EventKind.waitingInput` and `SessionState.waitingInput` gain one optional,
+  bounded, adapter-redacted line — the same contract `ToolRef.invocation`
+  already meets, produced by the same `ToolInvocation` machinery and capped the
+  same way.
+- `ToolInvocation` gains a rule for `AskUserQuestion`, reading the question out
+  of `tool_input`. Today it returns `nil` for that tool by name, and that rule is
+  precisely what changes.
+- It stays a **display** line. Not a second source of truth, and nothing above
+  the adapter may branch on it.
+
+**Do not fill it from Claude Code's `Notification.message`**, tempting as it is —
+the payload does carry one. Two reasons. It is provider boilerplate
+("Claude needs your permission to use Bash") and adds nothing the `Waiting` label
+does not already say. And it exists on only one of the two waiting paths: the
+`Notification` route carries a message, the `PreToolUse(AskUserQuestion)` route
+carries none. A line that appears on one kind of waiting and not the other reads
+as a bug rather than as information.
+
+The `AskUserQuestion` path is the one where a real, specific question exists, so
+that is the only path that gets a line. The permission and elicitation paths stay
+bare, correctly: there the state label already says everything there is to say.
+
+Until it lands the `Question` notification is title-only and the Waiting row is
+state and duration. Both degrade correctly, and neither looks broken.
+
+### Step 07 — notifications
+
+Three things are fixed in [Notifications](#notifications) so they cannot be
+invented later, and step 07 owes all three:
+
+1. **The verb predicates.** Each verb is a condition on the `StateChange`, and
+   two reachable shapes — `from == nil` and `to == nil` — fire nothing at all.
+2. **The body's source per event**, which is `failed(reason:)`, the question line,
+   or nothing. The canvas's `3 files changed` has no source and never will without
+   new payload plumbing through the adapter and the store; it is not worth one
+   notification line.
+3. **A clamp on the body.** `failureReason` passes an unrecognised provider error
+   type through unbounded, and `NativeEventDecoder` applies no limit at all. Do
+   not assume a short sentence arrives.
+
+### Step 09 — Codex adapter
+
+A `CodexInstallState` with an explicit `installedNotTrusted` case, plus the same
+degraded cases Claude Code has. The onboarding card's third state is a hard
+requirement from the brief, and there is no domain type behind it today.
+
+### Step 10 — Codex limits
+
+An ordered `[UsageWindow]` of `name: String`, `percentUsed: Double?`,
+`resetsAt: Date?`. Count not fixed — a live sample returned exactly one bucket.
+Each field independently omittable, degrading by omission and never by a
+placeholder zero.
+
+Until it exists, the Codex half of the Limits section is simply absent — no
+header, no empty state, no error — leaving the permanent Claude Code caveat row.
+Step 06 therefore ships a complete and honest Limits section without step 10.
+
+### Whenever the dashboard is built
+
+`FinishedSession.finalState` is the last state actually *observed* and is never
+`unknown`, so a session the watchdog gave up on will read `Working` beside an
+outcome of `lost`. Present the outcome first, or the row looks like a
+contradiction. Recorded here so it is not rediscovered as a bug.
+
+---
+
+## Reserved space
+
+| Deferred | What step 05 leaves for it |
+|---|---|
+| Settings — sound matrix, quiet hours, launch at login, Caffeine | the footer gear; the chip and control tokens in the design system |
+| Dashboard window | a footer entry point; `StoreSnapshot.finished` already carries the history |
+| Approve / Deny in notifications | one notification category per event type |

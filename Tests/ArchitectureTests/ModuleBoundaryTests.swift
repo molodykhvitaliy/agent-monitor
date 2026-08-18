@@ -73,7 +73,11 @@ struct ModuleBoundaryTests {
     static let allowedInternalDependencies: [String: Set<String>] = [
         "AgentBarCore": [],
         "AgentBarIngest": ["AgentBarCore"],
-        "ClaudeCodeAdapter": ["AgentBarCore"],
+        // The one edge that points at the transport rather than straight at the
+        // core: `EventDecoding` is the seam AgentBarIngest publishes for
+        // adapters, and conforming to it where the payload knowledge lives is
+        // what keeps provider JSON inside the adapter.
+        "ClaudeCodeAdapter": ["AgentBarCore", "AgentBarIngest"],
         "CodexAdapter": ["AgentBarCore"],
         "CodexAppServer": ["AgentBarCore"],
         "AgentBarNotifications": ["AgentBarCore"],

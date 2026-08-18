@@ -1,0 +1,23 @@
+{
+  "session_id": "061ac832-0c45-418e-832f-9012d754b61b",
+  "transcript_path": "/Users/dev/.claude/projects/-Users-dev-projects-probe/061ac832-0c45-418e-832f-9012d754b61b.jsonl",
+  "cwd": "/Users/dev/projects/probe",
+  "prompt_id": "f6d43488-1542-4d97-b06f-8712f807954a",
+  "permission_mode": "acceptEdits",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": "/Users/dev/projects/probe/probe.txt",
+    "content": "probe"
+  },
+  "tool_response": {
+    "type": "create",
+    "filePath": "./probe.txt",
+    "content": "probe",
+    "structuredPatch": [],
+    "originalFile": null,
+    "userModified": false
+  },
+  "tool_use_id": "toolu_01ST8WAKsRfXt3eo5G2fYSVJ",
+  "duration_ms": 4
+}
