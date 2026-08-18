@@ -1,0 +1,115 @@
+name: Release
+
+# Tag-triggered. Signs and notarizes when Apple Developer secrets are present,
+# and otherwise still produces a working unsigned build so releases are possible
+# before the Apple Developer Program membership is purchased.
+#
+# Required secrets once signing is enabled:
+#   APPLE_CERT_P12, APPLE_CERT_PASSWORD, APPLE_SIGNING_IDENTITY,
+#   APPLE_TEAM_ID, APPLE_API_KEY_ID, APPLE_API_ISSUER_ID, APPLE_API_KEY_P8
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # A tag can point at any commit, including one whose CI run was skipped.
+  # The distributable artifact is exactly what must not escape the ToS boundary,
+  # so the guard runs here too — 1x runner, ~30s.
+  guard:
+    name: Policy guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: ToS boundary scan
+        run: ./scripts/tos-scan.sh
+
+  release:
+    needs: guard
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Detect signing capability
+        id: signing
+        env:
+          CERT: ${{ secrets.APPLE_CERT_P12 }}
+        run: |
+          if [ -n "${CERT:-}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Apple Developer secrets absent — producing an UNSIGNED build. Recipients must clear quarantine manually, and Homebrew Cask distribution is not possible without notarization."
+          fi
+
+      - name: Import signing certificate
+        if: steps.signing.outputs.enabled == 'true'
+        env:
+          CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          KEYCHAIN_PASSWORD=$(uuidgen)
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          # No idle auto-lock: codesign runs later, inside build-release.sh, and a
+          # cold build can exceed any short timeout — that failure surfaces as an
+          # opaque errSecInternalComponent. The keychain is deleted in cleanup.
+          security set-keychain-settings "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          echo "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$CERT_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          rm -f "$RUNNER_TEMP/cert.p12"
+          # Path only — never the password.
+          echo "SIGNING_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+
+      - name: Build release
+        env:
+          SIGNING_ENABLED: ${{ steps.signing.outputs.enabled }}
+          SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: ./scripts/build-release.sh
+
+      - name: Notarize and staple
+        if: steps.signing.outputs.enabled == 'true'
+        env:
+          API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: ./scripts/notarize.sh
+
+      # Runs before the third-party publish action, so the signing key is gone
+      # from the runner by the time any non-first-party code executes.
+      - name: Destroy signing keychain
+        if: always()
+        run: |
+          if [ -n "${SIGNING_KEYCHAIN:-}" ] && [ -f "$SIGNING_KEYCHAIN" ]; then
+            security list-keychains -d user -s login.keychain-db
+            security delete-keychain "$SIGNING_KEYCHAIN"
+          fi
+
+      - name: Publish release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          files: dist/*.dmg
+          fail_on_unmatched_files: true
+          draft: true
+          generate_release_notes: true
+          body: |
+            ${{ steps.signing.outputs.enabled == 'true'
+                && 'Signed and notarized build.'
+                || '**Unsigned build.** Signing secrets were not configured, so macOS will quarantine this download. Install only if you trust the source.' }}

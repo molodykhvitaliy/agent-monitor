@@ -1,0 +1,153 @@
+name: CI
+
+# Frugal by design: the repository is private, where GitHub-hosted macOS runners
+# bill at a 10x minute multiplier.
+#
+# The savings come from three places, in order of impact:
+#   1. cheap Linux checks gate the macOS job, so a policy violation never costs
+#      a macOS minute;
+#   2. in-flight runs are cancelled when a branch is pushed again;
+#   3. the macOS job is skipped entirely for documentation-only changes.
+#
+# The guard job itself always runs, so it still fires on the documentation and
+# symlink changes it exists to police, and every push produces a check run that
+# branch protection can require.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # The project targets macOS 26 and records Xcode 26.6 as its verified toolchain.
+  # Runner images rotate, so the build step selects this version explicitly and
+  # reports what it actually got — image drift must be visible, not silent.
+  # Pinning the runner label instead would risk an image whose SDK is too old to
+  # build for macOS 26 at all. Revisit in step 01 against real runner images.
+  XCODE_VERSION: '26.6'
+
+jobs:
+  # ── 1x runner, ~30s. Always runs. ──────────────────────────────────────────
+  guard:
+    name: Policy guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code_changed: ${{ steps.filter.outputs.code_changed }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: ToS boundary scan
+        run: ./scripts/tos-scan.sh
+
+      - name: Shell script lint
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          find scripts -name '*.sh' -print0 | xargs -0 -r shellcheck -S warning
+
+      - name: Generated project must not be committed
+        run: |
+          if git ls-files | grep -qE '\.xcodeproj/'; then
+            echo "::error::.xcodeproj is generated from project.yml and must not be committed"
+            exit 1
+          fi
+
+      - name: Local working state must not be committed
+        run: |
+          if git ls-files | grep -q '^\.scratch/'; then
+            echo "::error::.scratch/ is local-only and must never be committed"
+            exit 1
+          fi
+
+      - name: AGENTS.md must stay a symlink to CLAUDE.md
+        run: |
+          mode=$(git ls-files -s AGENTS.md | awk '{print $1}')
+          if [ "$mode" != "120000" ]; then
+            echo "::error::AGENTS.md must be committed as a symlink (mode 120000), found '${mode:-missing}'"
+            exit 1
+          fi
+          if [ "$(git show :AGENTS.md)" != "CLAUDE.md" ]; then
+            echo "::error::AGENTS.md must point at CLAUDE.md"
+            exit 1
+          fi
+
+      - name: Verified versions must agree with the platform reference
+        run: |
+          json_date=$(jq -r '.verifiedOn' .github/verified-versions.json)
+          if ! grep -q "$json_date" docs/dev/platform-integration.md; then
+            echo "::error::verified-versions.json says $json_date but docs/dev/platform-integration.md does not mention it"
+            exit 1
+          fi
+
+      - id: filter
+        name: Detect whether the macOS job is needed
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "code_changed=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          base="${{ github.event.pull_request.base.sha || github.event.before }}"
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            echo "code_changed=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          changed=$(git diff --name-only "$base" "${{ github.sha }}")
+          echo "$changed"
+          if echo "$changed" | grep -qvE '(^docs/|\.md$|^LICENSE$|^\.gitignore$)'; then
+            echo "code_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code_changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Documentation-only change — skipping the 10x macOS job"
+          fi
+
+  # ── 10x runner. Reached only when the guard passes and code actually changed. ─
+  build-test:
+    name: Build and test
+    needs: guard
+    if: needs.guard.outputs.code_changed == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Select Xcode ${{ env.XCODE_VERSION }}
+        run: |
+          app="/Applications/Xcode_${XCODE_VERSION}.app"
+          if [ ! -d "$app" ]; then
+            echo "::warning::Xcode ${XCODE_VERSION} not on this image; using the default. Available:"
+            ls -d /Applications/Xcode*.app
+          else
+            sudo xcode-select -s "$app"
+          fi
+          xcodebuild -version
+
+      - name: Cache SPM build products
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            .build
+            ~/Library/Caches/org.swift.swiftpm
+          key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved', 'Package.swift') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: Install tooling
+        run: brew install xcodegen swiftlint xcbeautify
+
+      # These delegate to the Makefile so local and CI share one definition of
+      # "green", and they no-op cleanly until step 01 lands the manifests.
+      - name: Lint
+        run: make lint
+
+      - name: Test SPM modules
+        run: make test
+
+      - name: Build app bundle
+        run: make build

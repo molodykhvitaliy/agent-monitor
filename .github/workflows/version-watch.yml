@@ -1,0 +1,97 @@
+name: Platform version watch
+
+# Claude Code and Codex move fast and our integration facts are version-pinned.
+# Weekly on a 1x Linux runner: open an issue when either tool moves past the
+# version docs/dev/platform-integration.md was verified against.
+#
+# Advisory by design — a transient registry failure warns rather than failing the
+# run, because a red weekly job trains people to ignore it.
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'   # Mondays, 09:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - id: check
+        name: Compare upstream versions against verified pins
+        run: |
+          set -uo pipefail
+          drift=""
+          found=false
+          verified_on=$(jq -r '.verifiedOn' .github/verified-versions.json)
+
+          while read -r pkg pinned; do
+            if ! latest=$(curl -sf --max-time 20 "https://registry.npmjs.org/${pkg}/latest" | jq -er '.version'); then
+              echo "::warning::Could not resolve the latest version of ${pkg} — skipping"
+              continue
+            fi
+            echo "${pkg}: pinned=${pinned} latest=${latest}"
+            if [ "$latest" != "$pinned" ]; then
+              found=true
+              drift="${drift}- \`${pkg}\`: verified against \`${pinned}\`, latest is \`${latest}\`"$'\n'
+            fi
+          done < <(jq -r '.tools | to_entries[] | "\(.key) \(.value)"' .github/verified-versions.json)
+
+          {
+            echo "drift_found=${found}"
+            echo "verified_on=${verified_on}"
+            echo "drift<<EOFDRIFT"
+            printf '%s' "${drift}"
+            echo
+            echo "EOFDRIFT"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open drift issue
+        if: steps.check.outputs.drift_found == 'true'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          DRIFT: ${{ steps.check.outputs.drift }}
+          VERIFIED_ON: ${{ steps.check.outputs.verified_on }}
+        with:
+          script: |
+            const title = 'Platform version drift — re-verify integration facts';
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: 'open', labels: 'platform-drift'
+            });
+            const body = [
+              `Integration facts were last verified on **${process.env.VERIFIED_ON}**.`,
+              '',
+              'Upstream has moved:',
+              '',
+              process.env.DRIFT,
+              '',
+              '### What to do',
+              '',
+              '1. Invoke the `platform-docs` skill.',
+              '2. Re-read the hook and app-server reference pages.',
+              '3. Regenerate the App Server schema and diff it: `make schema-sync`',
+              '4. Update `docs/dev/platform-integration.md` and its verification date.',
+              '5. Bump `.github/verified-versions.json`.',
+              '',
+              'Adapters must keep degrading gracefully on schema drift — a drift issue',
+              'is a prompt to re-verify, not evidence that anything is broken.',
+            ].join('\n');
+
+            if (open.length) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: open[0].number, body
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner, repo: context.repo.repo,
+                title, body, labels: ['platform-drift']
+              });
+            }

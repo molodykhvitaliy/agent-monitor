@@ -1,0 +1,62 @@
+# ── Agent local working state — never committed ────────────────────────────
+.scratch/
+
+# ── Project agent configuration — deliberately tracked ─────────────────────
+# The user's global excludes (~/.config/git/ignore) drop CLAUDE.md, AGENTS.md
+# and .claude/ by default. This project overrides that on purpose: CLAUDE.md is
+# the shared project contract, AGENTS.md is its symlink so Codex reads the same
+# file, and .claude/skills/ holds project skills that the documentation and CI
+# both reference. A repository .gitignore is evaluated after the global excludes,
+# so these negations win without touching the user's global configuration.
+!CLAUDE.md
+!AGENTS.md
+!.claude/
+.claude/settings.local.json
+.claude/*.local.json
+
+# ── macOS ──────────────────────────────────────────────────────────────────
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+
+# ── Xcode / XcodeGen ───────────────────────────────────────────────────────
+# The Xcode project is generated from project.yml — do not commit it.
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+DerivedData/
+build/
+.build/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# ── Swift Package Manager ──────────────────────────────────────────────────
+.swiftpm/
+Package.resolved.bak
+
+# ── Distribution artifacts ─────────────────────────────────────────────────
+dist/
+*.dmg
+*.pkg
+*.zip
+
+# ── Secrets — signing material must never enter the repo ───────────────────
+*.p12
+*.p8
+AuthKey_*.p8
+*.mobileprovision
+*.provisionprofile
+*.cer
+*.certSigningRequest
+*.keychain
+*.keychain-db
+.env
+.env.*
+!.env.example
+
+# ── Tooling caches ─────────────────────────────────────────────────────────
+.swiftlint-cache/
