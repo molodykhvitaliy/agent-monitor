@@ -40,6 +40,11 @@ per event is disqualifying.
 Provider-neutral. Adapters translate inbound platform events; above the adapter
 layer nothing knows which tool produced an event.
 
+The module graph in `Package.swift` expresses this, and `Tests/ArchitectureTests`
+enforces the part the graph cannot: a system framework needs no package
+dependency, so nothing but a source-level check stops `import AppKit` appearing
+inside AgentBarCore. See [build.md](build.md).
+
 ```swift
 struct AgentEvent {
     let provider: Provider          // .claudeCode | .codex

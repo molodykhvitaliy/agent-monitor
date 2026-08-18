@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Deliberately unsandboxed, and deliberately explicit about it.
+	     AgentBar installs hooks by editing ~/.claude/settings.json and
+	     ~/.codex/hooks.json, which the App Sandbox forbids. That is also why Mac
+	     App Store distribution is a stated non-goal: the app is distributed with
+	     Developer ID and notarization instead (step 12). -->
+	<key>com.apple.security.app-sandbox</key>
+	<false/>
+</dict>
+</plist>

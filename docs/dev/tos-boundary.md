@@ -101,6 +101,27 @@ It scans `Sources`, `Tests`, `Apps`, `scripts`, `.github`, `Makefile` and the
 package manifests — the manifests deliberately, because §5.2 depends on no remote
 HTTP client entering the dependency graph.
 
+Coverage is itself checked. Every top-level path in the checkout must be either
+scanned or listed as a named exclusion with a reason; an unclassified **tracked**
+path fails the run, and an unclassified untracked one is reported as a note, so a
+scratch file in the working tree is not mistaken for a new source directory. If
+the listing cannot be produced at all — outside a git checkout, or `git ls-files`
+returning nothing — the run fails rather than reporting clean.
+
+The exclusions are `docs/`, `.claude/`, `README.md`, `CLAUDE.md`, `AGENTS.md`,
+`LICENSE`, the lint and ignore configuration, and `schemas/`. Documentation and
+the project skills are excluded because prose about the boundary has to quote the
+hostnames the boundary forbids — this document included. `schemas/` is excluded
+because it is generated verbatim from the installed `codex` binary and
+legitimately describes types such as `ChatgptAuthTokensRefreshResponse`; Swift
+generated from that schema lives under `Sources` and is scanned.
+
+The classification is by top-level path, so content added inside an excluded
+directory inherits its exclusion. `.claude/` is the one exclusion that could
+plausibly gain executable surface — hooks, `settings.json` command entries — so
+the scan additionally fails if it contains anything other than skill
+documentation.
+
 The scan is deliberately blunt. A false positive is cheap — annotate it with a
 reviewed `// tos-allow: <reason>` comment. A false negative is not, so a grep
 that errors is treated as a failure rather than as "no matches", and an

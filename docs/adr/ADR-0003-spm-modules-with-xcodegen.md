@@ -58,3 +58,16 @@ claimed.
 runner at 10× cost and produces routine merge conflicts. Pure SPM makes
 entitlements, resources, signing and Xcode debugging painful for no gain the
 generated project does not already provide.
+
+## Follow-up
+
+**2026-08-18, step 01 — the Linux question is resolved.** `AgentBarCore` does
+build on Linux (`swift build --target AgentBarCore` under `swift:6.3`,
+`aarch64-unknown-linux-gnu`), but the test suite cannot run there: `swift test`
+builds every target, and `AgentBarUI` imports AppKit. Moving test signal to a 1×
+runner would require splitting the package, which is not worth doing while
+`AgentBarCore` has no dependencies and its purity is already enforced by
+`Tests/ArchitectureTests`. Detail in [build.md](../dev/build.md).
+
+The macOS runner question is resolved the same day: `macos-26` is pinned, having
+been verified to carry Xcode 26.6 and macOS SDK 26.5.
