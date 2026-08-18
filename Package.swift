@@ -33,7 +33,9 @@ let package = Package(
         .target(name: "AgentBarCore"),
 
         .target(name: "AgentBarIngest", dependencies: ["AgentBarCore"]),
-        .target(name: "ClaudeCodeAdapter", dependencies: ["AgentBarCore"]),
+        // Reaches AgentBarIngest for `EventDecoding`, the seam the endpoint
+        // publishes for adapters. Every other edge points straight at the core.
+        .target(name: "ClaudeCodeAdapter", dependencies: ["AgentBarCore", "AgentBarIngest"]),
         .target(name: "CodexAdapter", dependencies: ["AgentBarCore"]),
         .target(name: "CodexAppServer", dependencies: ["AgentBarCore"]),
         .target(name: "AgentBarNotifications", dependencies: ["AgentBarCore"]),
@@ -51,6 +53,10 @@ let package = Package(
         .testTarget(name: "AgentBarCoreTests", dependencies: ["AgentBarCore"]),
         .testTarget(
             name: "AgentBarIngestTests", dependencies: ["AgentBarIngest", "AgentBarCore"]),
+        .testTarget(
+            name: "ClaudeCodeAdapterTests",
+            dependencies: ["ClaudeCodeAdapter", "AgentBarIngest", "AgentBarCore"],
+            resources: [.copy("Fixtures")]),
 
         // Reads source files rather than symbols: it guards boundaries the
         // compiler cannot express.

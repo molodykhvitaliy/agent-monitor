@@ -1,0 +1,28 @@
+[
+  {
+    "session_id": "15ca0fb1-dd1d-4f0f-a72e-d5bd88d662e5",
+    "transcript_path": "/Users/dev/.claude/projects/-Users-dev-projects-probe/15ca0fb1-dd1d-4f0f-a72e-d5bd88d662e5.jsonl",
+    "cwd": "/Users/dev/projects/probe",
+    "prompt_id": "e17fc6e7-66aa-40cd-b9a2-ac996892cc1a",
+    "permission_mode": "acceptEdits",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Do exactly this and nothing else, no commentary: 1) run the Bash command 'echo hello'; 2) run the Bash command 'false' — it will fail, that is expected, just continue; 3) write the text 'probe' into ./probe.txt; 4) read ./probe.txt back. Then reply with the single word done."
+  },
+  {
+    "session_id": "15ca0fb1-dd1d-4f0f-a72e-d5bd88d662e5",
+    "transcript_path": "/Users/dev/.claude/projects/-Users-dev-projects-probe/15ca0fb1-dd1d-4f0f-a72e-d5bd88d662e5.jsonl",
+    "cwd": "/Users/dev/projects/probe",
+    "prompt_id": "e17fc6e7-66aa-40cd-b9a2-ac996892cc1a",
+    "hook_event_name": "StopFailure",
+    "error": "authentication_failed",
+    "last_assistant_message": "Not logged in · Please run /login"
+  },
+  {
+    "session_id": "15ca0fb1-dd1d-4f0f-a72e-d5bd88d662e5",
+    "transcript_path": "/Users/dev/.claude/projects/-Users-dev-projects-probe/15ca0fb1-dd1d-4f0f-a72e-d5bd88d662e5.jsonl",
+    "cwd": "/Users/dev/projects/probe",
+    "prompt_id": "e17fc6e7-66aa-40cd-b9a2-ac996892cc1a",
+    "hook_event_name": "SessionEnd",
+    "reason": "other"
+  }
+]

@@ -113,22 +113,22 @@ struct IngestRouterTests {
     /// `boundsSlowHandlers` uses a handler that respects cancellation, so it
     /// would still pass if the deadline waited for its work instead of
     /// abandoning it. This one cannot be cancelled at all.
+    ///
+    /// Asserted as an ordering rather than an elapsed time, for the reason
+    /// `DeadlineTests.abandonsUncancellableWork` records.
     @Test("A handler that cannot be cancelled still does not delay the answer")
     func abandonsUncancellableHandlers() async {
         let diagnostics = CollectingDiagnostics()
         let stubborn = UncooperativeHandler(
-            routes: [.events], seconds: 3, response: IngestResponse(status: .badRequest))
+            routes: [.events], seconds: 10, response: IngestResponse(status: .badRequest))
         let router = router(
             handlers: [stubborn], deadline: .milliseconds(50), diagnostics: diagnostics)
 
-        let clock = ContinuousClock()
-        let started = clock.now
         let response = await respond(
             router, head(method: "POST", path: "/v1/events", headers: authorised()))
-        let elapsed = clock.now - started
 
         #expect(response == .noOpinion)
-        #expect(elapsed < .seconds(1), "the router waited for work it should have abandoned")
+        #expect(!stubborn.completed.isSet, "the router waited for work it should have abandoned")
         #expect(
             diagnostics.contains {
                 if case .handlerTimedOut = $0 { return true }

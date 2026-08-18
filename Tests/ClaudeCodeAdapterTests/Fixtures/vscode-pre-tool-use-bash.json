@@ -1,0 +1,17 @@
+{
+  "session_id": "de0d342a-d14f-4178-a095-3992e8de7160",
+  "transcript_path": "/Users/dev/.claude/projects/-Users-dev-projects-probe/de0d342a-d14f-4178-a095-3992e8de7160.jsonl",
+  "cwd": "/Users/dev/projects/agent-monitor",
+  "prompt_id": "fead9158-4805-4cdd-abc4-4a2b5f2d6da3",
+  "permission_mode": "auto",
+  "effort": {
+    "level": "xhigh"
+  },
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "echo \"probe-1\"; ls /Users/dev/projects/agent-monitor > /dev/null; echo \"probe-2\"",
+    "description": "Generate a couple of tool calls"
+  },
+  "tool_use_id": "toolu_01KaSnyRVoYyabe84idz39wF"
+}

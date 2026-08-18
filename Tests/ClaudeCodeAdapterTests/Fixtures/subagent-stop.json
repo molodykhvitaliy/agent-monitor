@@ -1,0 +1,15 @@
+{
+  "session_id": "da504299-9fe1-49a3-823f-3111b9db0bc3",
+  "transcript_path": "/Users/dev/.claude/projects/-Users-dev-projects-probe/da504299-9fe1-49a3-823f-3111b9db0bc3.jsonl",
+  "cwd": "/Users/dev/projects/probe",
+  "prompt_id": "4608084f-e2b7-4237-a3d2-9be58cbd8b1e",
+  "permission_mode": "acceptEdits",
+  "agent_id": "a116d8cb9b8f407d1",
+  "agent_type": "Explore",
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "agent_transcript_path": "/Users/dev/.claude/projects/-Users-dev-projects-probe/da504299-9fe1-49a3-823f-3111b9db0bc3/subagents/agent-a116d8cb9b8f407d1.jsonl",
+  "last_assistant_message": "Here's a simple listing of the current working directory:\n\n**Directories:**\n- `.claude/` - Configuration directory\n\n**Files:**\n- `probe.txt` - Text file (5 bytes)\n\n**Summary:**\n- Total items: 2 (1 directory, 1 file)\n- The `.claude/` directory typically contains project-specific Claude Code configuration\n- The `probe.txt` file is a small text file",
+  "background_tasks": [],
+  "session_crons": []
+}

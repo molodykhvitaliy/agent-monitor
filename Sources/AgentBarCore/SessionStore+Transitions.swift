@@ -37,7 +37,16 @@ extension SessionStore {
             record.enter(.working)
 
         case .subagentStopped:
-            if let id = event.agent.subagentId { record.activeSubagents.remove(id) }
+            // Only a subagent this session was actually counting says anything
+            // about what the session is doing. A background subagent outlives
+            // the turn that spawned it, so its farewell can arrive after `Stop`
+            // has already cleared the counter and moved the session to idle —
+            // and `enter(.working)` there would resurrect a finished session
+            // into a state only the watchdog could end, holding the power
+            // assertion open with it.
+            guard let id = event.agent.subagentId,
+                record.activeSubagents.remove(id) != nil
+            else { return .keep }
             record.enter(.working)
 
         case .waitingInput:

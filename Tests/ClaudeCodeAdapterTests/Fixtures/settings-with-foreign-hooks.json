@@ -1,0 +1,90 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Read",
+      "Bash(git status:*)"
+    ],
+    "deny": []
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"/Users/dev/.claude/hooks/claude-notifier-on-stop.js\""
+          },
+          {
+            "type": "command",
+            "command": "\"$HOME\"/.claude/hooks/caffeine.sh off",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"/Users/dev/.claude/hooks/claude-notifier-on-permission.js\""
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"/Users/dev/.claude/hooks/claude-notifier-on-question.js\""
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"/Users/dev/.claude/hooks/claude-notifier-on-prompt.js\""
+          },
+          {
+            "type": "command",
+            "command": "\"$HOME\"/.claude/hooks/caffeine.sh on",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"/Users/dev/.claude/hooks/claude-notifier-on-subagent-stop.js\""
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME\"/.claude/hooks/caffeine.sh off",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "/Users/dev/.claude/statusline.sh",
+    "padding": 0
+  },
+  "theme": "dark"
+}

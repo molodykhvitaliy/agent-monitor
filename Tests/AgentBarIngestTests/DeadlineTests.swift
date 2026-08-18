@@ -48,20 +48,32 @@ struct DeadlineTests {
     /// silently loses: work that cannot be cancelled is *abandoned*, not waited
     /// for. Written against a handler that ignores cancellation, because a
     /// cooperative one cannot tell the two implementations apart.
+    ///
+    /// Asserted as an *ordering* rather than a duration: when the deadline
+    /// returns, the work must not have finished. An earlier version bounded the
+    /// elapsed wall-clock at one second instead, which says the same thing only
+    /// on an idle machine. Under `swift test --parallel` a CI runner put 1.3 s
+    /// between the two clock reads while the deadline itself had returned in
+    /// milliseconds, and the test failed for the machine's reasons rather than
+    /// the code's. A latch cannot be starved into a false failure: if the
+    /// deadline waited, the work is finished, whatever the load.
     @Test("Work that ignores cancellation is abandoned, not awaited")
     func abandonsUncancellableWork() async {
-        let clock = ContinuousClock()
-        let started = clock.now
+        let workCompleted = CompletionFlag()
         let result: String? = await Deadline.run(within: .milliseconds(50)) {
             await withCheckedContinuation { (continuation: StringContinuation) in
-                DispatchQueue.global().asyncAfter(deadline: .now() + 3) {
+                // Far longer than the deadline, and far longer than any
+                // scheduling delay: the gap is the test's whole margin, and it
+                // costs nothing while the property holds, because nothing waits
+                // for it.
+                DispatchQueue.global().asyncAfter(deadline: .now() + 10) {
+                    workCompleted.set()
                     continuation.resume(returning: "too late")
                 }
             }
         }
-        let elapsed = clock.now - started
         #expect(result == nil)
-        #expect(elapsed < .seconds(1), "the deadline waited for work it should have abandoned")
+        #expect(!workCompleted.isSet, "the deadline waited for work it should have abandoned")
     }
 
     @Test("A late answer cannot overwrite the expiry that was already reported")
