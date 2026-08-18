@@ -46,49 +46,93 @@ dependency, so nothing but a source-level check stops `import AppKit` appearing
 inside AgentBarCore. See [build.md](build.md).
 
 ```swift
-struct AgentEvent {
+struct AgentEvent: Sendable {
     let provider: Provider          // .claudeCode | .codex
     let sessionId: SessionID
     let turnId: TurnID?
     let cwd: URL
-    let project: ProjectRef         // derived from cwd, worktree-aware
+    let project: ProjectRef         // resolved from cwd, worktree-aware
     let model: String?
     let kind: EventKind
     let tool: ToolRef?
     let toolUseId: ToolUseID?
-    let agent: AgentRef?            // main thread or a named subagent
+    let agent: AgentRef             // .main, or a subagent
     let timestamp: Date
-    let raw: RawPayload             // retained for diagnostics only
+    let raw: RawPayload             // opaque, bounded, diagnostics only
 }
 
-enum EventKind {
+enum EventKind: Sendable {
     case sessionStarted
-    case working
-    case waitingPermission(PermissionRequestRef)   // reserved, backlog
+    case turnStarted                               // a prompt was submitted
+    case toolStarted
+    case toolFinished
+    case subagentStarted
+    case subagentStopped
     case waitingInput
-    case toolStarted, toolFinished
-    case subagentStarted, subagentStopped
+    case waitingPermission(PermissionRequestRef)   // reserved, backlog
     case turnFinished
-    case sessionEnded
     case failed(reason: String)
+    case sessionEnded
 }
 ```
+
+The names describe what happened, not the state it produces: `turnStarted` is a
+prompt being submitted, and it is `SessionStore` that decides this means the
+session is now working. `RawPayload` is deliberately opaque — a bounded summary
+line readable in a log, and nothing a caller can branch on, because raw provider
+JSON stopping at the adapter is only true if the domain cannot read it.
+
+### Project identity
+
+`ProjectRef` is resolved from `cwd` through `ProjectResolving`. That protocol is
+a seam, not decoration: deciding that `~/code/app/src` belongs to `~/code/app`
+means finding a repository root, which is filesystem work the domain must not
+do. `PathProjectResolver` is the answer available without touching the disk — it
+normalises a trailing slash, an embedded `..` and the letter case a
+case-insensitive volume ignores, and it treats a subdirectory as its own
+project. A layer that owns I/O can inject a resolver that knows better and fill
+in `worktree`; two worktrees of one repository stay two groups either way,
+because they are two places to work.
+
+### Time
+
+`TimeSource` supplies both readings the domain needs, and keeping them apart is
+the point. Every duration and every staleness decision comes from `now`, a
+`MonotonicInstant`; `wallTime` is only for display and for stamping when
+something was observed.
+
+The production implementation is backed by **`ContinuousClock`**, which keeps
+counting while the Mac is asleep. That is the property the watchdog needs: a
+session that fell silent before a three-hour sleep must read as three hours
+stale on wake. `SuspendingClock` stops during sleep and would resurrect every
+stale session the moment the lid opens, and `Date` moves with NTP corrections
+and manual clock changes.
 
 ## Session state machine
 
 Keyed by `sessionId`, grouped for display by `project`.
 
 ```
-sessionStarted                  → idle
-UserPromptSubmit                → working
-PreToolUse / PostToolUse        → working  (heartbeat, refresh lastSeen)
-Notification(idle_prompt)       → waitingInput
-SubagentStart / SubagentStop    → working, adjust subagent count
-Stop                            → idle
-StopFailure                     → failed
-SessionEnd                      → remove
-no event for N minutes          → unknown
+sessionStarted (new session)    → idle
+sessionStarted (known session)  → heartbeat only
+turnStarted                     → working
+toolStarted / toolFinished      → working  (heartbeat, current tool)
+subagentStarted / subagentStopped → working, adjust subagent count
+waitingInput                    → waitingInput
+waitingPermission               → waitingPermission
+turnFinished                    → idle, close open tools and subagents
+failed                          → failed
+sessionEnded                    → remove, record in history
+silence beyond the allowance    → unknown, then evicted
 ```
+
+A session first seen mid-flight is **adopted** rather than dropped: AgentBar is
+usually launched while agents are already running. Only a farewell for an
+unknown session is refused.
+
+`sessionStarted` for a session already known is a heartbeat and nothing more. It
+fires again on resume, clear, compact and fork, and compaction happens mid-turn
+— resetting to `idle` would report every compaction as the agent having stopped.
 
 ### The two problems that must be solved explicitly
 
@@ -96,11 +140,95 @@ no event for N minutes          → unknown
 no "resumed" event. Recovery happens on the next `PreToolUse`, `PostToolUse` or
 `UserPromptSubmit`. Do not wait for a dedicated signal that does not exist.
 
-**Watchdog is mandatory.** A session with no events for N minutes becomes
-`unknown`, never a permanent `working`. It must survive agent process death,
-helper failure, machine sleep/wake, and sessions that never emit `SessionEnd`.
-Caffeine correctness depends directly on this: a session stuck in `working`
-would keep the Mac awake indefinitely.
+**Watchdog is mandatory.** A session that goes quiet becomes `unknown`, never a
+permanent `working`. It must survive agent process death, helper failure,
+machine sleep/wake, and sessions that never emit `SessionEnd`. Caffeine
+correctness depends directly on this: a session stuck in `working` would keep
+the Mac awake indefinitely.
+
+How long silence is tolerated depends on what the session was doing, because
+silence means something different in each state:
+
+| State | Allowance | Why |
+|---|---|---|
+| working, no tool open | 15 min | a model can think and stream for minutes without touching a tool |
+| working, tool open | 60 min | one `Bash` running a test suite or a full `xcodebuild` emits nothing for tens of minutes; calling that dead would drop the power assertion mid-build |
+| waiting | 2 h | a human may be away, and the state stays true meanwhile |
+| idle or failed | 8 h | nothing more is expected; this only decides when to stop claiming the session is there |
+| unknown | 1 h | then the session is retired, or every agent that died without a farewell accumulates forever |
+
+The two-tier treatment of `working` is the answer to "no events at all" versus
+"no events but a long-running call is known to be open". Getting it wrong in the
+generous direction costs a stale row and some extra wakefulness; getting it
+wrong in the strict direction puts the Mac to sleep under a running build.
+
+The generous tier is reached by having an open tool call, so a provider whose
+tool events carry no identifier can reach it by accident: nothing can recognise
+a repeated `toolStarted`, and the extra entry keeps `hasOpenTool` true until the
+turn ends. A dead agent is then believed for an hour rather than a quarter of
+one. Codex documents no `tool_use_id`, so its adapter should synthesise a stable
+per-call id if the payload allows, and say so explicitly if it cannot.
+
+### Reading and sweeping
+
+**`unknown` is derived, never stored.** A record holds only states an event
+produced; whether a session reads as `unknown` is decided from its silence every
+time anyone asks. That is what makes a sign of life sufficient to undo the decay
+— there is no stored state to climb back out of — and it is why the reading
+handed to the UI and the sweep that acts on it cannot drift: both ask
+`WatchdogPolicy.verdict` the same question about the same fact.
+
+`SessionStore` owns no timer. `sweep()` reports what moved and retires the
+sessions the watchdog has given up on, and whoever holds the run loop must call
+it. What a missed sweep costs is the transitions and the retiring; every
+session's state stays correct meanwhile, which the suite pins with a test
+asserting a reading taken before a sweep equals the one taken after.
+
+A session past the point of retirement still reads as `unknown` until a sweep
+removes it, rather than quietly vanishing from an unswept store: a session that
+disappeared without reaching the history would be one nothing can account for.
+
+The `finished` list doubles as the guard against a late event reviving a session
+that ended, which is why it has a floor of 32 entries. It is still bounded, so a
+straggler for a session that has since been trimmed out of the history would be
+admitted as a new one — accepted, because the alternative is a list of dead
+session ids that grows for ever.
+
+### Redelivery and reordering
+
+Both are ordinary. Hooks are asynchronous and may be retried, and AgentBar
+coexists with hooks the user already had, so a handler registered twice delivers
+every event twice.
+
+- **Duplicates** are recognised for tool calls, keyed on
+  `sessionId + kind + toolUseId`. Nothing else is fingerprinted: subagents are
+  counted in a set and transitions are idempotent, so the handling is already
+  repeat-proof, while fingerprinting an id that can legitimately recur would
+  swallow the second occurrence. What the ledger buys is the diagnostic — a
+  stream of `duplicate` outcomes is how a doubly-installed hook makes itself
+  visible.
+- **Out-of-order** events do not move the state: a slow `PreToolUse` landing
+  after the `Stop` that followed it would otherwise put a finished turn back to
+  work. `sessionEnded` is the exception — terminal and idempotent, honoured late
+  rather than leaving a ghost, unless it predates the session it would end.
+- **An ignored delivery leaves no trace.** It proves a process is still
+  posting, but it says nothing new, and the event it repeats or predates has
+  already fed the watchdog. Letting it renew the clock would mean a session that
+  refuses every delivery could be believed for ever — which is exactly what one
+  badly stamped event would cause. Silence is measured in information, not in
+  packets: the watchdog counts from the last event **applied**.
+- **A timestamp from the future is refused.** Both providers run on this machine
+  and the adapters stamp on receipt, so `AgentEvent.timestamp` must never be
+  more than a few minutes ahead of the store's own clock. It is a high-water
+  mark, and one bad value would make every genuine event after it look stale.
+  Adapters owe the domain a per-session non-decreasing stamp taken from the
+  receiving clock.
+- **A finished session cannot be revived by a straggler.** The barrier is the
+  newest event the session ever produced, not the farewell's own timestamp —
+  a farewell honoured late is stamped below events already applied, and dating
+  the end from it would leave exactly those events able to re-admit the session.
+  Claude Code reuses a session id on resume, so anything stamped after the
+  barrier is the session having come back, and starts a new record.
 
 ## Ingest
 

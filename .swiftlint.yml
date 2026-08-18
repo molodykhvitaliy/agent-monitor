@@ -66,6 +66,13 @@ file_length:
   warning: 400
   error: 600
 
+cyclomatic_complexity:
+  # An exhaustive switch over a domain enum is the compiler doing its job, not
+  # tangled control flow: the point of EventKind is that every case is handled,
+  # and that adding a case breaks the build until it is. Every other branch
+  # still counts toward the default thresholds.
+  ignores_case_statements: true
+
 type_body_length:
   warning: 250
   error: 350

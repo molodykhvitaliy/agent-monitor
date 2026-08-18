@@ -118,6 +118,35 @@ struct ModuleBoundaryTests {
         )
     }
 
+    /// Symbols that would let AgentBarCore reach outside itself.
+    ///
+    /// The import allowlist stops a new framework arriving, but `Foundation`
+    /// alone is enough to read a file, spawn a process, open a socket or start
+    /// a timer — and the domain is only testable, and only honest about time,
+    /// for as long as it does none of those. The store deliberately owns no
+    /// timer either: whoever holds the run loop calls `sweep()`.
+    static let ioSymbolsForbiddenInCore = [
+        "FileManager", "FileHandle", "Pipe", "Process",
+        "URLSession", "NSXPCConnection",
+        "DispatchQueue", "Thread", "Timer", "RunLoop",
+        "NotificationCenter", "UserDefaults", "Bundle",
+        "resolvingSymlinksInPath", "checkResourceIsReachable",
+    ]
+
+    @Test("AgentBarCore reaches nothing outside itself")
+    func coreDoesNoInputOutput() throws {
+        let hits = try SourceTree.occurrences(
+            of: Self.ioSymbolsForbiddenInCore, inModule: "AgentBarCore")
+        #expect(
+            hits.isEmpty,
+            """
+            AgentBarCore must stay pure logic; found \(hits.sorted()). Injecting the \
+            capability through a protocol — the way `TimeSource` supplies the clock — \
+            keeps the domain testable and the boundary in docs/dev/architecture.md real.
+            """
+        )
+    }
+
     @Test("Module dependencies point inward")
     func dependenciesPointInward() throws {
         let moduleNames = try SourceTree.moduleNames()
@@ -174,6 +203,38 @@ enum SourceTree {
 
         // Without this the suite would pass cheerfully against an empty or
         // mistyped directory — the precise false negative it exists to prevent.
+        #expect(sawSwiftFile, "no Swift sources found in \(module)")
+        return found
+    }
+
+    /// Reports every mention of a forbidden symbol, as `file:line: symbol`.
+    ///
+    /// Text matching, like the import scan: a symbol inside a string literal is
+    /// reported too, which is the direction this check is allowed to fail in.
+    static func occurrences(of symbols: [String], inModule module: String) throws -> [String] {
+        let root = sourcesDirectory.appending(path: module, directoryHint: .isDirectory)
+        guard let walker = FileManager.default.enumerator(atPath: root.path(percentEncoded: false))
+        else {
+            Issue.record("cannot enumerate \(root.path(percentEncoded: false))")
+            return []
+        }
+        var found: [String] = []
+        var sawSwiftFile = false
+        for case let relativePath as String in walker where relativePath.hasSuffix(".swift") {
+            sawSwiftFile = true
+            let contents = try String(
+                contentsOf: root.appending(path: relativePath), encoding: .utf8)
+            let lines = contents.split(separator: "\n", omittingEmptySubsequences: false)
+            for (offset, rawLine) in lines.enumerated() {
+                let line = rawLine.trimmingCharacters(in: .whitespaces)
+                if line.hasPrefix("//") { continue }
+                found += symbols.filter(line.contains).map {
+                    "\(relativePath):\(offset + 1): \($0)"
+                }
+            }
+        }
+        // A renamed directory yields an enumerator over nothing, and a guard
+        // that reports clean because it could not look is worse than no guard.
         #expect(sawSwiftFile, "no Swift sources found in \(module)")
         return found
     }

@@ -4,5 +4,6 @@
 // store and the watchdog. Depends on nothing and must never import AppKit,
 // UserNotifications, IOKit or SwiftUI, touch the filesystem, or open a socket.
 //
-// Filled in by step 02. This file reserves the module boundary so the
-// dependency graph in Package.swift is real from the first commit.
+// The entry points are `AgentEvent` going in, `SessionStore` holding the only
+// mutable state, and `StoreSnapshot` coming out. Nothing here knows that Claude
+// Code or Codex exist — see docs/dev/architecture.md.

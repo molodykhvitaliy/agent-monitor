@@ -48,6 +48,8 @@ let package = Package(
             swiftSettings: [.defaultIsolation(MainActor.self)]
         ),
 
+        .testTarget(name: "AgentBarCoreTests", dependencies: ["AgentBarCore"]),
+
         // Reads source files rather than symbols: it guards boundaries the
         // compiler cannot express.
         .testTarget(name: "ArchitectureTests"),
