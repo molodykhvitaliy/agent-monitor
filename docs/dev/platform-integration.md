@@ -106,6 +106,25 @@ Also documented and important for the backlog item:
 **This is the safe-degradation guarantee.** If AgentBar is not running, every
 hook resolves to "no opinion" and Claude Code proceeds with its normal flow.
 
+Also documented, and re-read on 2026-08-18 while building the endpoint:
+
+- **All matching hooks run in parallel.** Several handlers on one event arrive at
+  the endpoint concurrently, and a doubly-installed hook doubles that.
+- **There is no retry.** A hook that fails is not re-sent, so an event the
+  endpoint refuses is an event lost — which is why a body AgentBar cannot decode
+  is still answered 200 and recorded as a diagnostic rather than refused.
+- **A 2xx JSON body that fails schema validation is a non-blocking error**, and
+  **HTTP hooks cannot signal a blocking error through status codes at all**: a
+  decision has to be a 2xx JSON body. This is the shape the reserved synchronous
+  response path is built for.
+
+> **Open for step 04 — how the token reaches the header.** `headers` values
+> interpolate `$VAR` only for variables named in `allowedEnvVars`. Writing the
+> token literally into `settings.json` needs no environment at all but puts a
+> secret into a file that is typically `0644`; the environment route keeps it out
+> of the file but depends on the variable being exported in whatever launches the
+> agent. Decide it in step 04 and record the reasoning.
+
 Configuration keys:
 
 - `allowedHttpHookUrls` — once defined at any settings level, only matching URLs

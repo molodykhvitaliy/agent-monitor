@@ -233,15 +233,138 @@ every event twice.
 ## Ingest
 
 One loopback endpoint serves both providers. Claude Code posts to it directly;
-the Codex helper relays to it.
+the Codex helper relays to it over a Unix socket, falling back to the port.
 
-- bound to `127.0.0.1` only, plus a Unix socket for the helper;
-- bearer token generated at install time, stored in the app's support directory
-  with `0600`, injected into the hook config;
-- port written to a discovery file so the helper finds a moved endpoint, while
-  the Claude Code hook URL is rewritten by the installer if the port changes;
-- request handling reserves a **synchronous response path** so the Approve/Deny
-  backlog item can be added without reshaping the transport.
+### Addressing
+
+The endpoint binds **`127.0.0.1` and nothing else** — never a name. A listener on
+`127.0.0.1` does not answer on `::1`: that connection is refused outright,
+verified on macOS 27. A client that resolves `localhost` to IPv6 first therefore
+pays a failed round trip, or fails altogether if it does not fall back, so every
+URL AgentBar writes into a hook configuration carries the literal address.
+
+**A fixed preferred port with a short ladder, not an ephemeral one.** The Claude
+Code hook URL lives in the user's `settings.json` beside an `allowedHttpHookUrls`
+entry that has to match it, so a port drawn fresh on every launch means rewriting
+a file the user owns on every launch. The preferred port is **47821** — below the
+ephemeral floor of 49152 (`net.inet.ip.portrange.first`), so an unrelated
+outbound connection cannot already be holding it — and the endpoint climbs to
+47828 if something else is there. A move is reported, and the installer repairs
+the URL once rather than continuously.
+
+`endpoint.json` in the app support directory records the port actually taken, the
+socket path and the *path* of the token file — never the token itself, because a
+discovery file is the first thing anybody pastes into a bug report.
+
+### Authentication
+
+`Authorization: Bearer <token>` on every route, health included: an
+unauthenticated 401 already proves something is listening, so exempting health
+buys nothing and costs a probe. Authentication runs **before** the route table is
+consulted, so the difference between 404 and 405 cannot be used to map what
+exists. The token is 32 bytes from the system CSPRNG, base64url, stored `0600`
+inside a `0700` directory, and compared in constant time.
+
+The directory's permission does more work than the file's. A Unix socket is
+created by the networking stack with the process umask applied — `0755` on a
+default account — and the `chmod` that tightens it lands a moment later. A `0700`
+directory is what makes that window harmless.
+
+### What the endpoint answers
+
+| Situation | Answer |
+|---|---|
+| accepted, decoded, applied | 200, empty |
+| body that cannot be decoded | 200, empty |
+| handler overran its deadline | 200, empty |
+| missing or wrong token | 401 |
+| unknown path | 404 |
+| known path, wrong method | 405 |
+| body past the limit | 413 |
+| framing that cannot be read | 400 / 414 / 431 |
+
+`IngestStatus` has no 5xx case at all, and the omission is the design. Claude
+Code treats every non-2xx as a non-blocking error, so a 500 would not break an
+agent — it would report our bug inside the user's transcript, on a path where
+nothing we do should be visible. Anything unexpected degrades to the empty 200
+that reads as "the hook had nothing to say".
+
+### The reserved synchronous path
+
+A handler returns a response *value* rather than the transport deciding one, and
+`Deadline` bounds how long it may take — 750 ms by default, because Codex caps
+`SessionEnd` at one second and Claude Code gives every `SessionEnd` handler a
+1.5-second shared budget.
+
+Two things about it were wrong on the first attempt, and both are worth keeping
+written down because both look correct.
+
+**The slot the answer lands in has to carry the answer.** The work and the timer
+are unstructured tasks started before the caller waits, so an answer routinely
+arrives before there is anybody waiting for it — a handler that returns without
+suspending won that race about one time in five, measured. A slot that only
+recorded *that* it had been filled turned every one of those into a reported
+timeout. Today every handler answers `noOpinion` so nothing downstream noticed;
+on the reserved path it would have meant discarding a decision a human had
+already given and reporting that none was given.
+
+**The deadline is deliberately not a task group.** A group waits for every child
+before it returns, so a handler that ignored cancellation would delay the answer
+exactly as long as if there were no deadline at all. `Deadline` hands back an
+answer on the timer's own schedule and abandons the overrunning work. The
+distinction is the entire point: this path exists for the Approve/Deny backlog
+item, where the work being raced is a human deciding, and where the timeout has
+to resolve to *no decision*. A deadline that could be outlasted would eventually
+resolve to whatever the handler said late — which for a permission prompt is the
+one outcome this project forbids.
+
+### Transport facts worth not rediscovering
+
+Each was established by experiment, and each would otherwise be a silent failure.
+
+- `NWListener.newConnectionHandler` must be set **before** `start(queue:)`.
+  Without it the bind fails with `EINVAL`, which reads like a bad address.
+- A Unix listener does not remove its socket file when cancelled, and binding
+  over a leftover one fails with `EADDRINUSE` exactly as if the endpoint were
+  live. The two are told apart by connecting: a socket nobody is listening on
+  refuses with `ECONNREFUSED`. AgentBar clears a dead one and refuses to take
+  over a live one.
+- `allowLocalEndpointReuse` stays off. Two AgentBars sharing one port would split
+  an agent's events between them at random, and `EADDRINUSE` is the signal the
+  ladder is built on.
+- A Unix socket path is capped at 103 bytes (`sun_path`). Past that the endpoint
+  serves TCP only and says so; the helper reads the port from the discovery file.
+
+### Arithmetic on numbers a caller chose
+
+A chunk size is a hexadecimal number the peer wrote, and it can be `Int.max`. The
+natural way to check it against the body limit — `body.count + size <= limit` —
+overflows on that input, and an overflow in Swift is a **trap, not an error**: it
+aborts the process, past every `catch`, from a request that has not been
+authenticated yet. It reached a live endpoint as a two-line kill switch before a
+review found it.
+
+The rule that falls out is worth more than the fix: **compare by subtracting from
+the limit, never by adding to it**, wherever the number came from outside. The
+same shape existed in `ByteBuffer.discard`. Both are covered by tests that trap
+the process if the arithmetic is put back the other way round.
+
+The same reasoning applies to text. Diagnostics are logged `.public` on purpose,
+but a request target reaches the log *before* the token is checked, splitting the
+head on CRLF leaves a bare newline inside a path intact, and a request line may be
+kilobytes long — so caller-derived text is length-bounded and stripped of control
+characters on its way into a message.
+
+### Degradation
+
+The Unix socket is allowed to fail on its own. It is the helper's shortcut rather
+than the endpoint, and taking the whole endpoint down over a socket file in a bad
+state would lose Claude Code's events with it.
+
+Measured on the developer's machine over 300 requests: p50 0.21 ms, p95 0.55 ms,
+p99 1.6 ms on a kept-alive connection, and p99 1.6 ms including connection setup.
+Every one of those is three orders of magnitude inside the smallest budget either
+agent gives a hook.
 
 ## Concurrency
 

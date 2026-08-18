@@ -88,6 +88,26 @@ struct ModuleBoundaryTests {
     /// test is where it gets made.
     static let frameworksAllowedInCore: Set<String> = ["Foundation"]
 
+    /// Frameworks only one module may reach for.
+    ///
+    /// `Network` is how a socket gets opened, and ADR-0002's guarantee is that
+    /// AgentBar talks to loopback and to nothing else. Keeping the framework
+    /// inside one module means a socket appearing anywhere else is a failing
+    /// test rather than a diff nobody looked at twice.
+    static let frameworksRestrictedToModules: [String: Set<String>] = [
+        "Network": ["AgentBarIngest"]
+    ]
+
+    /// Ways to originate an HTTP request to an arbitrary host.
+    ///
+    /// ADR-0002 §5.2 says there is no remote HTTP client in the dependency
+    /// graph, and until now that was upheld by review alone. The ingest endpoint
+    /// is a *server*: it answers connections and opens none, so nothing under
+    /// `Sources` has any business constructing one of these.
+    static let remoteClientSymbols = [
+        "URLSession", "URLRequest", "NSURLConnection", "NWBrowser",
+    ]
+
     @Test("Every module directory has a declared dependency policy")
     func moduleInventoryIsComplete() throws {
         let discovered = try SourceTree.moduleNames()
@@ -145,6 +165,41 @@ struct ModuleBoundaryTests {
             keeps the domain testable and the boundary in docs/dev/architecture.md real.
             """
         )
+    }
+
+    @Test("A restricted framework appears only where it is allowed")
+    func restrictedFrameworksStayPut() throws {
+        let moduleNames = try SourceTree.moduleNames()
+        for (framework, allowed) in Self.frameworksRestrictedToModules {
+            for module in moduleNames.sorted() where !allowed.contains(module) {
+                let imports = try SourceTree.imports(inModule: module)
+                #expect(
+                    !imports.contains(framework),
+                    """
+                    \(module) imports \(framework), which only \(allowed.sorted()) may. \
+                    Opening a socket outside AgentBarIngest is how the loopback-only \
+                    guarantee in ADR-0002 stops being true — see docs/dev/tos-boundary.md.
+                    """
+                )
+            }
+        }
+    }
+
+    @Test("Nothing under Sources can originate a request to a remote host")
+    func noRemoteClientExists() throws {
+        let moduleNames = try SourceTree.moduleNames()
+        #expect(!moduleNames.isEmpty, "no modules found — the scanner looked in the wrong place")
+        for module in moduleNames.sorted() {
+            let hits = try SourceTree.occurrences(of: Self.remoteClientSymbols, inModule: module)
+            #expect(
+                hits.isEmpty,
+                """
+                \(module) references \(hits.sorted()). AgentBar answers connections and \
+                originates none; a remote HTTP client in the graph is the failure \
+                docs/dev/tos-boundary.md §5.2 exists to prevent.
+                """
+            )
+        }
     }
 
     @Test("Module dependencies point inward")

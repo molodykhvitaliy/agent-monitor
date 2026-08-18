@@ -49,6 +49,8 @@ let package = Package(
         ),
 
         .testTarget(name: "AgentBarCoreTests", dependencies: ["AgentBarCore"]),
+        .testTarget(
+            name: "AgentBarIngestTests", dependencies: ["AgentBarIngest", "AgentBarCore"]),
 
         // Reads source files rather than symbols: it guards boundaries the
         // compiler cannot express.
