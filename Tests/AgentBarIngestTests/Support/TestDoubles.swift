@@ -70,6 +70,19 @@ struct ScriptedHandler: IngestHandling {
     }
 }
 
+/// A one-way latch: set once, readable from anywhere.
+///
+/// This is how the two "abandoned, not awaited" tests are asserted. Both used to
+/// bound the elapsed wall-clock instead, which states the property only on an
+/// idle machine — see `DeadlineTests.abandonsUncancellableWork` for what that
+/// cost on a loaded runner.
+final class CompletionFlag: Sendable {
+    private let state = Mutex(false)
+
+    func set() { state.withLock { $0 = true } }
+    var isSet: Bool { state.withLock { $0 } }
+}
+
 /// A handler that ignores cancellation entirely.
 ///
 /// `ScriptedHandler` sleeps with `Task.sleep`, which throws the moment the
@@ -81,6 +94,10 @@ struct UncooperativeHandler: IngestHandling {
     let routes: Set<IngestRoute>
     let seconds: Double
     let response: IngestResponse
+    /// Set when the timer finally fires. A test reads it straight after the
+    /// router answers: if the router had waited for this handler, it would be
+    /// set by then, and that is the regression worth catching.
+    let completed = CompletionFlag()
 
     init(routes: Set<IngestRoute>, seconds: Double = 2, response: IngestResponse = .noOpinion) {
         self.routes = routes
@@ -92,8 +109,10 @@ struct UncooperativeHandler: IngestHandling {
 
     func handle(_ request: IngestRequest) async -> IngestResponse {
         let answer = response
+        let flag = completed
         return await withCheckedContinuation { (continuation: ResponseContinuation) in
             DispatchQueue.global().asyncAfter(deadline: .now() + seconds) {
+                flag.set()
                 continuation.resume(returning: answer)
             }
         }
