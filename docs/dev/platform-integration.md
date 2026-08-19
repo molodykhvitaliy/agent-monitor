@@ -701,6 +701,16 @@ Closing stdin also covers the case AgentBar cannot: if the app is force-quit
 mid-exchange, the pipe's write end closes with the process and the child exits on
 its own within those 2.74 s.
 
+**The reverse direction raises `SIGPIPE`.** `Process` closes the parent's copy of
+the stdin pipe's *read* end at spawn — which is what makes closing the write end
+give the child EOF — so a write after the child has exited goes into a pipe with
+no reader. That raises `SIGPIPE`, and a signal is not something a `catch` can
+answer: reproduced by removing the guard, where the test process died with
+signal 13. The window is real rather than theoretical, because a child that fails
+on a bad `config.toml` writes to stderr and exits, and the very next thing the
+exchange does is send `initialize`. `CodexProcessTransport` marks stdin
+unwritable the moment the child's output ends.
+
 ### 3.5.3 Finding the binary
 
 `codex` is at `~/.local/bin/codex` on the developer's machine (a symlink into

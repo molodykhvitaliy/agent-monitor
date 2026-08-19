@@ -25,6 +25,16 @@ public struct QuotaSettings: Sendable, Hashable {
     /// automation, and still far more often than a weekly bar needs.
     public static let minimumInterval: Duration = .seconds(5 * 60)
 
+    /// The longest interval the key can select.
+    ///
+    /// An interval longer than a day is not a refresh interval — it is the
+    /// feature switched off with extra steps, and the honest way to switch it
+    /// off is not to be signed in to Codex. The ceiling also keeps the value
+    /// well inside what `Task.sleep` will ever be asked to hold: a duration a
+    /// few doublings below `Int64.max` seconds is not a number any clock
+    /// arithmetic should have to survive.
+    public static let maximumInterval: Duration = .seconds(24 * 60 * 60)
+
     /// The shortest gap between two reads, whatever asked for them.
     ///
     /// Turn completions arrive in bursts — several agents finishing inside a
@@ -36,7 +46,7 @@ public struct QuotaSettings: Sendable, Hashable {
     public let interval: Duration
 
     public init(interval: Duration = QuotaSettings.defaultInterval) {
-        self.interval = max(Self.minimumInterval, interval)
+        self.interval = min(Self.maximumInterval, max(Self.minimumInterval, interval))
     }
 
     /// Reads the key, and ignores anything that is not a usable number of

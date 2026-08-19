@@ -92,10 +92,23 @@ one by asserting the *elapsed time*, because without the handler it still passes
 thirty seconds later, and the `start()` one by counting spawns, because a
 transport that spawned and then killed would throw the same error.
 
+A second review found two more, one of them a crash. `start()` refused after
+`end()` but not after a first `start()`, so a second call would overwrite the
+first child's handles and leave it running with nothing able to reach it — the
+same leak from the other direction. And writing to a child that had already
+exited raised **`SIGPIPE`**: `Process` closes the parent's copy of the stdin
+pipe's read end at spawn, so the write lands in a pipe with no reader, and a
+signal is not something a `catch` can answer. That path is not hypothetical — a
+child that fails on a bad `config.toml` writes to stderr and exits, and the
+exchange's next act is `initialize`. Removing the guard kills the test process
+with signal 13.
+
 `SIGTERM` is sufficient (measured: the server dies within 10 ms, idle or
 mid-request), so no `SIGKILL` is needed, so `CodexAppServer` needs no
 `import Darwin` and the loopback-only guard in `ModuleBoundaryTests` stays
-exactly as narrow as it was.
+exactly as narrow as it was. The signal is sent from two places, because `end()`
+can arrive before the spawn it is meant to undo: `end()` kills a running child,
+and `start()` kills one that came up after an `end()` had already been and gone.
 
 **Negative.** A refresh costs a process launch, and the freshest possible number
 is not available: between an interval and a turn ending, the bar can be up to

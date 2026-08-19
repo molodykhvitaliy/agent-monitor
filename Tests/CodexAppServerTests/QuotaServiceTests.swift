@@ -251,5 +251,31 @@ struct QuotaServiceTests {
         #expect(
             QuotaSettings.load(from: defaults ?? .standard).interval
                 == QuotaSettings.defaultInterval)
+
+        // An interval longer than a day is the feature switched off with extra
+        // steps, and the ceiling keeps every downstream clock inside its range.
+        defaults?.set(60 * 24 * 30, forKey: QuotaSettings.intervalDefaultsKey)
+        #expect(
+            QuotaSettings.load(from: defaults ?? .standard).interval
+                == QuotaSettings.maximumInterval)
+    }
+
+    /// The twin of `survivesAnAbsurdWindowLength`. This multiplication is on a
+    /// number a person can type into `defaults write`, and an overflow in Swift
+    /// is a trap — a crash on every launch that they could never connect to what
+    /// they typed.
+    @Test("A defaults value that cannot become seconds falls back rather than trapping")
+    func survivesAnAbsurdInterval() {
+        let defaults = UserDefaults(suiteName: "quota-overflow-\(UUID().uuidString)")
+        defaults?.set(Int.max, forKey: QuotaSettings.intervalDefaultsKey)
+        #expect(
+            QuotaSettings.load(from: defaults ?? .standard).interval
+                == QuotaSettings.defaultInterval)
+
+        // Just inside the overflow, and still clamped rather than accepted.
+        defaults?.set(Int.max / 61, forKey: QuotaSettings.intervalDefaultsKey)
+        #expect(
+            QuotaSettings.load(from: defaults ?? .standard).interval
+                == QuotaSettings.maximumInterval)
     }
 }

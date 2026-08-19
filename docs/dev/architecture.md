@@ -833,9 +833,12 @@ the whole budget. And `end()` is idempotent by returning early, which means a
 refuses if it has already ended.
 
 **Numbers from outside are never multiplied unchecked.** `windowDurationMins` is
-an `Int64` from the backend, and an overflow in Swift is a trap rather than an
-error — it would abort the process past the exchange's whole error surface. Same
-rule, same reason, and the third place in this repository to need it.
+an `Int64` from the backend and the refresh interval is an `Int` from a defaults
+key a person can hand-edit; an overflow in Swift is a trap rather than an error,
+and it would abort the process past the exchange's whole error surface. Both
+multiplications are checked, and the interval is clamped at both ends besides.
+Same rule and same reason as the chunk-size arithmetic in the ingest layer — the
+third and fourth places in this repository to need it.
 
 Replies are **routed, not awaited in order**. The server answers out of order and
 interleaves notifications with replies from its first moment, so one pump reads

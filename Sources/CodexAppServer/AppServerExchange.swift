@@ -19,6 +19,9 @@ import os
 /// the first moment. So one pump reads the stream and hands each line to
 /// whichever call is waiting for that id; everything else is dropped.
 public actor AppServerExchange {
+    private static let logger = Logger(
+        subsystem: "com.molodykhvitalii.AgentBar", category: "quota")
+
     /// The name AgentBar introduces itself by.
     public static let clientName = "AgentBar"
 
@@ -165,6 +168,16 @@ public actor AppServerExchange {
                 throwing: error.looksUnimplemented
                     ? AppServerError.unimplemented(method: waiter.method)
                     : AppServerError.rejected(code: error.code, message: error.message))
+        case .request(let id, let method):
+            // Nothing answers it, and nothing ever will on this connection —
+            // but an unanswered request from the server is the one piece of
+            // traffic here that could matter, so it is discoverable in the log
+            // rather than only in a test.
+            Self.logger.notice(
+                """
+                codex app-server asked for \(method, privacy: .public), id \
+                \(id, privacy: .public) — AgentBar starts no thread and answers no requests
+                """)
         case .unrelated:
             // A notification, or a reply whose id could not be read. Both are
             // ordinary traffic — `configWarning` arrives before anything is

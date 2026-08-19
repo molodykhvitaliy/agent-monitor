@@ -17,6 +17,14 @@ public protocol AppServerTransport: Sendable {
     /// The stream finishes when the server closes its output or the transport is
     /// ended, whichever happens first. It never finishes silently while the
     /// server is still alive.
+    ///
+    /// **Throws, and creates nothing, if this transport has already been ended
+    /// or already started.** This is a requirement on the implementor rather
+    /// than advice to the caller, and `AppServerExchange.run` depends on it: a
+    /// caller cancelled before `run` is entered ends the transport *before* the
+    /// work task reaches `start()`, and "no child was spawned" holds only
+    /// because `start()` refuses. A transport that started anyway would create
+    /// one that the already-fired `end()` would never come back to kill.
     func start() throws -> AsyncStream<Data>
 
     /// Writes one line. Throws if the far end has already gone.

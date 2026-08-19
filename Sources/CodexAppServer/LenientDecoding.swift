@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Collection decoding that drops what it cannot read.
 ///
@@ -33,7 +34,7 @@ extension KeyedDecodingContainer {
         // optional field arriving as an object where an array was declared says
         // nothing about the required fields beside it, and taking the whole
         // response down over it would discard a reading that is otherwise intact.
-        return try? decodeLenient(type, forKey: key)
+        return LenientDecoding.reporting(key) { try decodeLenient(type, forKey: key) }
     }
 
     /// Decodes a string-keyed map, skipping values that fail.
@@ -58,7 +59,7 @@ extension KeyedDecodingContainer {
     ) throws -> [String: Value]? {
         guard contains(key), try decodeNil(forKey: key) == false else { return nil }
         // Absent rather than fatal, for the reason the array overload gives.
-        return try? decodeLenient(type, forKey: key)
+        return LenientDecoding.reporting(key) { try decodeLenient(type, forKey: key) }
     }
 
     /// Consumes an unkeyed container, keeping what decodes.
@@ -85,6 +86,34 @@ extension KeyedDecodingContainer {
             if container.currentIndex == position { break }
         }
         return result
+    }
+}
+
+enum LenientDecoding {
+    private static let logger = Logger(
+        subsystem: "com.molodykhvitalii.AgentBar", category: "quota")
+
+    /// Runs a lenient decode and says so when it could not open the container.
+    ///
+    /// The one drift worth a diagnostic. A per-element failure would log on
+    /// every refresh for as long as the schema differs, which is why `drain`
+    /// stays quiet; a whole collection arriving as the wrong *kind* happens once
+    /// per protocol change and costs the user every row in it. Silently losing
+    /// the Limits section's contents is exactly the silent failure this project
+    /// forbids.
+    static func reporting<Value>(
+        _ key: some CodingKey, _ decode: () throws -> Value
+    ) -> Value? {
+        do {
+            return try decode()
+        } catch {
+            logger.notice(
+                """
+                app-server sent \(key.stringValue, privacy: .public) as a shape this build \
+                cannot read; it is treated as absent: \(error, privacy: .public)
+                """)
+            return nil
+        }
     }
 }
 

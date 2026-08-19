@@ -5,7 +5,7 @@ import Testing
 
 /// The conversation itself: the handshake, correlation, the deadline, and the
 /// promise that the child is ended on every path.
-@Suite("App Server exchange")
+@Suite("App Server exchange", .timeLimit(.minutes(1)))
 struct ExchangeTests {
 
     static func run<Answer: Sendable>(
@@ -221,7 +221,9 @@ struct ExchangeTests {
         let clock = ContinuousClock()
         let start = clock.now
         work.cancel()
-        await #expect(throws: (any Error).self) { try await work.value }
+        // `CancellationError`, not `.disconnected`: which name is reported
+        // depends on who did the killing, and this is us.
+        await #expect(throws: CancellationError.self) { try await work.value }
         let elapsed = clock.now - start
 
         #expect(transport.ended)
@@ -232,6 +234,26 @@ struct ExchangeTests {
         #expect(
             elapsed < .seconds(5),
             "cancellation took \(elapsed): the child waited for the budget, not for the cancel")
+    }
+
+    /// The interlock between the cancellation handler and the transport's
+    /// refusal to start after ending. `onCancel` runs *before* `operation` when
+    /// the caller is already cancelled, so the transport is ended before the
+    /// work task reaches `start()` — and "no child was spawned" holds only
+    /// because `start()` refuses.
+    @Test("A caller cancelled before the exchange begins starts nothing")
+    func startsNothingWhenAlreadyCancelled() async throws {
+        let transport = ScriptedTransport()
+        let work = Task {
+            // Cancelled before this runs, so the handler fires immediately.
+            try await Self.run(transport, budget: .seconds(30)) { exchange, _ in
+                try await AccountMethods.readRateLimits(on: exchange)
+            }
+        }
+        work.cancel()
+        await #expect(throws: (any Error).self) { try await work.value }
+        #expect(transport.ended)
+        #expect(!transport.started, "the transport must refuse to start once it has been ended")
     }
 
     /// A message carrying both an id and a method is the server asking us

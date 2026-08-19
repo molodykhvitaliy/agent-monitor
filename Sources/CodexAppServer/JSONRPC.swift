@@ -107,12 +107,18 @@ enum JSONRPC {
         }
     }
 
-    /// What the server said, reduced to the three cases a caller can act on.
+    /// What the server said, reduced to the cases a caller can act on.
     enum Incoming {
         case result(id: RequestID, line: Data)
         case failure(id: RequestID, error: Failure)
-        /// A notification, or a reply whose id could not be read. Both are
-        /// ignored, and the method is kept only so a log line can name it.
+        /// The server asking *us* something — an id and a method together.
+        ///
+        /// Separate from `unrelated` on purpose. It cannot happen while
+        /// AgentBar starts no thread, and if it ever does it is a permission
+        /// prompt arriving on a connection that has no way to answer one. That
+        /// is worth a line in the log; an ordinary notification is not.
+        case request(id: RequestID, method: String)
+        /// A notification, or a reply whose id could not be read. Ignored.
         case unrelated(method: String?)
     }
 
@@ -147,7 +153,7 @@ enum JSONRPC {
         // come from the server's own counter and would collide with ours, and a
         // decoder that can mistake a permission request for a reply is not one
         // to leave standing next to the never-auto-approve rule.
-        if let method = envelope.method { return .unrelated(method: method) }
+        if let method = envelope.method { return .request(id: id, method: method) }
         if let error = envelope.error { return .failure(id: id, error: error) }
         // The result is handed back as the whole line. Extracting it here would
         // mean re-encoding a value this layer deliberately never models.

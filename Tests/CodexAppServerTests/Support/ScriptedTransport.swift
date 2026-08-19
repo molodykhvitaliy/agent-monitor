@@ -9,7 +9,7 @@ import Testing
 /// handshake, correlation by id, out-of-order replies, notifications arriving in
 /// the middle, an error, a silence and a disconnection. The one thing it cannot
 /// prove is that a real child is killed, which is why `ProcessTransportTests`
-/// exists and runs against `/bin/cat`.
+/// exists and runs against a shell script standing in for `codex`.
 final class ScriptedTransport: AppServerTransport, @unchecked Sendable {
     /// What the server does when it is asked something.
     enum Reaction: Sendable {
@@ -47,12 +47,19 @@ final class ScriptedTransport: AppServerTransport, @unchecked Sendable {
         reactions["initialize"] = [.result(handshake)]
     }
 
+    /// Refuses after `end()` and after a first `start()`, because
+    /// `AppServerTransport` requires it of every implementor and
+    /// `AppServerExchange.run` depends on it — a double that started anyway
+    /// would let the real leak back in with every test still green.
     func start() throws -> AsyncStream<Data> {
         let (stream, continuation) = AsyncStream<Data>.makeStream()
-        lock.withLock {
+        let claimed = lock.withLock { () -> Bool in
+            guard !ended, !started else { return false }
             started = true
             self.continuation = continuation
+            return true
         }
+        guard claimed else { throw AppServerError.disconnected }
         for line in preamble { continuation.yield(Data(line.utf8)) }
         return stream
     }

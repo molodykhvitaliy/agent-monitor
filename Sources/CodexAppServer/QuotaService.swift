@@ -121,6 +121,11 @@ public actor QuotaService {
                 limits refreshed (\(reason, privacy: .public)): \
                 \(windows.count, privacy: .public) window(s)
                 """)
+        } catch is CancellationError {
+            // A quit with a refresh in flight. The child is already dead — the
+            // exchange's cancellation handler saw to that — and a shutdown is
+            // not a fault, so it gets the same silence as the other settled
+            // states in `report`.
         } catch let error as AppServerError {
             report(error)
         } catch {

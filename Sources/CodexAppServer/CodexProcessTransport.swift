@@ -6,12 +6,19 @@ import os
 /// The only subprocess AgentBar ever spawns, and the reason `Process` is
 /// restricted to this module by `ModuleBoundaryTests`.
 ///
-/// **The child is always killed.** `end()` closes stdin and then sends `SIGTERM`
-/// unconditionally — on the success path as much as the timeout path. Verified
-/// on 2026-08-19: the server exits within 10 ms of `SIGTERM` whether idle or
-/// with a request in flight, while closing stdin alone takes up to 2.7 s because
-/// it finishes answering first. Waiting politely for that would leave a child
-/// alive across a quit, so the signal is not a fallback — it is the shutdown.
+/// **The child is always killed**, on the success path as much as the timeout
+/// path. Verified on 2026-08-19: the server exits within 10 ms of `SIGTERM`
+/// whether idle or with a request in flight, while closing stdin alone takes up
+/// to 2.7 s because it finishes answering first. Waiting politely for that would
+/// leave a child alive across a quit, so the signal is not a fallback — it is the
+/// shutdown, and closing stdin is only the courtesy before it.
+///
+/// The signal is sent from **two** places, because `end()` can arrive before the
+/// spawn it is meant to undo. `end()` sends it to a running child; `start()`
+/// sends it to one that came up after an `end()` had already been and gone. A
+/// transport that has been ended, or that already holds a child, refuses to
+/// start at all — a second child would make the first unreachable, which is the
+/// same leak from the other direction.
 ///
 /// **stderr is drained and kept.** A pipe nobody reads fills at 64 KB and blocks
 /// the writer, which for this child would be a hang rather than a diagnostic;
@@ -42,6 +49,13 @@ public final class CodexProcessTransport: AppServerTransport {
         var pending = Data()
         var diagnostics = Data()
         var ended = false
+        /// Whether stdin is still worth writing to.
+        ///
+        /// Cleared when the child's output ends, which is the moment it has
+        /// almost certainly gone. Writing into a pipe with no reader raises
+        /// `SIGPIPE`, and a signal is not something a `catch` can answer — see
+        /// `send`.
+        var writable = true
         /// How many times `Process.run()` was actually reached.
         ///
         /// For the suite. The two guards in `start()` fail in the same visible
@@ -78,7 +92,10 @@ public final class CodexProcessTransport: AppServerTransport {
         // the second `end()` returns early, having seen the flag its first call
         // set.
         let claimed = state.withLock { state -> Bool in
-            guard !state.ended else { return false }
+            // Not merely "has not ended": a transport that already holds a child
+            // must refuse too, or the second `start()` would overwrite the first
+            // child's handles and leave it running with nothing able to reach it.
+            guard !state.ended, state.process == nil else { return false }
             state.process = process
             state.input = input.fileHandleForWriting
             state.output = output.fileHandleForReading
@@ -104,6 +121,7 @@ public final class CodexProcessTransport: AppServerTransport {
 
         do {
             state.withLock { $0.spawns += 1 }
+            willSpawn?()
             try process.run()
         } catch {
             end()
@@ -115,15 +133,32 @@ public final class CodexProcessTransport: AppServerTransport {
         // the transport ended — so this is the last place that can notice, and
         // nothing else will.
         guard !state.withLock({ $0.ended }) else {
-            process.terminate()
+            // `end()` ran while the spawn was in flight. It found a `Process`
+            // that was not yet running, sent no signal, and marked the transport
+            // ended — so this is the last place that can notice, and nothing
+            // else will.
+            if process.isRunning { process.terminate() }
             continuation.finish()
             throw AppServerError.disconnected
         }
         return stream
     }
 
+    /// Writes one line to the child.
+    ///
+    /// **Refuses once the child's output has ended.** The parent's copy of the
+    /// stdin pipe's read end is closed by `Process` at spawn — that is what lets
+    /// closing the write end give the child EOF — so a write after the child
+    /// exits goes into a pipe with no reader, and that raises `SIGPIPE` rather
+    /// than returning an error. A signal is not something a `catch` can answer,
+    /// and a crash here would break the rule that AgentBar's absence is
+    /// indistinguishable from its never having existed.
+    ///
+    /// The window is real rather than theoretical: a child that fails on a bad
+    /// `config.toml` writes to stderr and exits, and the very next thing the
+    /// exchange does is send `initialize`.
     public func send(_ line: Data) throws {
-        let handle = state.withLock { $0.ended ? nil : $0.input }
+        let handle = state.withLock { $0.ended || !$0.writable ? nil : $0.input }
         guard let handle else { throw AppServerError.disconnected }
         var payload = line
         payload.append(0x0A)
@@ -178,6 +213,14 @@ public final class CodexProcessTransport: AppServerTransport {
     /// and the suite is the only caller.
     var spawnCount: Int { state.withLock { $0.spawns } }
 
+    /// Run immediately before `Process.run()`, if set.
+    ///
+    /// A seam for one test and nothing else. The guard after `run()` exists for
+    /// an `end()` that arrives *during* the spawn, and that interleaving cannot
+    /// be produced from outside — so the suite is given the one moment it needs
+    /// rather than the guard going untested.
+    nonisolated(unsafe) var willSpawn: (@Sendable () -> Void)?
+
     // MARK: - Reading
 
     /// Splits stdout into lines, holding a partial line until its newline
@@ -221,8 +264,14 @@ public final class CodexProcessTransport: AppServerTransport {
 
     /// Ends the stream without touching the process — the child has already
     /// gone, or its output has.
+    ///
+    /// Marks stdin unwritable rather than closing it. Closing races a `send`
+    /// that has already taken the handle and would turn a `SIGPIPE` into an
+    /// `EBADF`; the flag stops the write before it starts, and `end()` still
+    /// owns the close.
     private func closeStream() {
         let continuation = state.withLock {
+            $0.writable = false
             let value = $0.continuation
             $0.continuation = nil
             return value
