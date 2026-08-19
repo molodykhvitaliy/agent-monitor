@@ -51,6 +51,40 @@ nonisolated public enum DurationText {
         return parts.isEmpty ? unit(0, "second", "seconds") : parts.joined(separator: " ")
     }
 
+    /// How long a usage window is, as its name: `Weekly`, `5 hours`.
+    ///
+    /// Different from `compact` on purpose. `compact` measures something that is
+    /// running and has to fit beside a ticking row; this names a fixed period
+    /// and is read as a label, so the round ones get the word people use for
+    /// them and the rest are spelled out. The design mocked exactly these two
+    /// forms — a five-hour window above a weekly one.
+    public static func window(_ duration: Duration) -> String? {
+        let minutes = Int(duration.components.seconds / 60)
+        guard minutes > 0 else { return nil }
+        switch minutes {
+        case 60:
+            return String(localized: "Hourly", comment: "Name of a one-hour usage window")
+        case 1440:
+            return String(localized: "Daily", comment: "Name of a one-day usage window")
+        case 10080:
+            return String(localized: "Weekly", comment: "Name of a one-week usage window")
+        case 43200:
+            return String(localized: "Monthly", comment: "Name of a 30-day usage window")
+        default:
+            break
+        }
+        if minutes.isMultiple(of: 1440) {
+            return String(
+                localized: "\(minutes / 1440) days", comment: "Name of a usage window, in days")
+        }
+        if minutes.isMultiple(of: 60) {
+            return String(
+                localized: "\(minutes / 60) hours", comment: "Name of a usage window, in hours")
+        }
+        return String(
+            localized: "\(minutes) minutes", comment: "Name of a usage window, in minutes")
+    }
+
     /// A reset time, in the same units with a preposition: `resets in 2h 10m`.
     public static func resets(in duration: Duration) -> String {
         String(

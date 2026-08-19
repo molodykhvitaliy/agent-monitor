@@ -78,6 +78,11 @@ let package = Package(
             dependencies: ["CodexAdapter", "AgentBarIngest", "AgentBarCore", "AgentBarJSON"],
             resources: [.copy("Fixtures")]),
 
+        .testTarget(
+            name: "CodexAppServerTests",
+            dependencies: ["CodexAppServer", "AgentBarCore"],
+            resources: [.copy("Fixtures")]),
+
         .testTarget(name: "AgentBarUITests", dependencies: ["AgentBarUI", "AgentBarCore"]),
         .testTarget(
             name: "AgentBarNotificationsTests",

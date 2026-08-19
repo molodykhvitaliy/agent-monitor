@@ -6,6 +6,7 @@ import AgentBarUI
 import AppKit
 import ClaudeCodeAdapter
 import CodexAdapter
+import CodexAppServer
 import os
 
 // The app target is the assembly point: it is the only place that knows every
@@ -47,6 +48,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// makes "released when the process dies" a guarantee rather than a hope.
     private let caffeine = CaffeineController()
     private lazy var caffeineBridge = CaffeineBridge(controller: caffeine)
+    /// Codex's limits. Built here for the same reason the caffeine controller
+    /// is: it owns the only thing in the process that spawns a child, and one
+    /// owner is what makes "no process outlives the app" a guarantee.
+    private let quota = QuotaService(clientVersion: AppDelegate.marketingVersion)
     private var menuBar: MenuBarController?
     private var ingest: IngestService?
     private var notifications: NotificationRouter?
@@ -65,6 +70,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startNotifications()
         startIngest()
         startCaffeine()
+        startQuota()
+    }
+
+    /// Begins reading Codex's limits: once now, then on the interval.
+    ///
+    /// Once now for the same reason Caffeine takes a reading at launch — the
+    /// panel may be opened a second later, and a Limits section that stays empty
+    /// for half an hour after every start reads as a broken feature rather than
+    /// as a slow one.
+    private func startQuota() {
+        Task { [quota] in await quota.start() }
     }
 
     /// Begins holding the Mac awake, with one reading taken immediately.
@@ -112,8 +128,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // `caffeinate` — but doing it here means the assertion disappears when
         // the app decides to quit rather than when the last reference does.
         caffeine.stop()
+        // Stops the interval and, with it, any chance of a child being spawned
+        // after the app has decided to go. A reading already in flight kills its
+        // own child through `AppServerExchange`'s teardown.
+        Task { [quota] in await quota.stop() }
         menuBar?.stop()
         menuBar = nil
+    }
+
+    /// The version AgentBar introduces itself by in the App Server handshake.
+    ///
+    /// Its own name and its own version — never a harness identity, and never
+    /// anything that could read as an official client (docs/dev/tos-boundary.md).
+    private static var marketingVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
     }
 
     /// Brings up the notification router and installs the delegate.
@@ -210,6 +238,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Mac should still be kept awake; and the Codex integration learns the
         // one thing no file on disk can tell it. None of them knows the others
         // exist.
+        // Held strongly by a local rather than in the capture list, which the
+        // caffeine controller has already filled: an actor is `Sendable`, and
+        // the service must outlive nothing in particular — it owns the only
+        // child process and has to be reachable for as long as events arrive.
+        let quota = quota
         relay.destination = { [weak menuBar, weak notifications, caffeine, weak codex] changes in
             menuBar?.stateDidChange(changes)
             notifications?.record(changes)
@@ -220,6 +253,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // A Codex event can only come from a hook Codex actually ran, which
             // is the proof of trust that `config.toml` can only hint at.
             if changes.contains(where: { $0.provider == .codex }) { codex?.noteDelivery() }
+            // A Codex turn ending is the moment the quota has just moved, and
+            // the one moment worth reading it outside the interval. Throttled
+            // inside the service, so a burst of endings is one reading.
+            if changes.contains(where: Self.endsACodexTurn) { quota.turnFinished() }
         }
 
         Task {
@@ -242,11 +279,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Whether a state change is a Codex turn coming to an end.
+    ///
+    /// `idle` and `failed` both are: one is `Stop`, the other `TurnFailed`, and
+    /// tokens were spent either way. `unknown` deliberately is not — the
+    /// watchdog giving up says nothing about whether a turn finished, and
+    /// letting it trigger a read would spawn a child every time a session went
+    /// quiet.
+    private static func endsACodexTurn(_ change: StateChange) -> Bool {
+        guard change.provider == .codex, change.from != nil else { return false }
+        switch change.to?.kind {
+        case .idle, .failed: return true
+        default: return false
+        }
+    }
+
     @discardableResult
     private func startMenuBar(with integrations: [any ProviderIntegration]) -> MenuBarController {
         let controller = MenuBarController(
             services: AppServices(
-                store: store, integrations: integrations, caffeine: caffeineBridge),
+                store: store, integrations: integrations, caffeine: caffeineBridge,
+                quota: quota),
             settings: NotificationSettingsBridge(
                 router: notifications ?? Self.unavailableRouter(),
                 providers: Self.providers,

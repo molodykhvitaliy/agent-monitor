@@ -92,7 +92,7 @@ Tests/
 schemas/appserver/       checked-in App Server schema, synced via make schema-sync
 docs/dev/                long-lived engineering knowledge
 docs/adr/                architecture decision records
-scripts/                 tos-scan, schema sync, release helpers
+scripts/                 tos-scan, schema sync, model generation, release helpers
 ```
 
 Logic lives in SPM modules so tests run through `swift test` without an Xcode
@@ -111,7 +111,8 @@ make test         # SPM tests, no Xcode needed
 make lint         # swiftlint --strict, then swift-format lint --strict
 make format       # apply swift-format in place
 make tos-check    # ToS boundary scan
-make check        # lint + test + tos-check — run before every commit
+make schema-sync  # diff the checked-in App Server schema against the installed codex
+make check        # lint + test + tos-check + generated models — before every commit
 ```
 
 Never edit a generated `.xcodeproj`. Change `project.yml` and regenerate.
@@ -131,6 +132,12 @@ insufficient. `LSUIElement = YES` — no Dock icon.
 - Adapters decode defensively: unknown enum cases, absent fields and schema drift
   **degrade**, never crash. Every adapter is tested against recorded real
   payloads.
+- The Codex App Server's models are **generated** from the checked-in schema, not
+  transcribed. Run `make generate-models` after `make schema-sync`; `make check`
+  fails if they disagree.
+- `CodexAppServer` is the only module that may spawn a subprocess, and every path
+  through it kills the child — enforced by `ModuleBoundaryTests` and
+  [ADR-0009](docs/adr/ADR-0009-codex-limits-come-from-a-child-that-is-always-killed.md).
 - Explicit error handling. No empty `catch`, no silent failure.
 - Explicit `timeout` on every hook handler we install — never inherit the 600s
   default.

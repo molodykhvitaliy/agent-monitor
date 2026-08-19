@@ -12,6 +12,12 @@ excluded:
   - .build
   - build
   - DerivedData
+  # Generated verbatim from schemas/appserver by scripts/generate-appserver-models.py.
+  # Style rules aimed at code somebody wrote — file length, nesting — say nothing
+  # useful about a file whose shape is the schema's. It is still checked by
+  # swift-format, so it cannot drift from the project's layout, and
+  # `make check-generated` proves it still matches the schema it came from.
+  - Sources/CodexAppServer/Generated
 
 opt_in_rules:
   - array_init

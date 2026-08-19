@@ -1,6 +1,7 @@
 import AgentBarCore
 import AgentBarIngest
 import AgentBarUI
+import CodexAppServer
 import Foundation
 
 /// What the panel is given instead of the modules it may not import.
@@ -13,15 +14,21 @@ final class AppServices: PanelServices {
     private let store: SessionStore
     private let integrations: [any ProviderIntegration]
     private let caffeineBridge: CaffeineBridge
+    /// Absent when Codex limits are not wired up at all. Distinct from "the
+    /// service found nothing", which is an empty reading and looks the same to
+    /// the panel — deliberately, because both mean the section has no Codex half.
+    private let quota: QuotaService?
 
     init(
         store: SessionStore,
         integrations: [any ProviderIntegration],
-        caffeine: CaffeineBridge
+        caffeine: CaffeineBridge,
+        quota: QuotaService? = nil
     ) {
         self.store = store
         self.integrations = integrations
         caffeineBridge = caffeine
+        self.quota = quota
     }
 
     func snapshot() async -> StoreSnapshot {
@@ -57,10 +64,17 @@ final class AppServices: PanelServices {
         return await integration.perform(action)
     }
 
-    /// Empty until step 10 reads Codex's windows off the App Server. Absent is
-    /// not an error and gets no error styling — the Limits section still ships
-    /// complete, because the Claude Code caveat row is the permanent half of it.
-    func usageWindows() async -> [UsageWindow] { [] }
+    /// The last reading Codex gave, named for the panel.
+    ///
+    /// A property read behind an actor hop, never a fetch: the service refreshes
+    /// on its own schedule, and a panel that opened a child process to fill its
+    /// Limits section would take a second and a half to appear. An empty result
+    /// is not an error and gets no error styling — the Claude Code caveat row is
+    /// the permanent half of the section either way.
+    func usageWindows() async -> [UsageWindow] {
+        guard let quota else { return [] }
+        return CodexQuota.usageWindows(from: await quota.windows())
+    }
 
     // MARK: - Caffeine
 

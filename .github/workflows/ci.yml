@@ -163,6 +163,14 @@ jobs:
       - name: Lint and check formatting
         run: make lint
 
+      # The other half of schema drift. `make schema-sync` compares the checked-in
+      # schema against the installed `codex`, which no runner has; this compares
+      # the generated Swift against that schema, which needs nothing but the
+      # checkout and swift-format. Between them a protocol change cannot reach a
+      # release with stale models behind it.
+      - name: Generated App Server models must match the schema
+        run: make check-generated
+
       - name: Test SPM modules
         run: make test
 
