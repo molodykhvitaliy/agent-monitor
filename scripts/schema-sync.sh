@@ -26,7 +26,10 @@ if [ ! -d "$CHECKED_IN" ]; then
   exit 0
 fi
 
-if diff -ruq "$CHECKED_IN" "$FRESH" >/dev/null; then
+# `-rq`, not `-ruq`: BSD diff rejects -u with -q as "conflicting output format
+# options", which made this script report drift on every run whatever the schema
+# said. The unified diff below is a separate invocation for exactly that reason.
+if diff -rq "$CHECKED_IN" "$FRESH" >/dev/null; then
   echo "✓ App Server schema unchanged"
   exit 0
 fi
@@ -34,6 +37,6 @@ fi
 echo "App Server schema drifted:"
 diff -ru "$CHECKED_IN" "$FRESH" || true
 echo
-echo "Review the diff, regenerate models, update docs/dev/platform-integration.md,"
+echo "Review the diff, run 'make generate-models', update docs/dev/platform-integration.md,"
 echo "then copy the fresh schema in with:  cp -R \"$FRESH\"/. $CHECKED_IN/"
 exit 1

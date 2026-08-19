@@ -18,7 +18,9 @@ make verify-bundle  # build, then assert the resulting bundle's layout
 make test           # swift test — no Xcode needed
 make lint           # swiftlint --strict, then swift-format lint --strict
 make format         # swift-format in place
-make check          # lint + test + tos-check — before every commit
+make check          # lint + test + tos-check + check-generated — before every commit
+make schema-sync    # diff the checked-in App Server schema against the installed codex
+make generate-models # regenerate the App Server Swift models from that schema
 ```
 
 `AgentBar.xcodeproj` is generated from `project.yml` and git-ignored. Editing it
@@ -29,14 +31,15 @@ because the suites live in the Swift package rather than in an Xcode target, so
 ⌘U in Xcode does nothing — use the terminal or a package test target's inline
 run button.
 
-Two suites are **off unless asked for**, because they do something to the machine
-rather than only to memory. Both are ordinary parts of the suite otherwise, and
-both are worth running when the surface they cover changes:
+Four suites are **off unless asked for**, because they do something to the machine
+rather than only to memory. All are ordinary parts of the suite otherwise, and
+each is worth running when the surface it covers changes:
 
 ```bash
 AGENTBAR_RENDER=/tmp/agentbar swift test --filter AgentBarUITests    # writes PNGs
 AGENTBAR_POWER_LIVE=1 swift test --filter AgentBarPowerTests         # real assertion
 AGENTBAR_HELPER_BINARY=… swift test --filter HelperTimingProof       # the built helper
+AGENTBAR_CODEX_LIVE=1 swift test --filter LiveReading                # the real account
 ```
 
 The first renders every panel state and the settings window so a person can look
@@ -60,6 +63,23 @@ AGENTBAR_HELPER_BINARY="$products/AgentBar.app/Contents/MacOS/agentbar-helper" \
 It compares against `/bin/cat` through the same harness, so what it asserts is
 the helper's own share of the run rather than what this machine charges to start
 any process at all — the number that would otherwise fail on a busy laptop.
+
+The fourth reads the developer's own Codex limits through the installed binary.
+It is gated for a different reason from the other three: it costs a network round
+trip made by Codex against a real account, which is exactly the thing that must
+never happen on a timer or on a runner. `ProcessTransportTests` covers the same
+code against a shell script standing in for `codex`, and that one runs always.
+
+### Two kinds of schema drift, caught in two places
+
+`make schema-sync` regenerates the App Server protocol schema from the installed
+`codex` and diffs it against `schemas/appserver`. It needs the binary, so it is
+local-only and the weekly `version-watch` workflow is what prompts it.
+
+`make check-generated` regenerates `Sources/CodexAppServer/Generated` from that
+checked-in schema and asks git whether anything moved. It needs no Codex and no
+network, so CI runs it on every change — a protocol update cannot land with
+stale models behind it. It is part of `make check` for the same reason.
 
 ### Recipes set their own shell flags
 

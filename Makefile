@@ -110,8 +110,34 @@ tos-check: ## Scan for Terms of Service boundary violations
 schema-sync: ## Regenerate and diff the Codex App Server protocol schema
 	@./scripts/schema-sync.sh
 
+# Two different kinds of drift, caught in two different places. `schema-sync`
+# compares the checked-in schema against the installed `codex` and needs that
+# binary, so it runs locally only; this compares the generated Swift against the
+# checked-in schema and needs neither Codex nor a network, so CI runs it on
+# every change.
+.PHONY: generate-models
+generate-models: ## Regenerate the Codex App Server Swift models from the schema
+	@$(STRICT) \
+	python3 scripts/generate-appserver-models.py; \
+	swift format format --recursive --in-place Sources/CodexAppServer/Generated
+
+.PHONY: check-generated
+check-generated: generate-models ## Assert the generated models match the checked-in schema
+	@$(STRICT) \
+	if ! git ls-files --error-unmatch Sources/CodexAppServer/Generated >/dev/null 2>&1; then \
+	  echo "error: the generated models are not tracked — this check would pass by looking at nothing" >&2; \
+	  exit 1; \
+	fi; \
+	if ! git diff --quiet HEAD -- Sources/CodexAppServer/Generated; then \
+	  echo "error: the generated App Server models are out of date" >&2; \
+	  git --no-pager diff --stat HEAD -- Sources/CodexAppServer/Generated >&2; \
+	  echo "  Run 'make generate-models' and commit the result." >&2; \
+	  exit 1; \
+	fi; \
+	echo "generated models ok: they match schemas/appserver"
+
 .PHONY: check
-check: lint test tos-check ## Everything that must pass before a commit
+check: lint test tos-check check-generated ## Everything that must pass before a commit
 
 .PHONY: clean
 clean: ## Remove build artifacts and the generated project

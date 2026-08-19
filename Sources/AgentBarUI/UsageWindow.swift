@@ -39,6 +39,40 @@ nonisolated
         name ?? String(localized: "Usage", comment: "Fallback name for an unnamed usage window")
     }
 
+    /// What a window is called, from the three things a provider might have
+    /// said about it.
+    ///
+    /// The order is the point:
+    ///
+    /// - the provider's **own name** for the bucket, when it gives one. Codex
+    ///   has sent `null` in every live reading so far, which is why the rest of
+    ///   this exists;
+    /// - the window's **length** — `Weekly`, `5 hours`. This is what the design
+    ///   mocked, and it is the only label that tells two windows of one bucket
+    ///   apart;
+    /// - the **identifier**, last, because `codex` is an id rather than a name
+    ///   and reads as one.
+    ///
+    /// A name and a length are **joined** rather than one replacing the other: a
+    /// bucket that has a name and two windows would otherwise render two
+    /// identical rows. Nothing here invents a label — with none of the three the
+    /// answer is `nil`, and `displayName` falls back to `Usage`.
+    ///
+    /// Lives here rather than beside the provider that supplies the values,
+    /// because every string in it is localised and localisation belongs where
+    /// the rest of the panel's strings are.
+    public static func label(
+        name: String?, windowDuration: Duration?, identifier: String?
+    ) -> String? {
+        var parts: [String] = []
+        if let name, !name.isEmpty { parts.append(name) }
+        if let windowDuration, let phrase = DurationText.window(windowDuration) {
+            parts.append(phrase)
+        }
+        if parts.isEmpty, let identifier, !identifier.isEmpty { parts.append(identifier) }
+        return parts.isEmpty ? nil : parts.joined(separator: DesignTokens.separator)
+    }
+
     /// `34% · resets in 2h 10m`, with the separator dropped when only one half
     /// is present, and the whole line absent when neither is.
     public func meta(now: Date) -> String? {

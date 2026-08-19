@@ -784,6 +784,115 @@ without a clock of their own.
 failure a user cannot diagnose: the only other symptom is a Mac that fell asleep
 during a build, hours later, with nothing connecting the two.
 
+## Codex limits
+
+The one quota AgentBar can legally show, and the only place it spawns a process.
+`CodexAppServer` runs `codex app-server` on stdio, asks it what the account has
+left, and kills it. Everything about that sentence is load-bearing —
+[ADR-0009](../adr/ADR-0009-codex-limits-come-from-a-child-that-is-always-killed.md).
+
+### The contract is generated, not transcribed
+
+The App Server ships its own protocol schema, and the account methods are **not
+in the prose documentation at all**. So `Sources/CodexAppServer/Generated` is
+emitted from `schemas/appserver/v2` by `scripts/generate-appserver-models.py`,
+and drift is caught in two places for two different reasons: `make schema-sync`
+compares the checked-in schema against the installed `codex` and needs that
+binary, so it is local; `make check-generated` compares the generated Swift
+against that schema and needs nothing, so CI runs it on every change.
+
+The generator drops exactly one field by policy. `ChatgptAccount.email` is
+declared by the schema and never decoded: AgentBar has no use for the account's
+identity, and a field that is never read is a field a later change cannot log,
+store or leak.
+
+Everything else is faithful, and defensive in three specific ways. Every string
+enum carries an `unrecognised(String)` case, so a plan type nobody has shipped
+degrades to a name rather than to a decoding failure. Every collection of
+generated types drops the elements it cannot read, because `rateLimitsByLimitId`
+is an open map keyed by whatever the backend meters. A malformed *required* field
+of a single object still throws — that object is not what the schema says it is,
+and the caller degrades to "unavailable" rather than rendering half a reading as
+if it were whole.
+
+### One child, one budget, always killed
+
+An exchange spawns, handshakes, asks, and ends the transport on **every** path.
+The budget is 20 seconds for the whole conversation rather than per call, because
+what needs bounding is how long a refresh can take and a per-call timeout
+multiplies rather than bounds. On expiry the child is killed, which is also what
+unblocks the reader: the stream finishes when the process goes, so a waiting call
+is answered rather than asked politely to stop.
+
+"Every path" costs two things that are easy to leave out. `Task.value` is not
+cancellation-aware, so the await sits inside a `withTaskCancellationHandler` that
+ends the transport — without it a cancelled refresh outlives its caller by up to
+the whole budget. And `end()` is idempotent by returning early, which means a
+`start()` after one would spawn a child the next `end()` would decline to kill:
+`start()` claims the transport under the same lock that records the process, and
+refuses if it has already ended.
+
+**Numbers from outside are never multiplied unchecked.** `windowDurationMins` is
+an `Int64` from the backend and the refresh interval is an `Int` from a defaults
+key a person can hand-edit; an overflow in Swift is a trap rather than an error,
+and it would abort the process past the exchange's whole error surface. Both
+multiplications are checked, and the interval is clamped at both ends besides.
+Same rule and same reason as the chunk-size arithmetic in the ingest layer — the
+third and fourth places in this repository to need it.
+
+Replies are **routed, not awaited in order**. The server answers out of order and
+interleaves notifications with replies from its first moment, so one pump reads
+the stream and hands each line to whichever call is waiting for that id.
+
+### Version-aware without a version floor
+
+The only floor anybody could name is the version this was verified against, and
+refusing to try below it would break users on a Codex that works. The server
+answers the question exactly, by rejecting a method it does not implement — as
+`-32600` rather than `-32601`, because the envelope fails against a closed enum
+of method names. AgentBar asks, remembers the answer against the version string
+the handshake reported, and forgets it the moment the user updates.
+
+### When a reading is taken
+
+Launch, a Codex turn ending, and a conservative interval — 30 minutes by default,
+configurable through the `codex.limitsRefreshMinutes` defaults key and floored at
+five. A defaults key rather than a settings control: the brief makes restraint an
+explicit product requirement and enumerates what the settings window contains,
+and a polling interval is not on that list.
+
+Two throttles, because they bound different things. The interval bounds the idle
+case; a two-minute minimum between reads bounds the busy one, where several
+agents finishing inside a minute would otherwise each start their own `codex`.
+The throttle counts **attempts**, not successes, so a Codex that fails every time
+is not re-spawned on every turn completion.
+
+**A failed refresh leaves the previous reading alone.** A read that failed says
+nothing about the numbers it failed to fetch, and replacing a ten-minute-old
+reading with an empty section would turn a transient hiccup into the interface
+claiming the data does not exist.
+
+### What reaches the panel
+
+`QuotaWindow` carries numbers and durations and no strings the user sees.
+`AgentBarUI` owns the naming, because every string in it is localised;
+`Apps/AgentBar/CodexQuota.swift` joins the two, the same shape as
+`IntegrationStatus`. Nothing above the adapter learns that Codex exists.
+
+A window is named by the provider's own `limitName` when it gives one, then by
+the window's length — `Weekly`, `5 hours`, which is what the design mocked — then
+by `limitId`, which is an identifier and reads as one. A name and a length are
+**joined** rather than one replacing the other, because a bucket with a name and
+two windows would otherwise render two identical rows.
+
+The two calls that are not the limits do different jobs. `account/read` is asked
+**only when the limits came back empty**, purely so the log can say why: asking
+first would put a second network round trip in front of every successful refresh
+to produce a line nobody reads when things work. `account/usage/read` is
+implemented, tested, and **never called** — it reports what an account has spent
+rather than what it has left, the design has no surface for it, and AgentBar does
+not make a request whose answer nothing reads.
+
 ## Concurrency
 
 Swift 6 strict concurrency. `SessionStore` is an actor and the single source of

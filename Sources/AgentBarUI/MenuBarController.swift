@@ -178,6 +178,9 @@ public final class MenuBarController {
     private func tick(open: Bool) async {
         if open {
             await model.refreshSnapshot()
+            // Cheap enough for this clock — an actor hop, no disk — and the only
+            // thing that shows a limits refresh landing while the panel is open.
+            await model.refreshUsage()
             // The panel is a live list in a borderless window, which does not
             // resize itself to its content. A row appearing or leaving changes
             // the height, so the open clock re-measures as well as re-reads.

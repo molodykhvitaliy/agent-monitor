@@ -1,0 +1,28 @@
+{
+  "rateLimits": {
+    "limitId": "codex",
+    "limitName": "Codex",
+    "primary": { "usedPercent": 12, "windowDurationMins": 1440, "resetsAt": 1787200207 },
+    "secondary": null
+  },
+  "rateLimitsByLimitId": {
+    "codex": {
+      "limitId": "codex",
+      "limitName": "Codex",
+      "primary": { "usedPercent": 12, "windowDurationMins": 1440, "resetsAt": 1787200207 },
+      "secondary": null
+    },
+    "agent": {
+      "limitId": "agent",
+      "limitName": null,
+      "primary": { "usedPercent": 5, "windowDurationMins": 60, "resetsAt": null },
+      "secondary": { "usedPercent": 99, "windowDurationMins": 43200, "resetsAt": 1789000000 }
+    },
+    "shipped-in-a-later-codex": {
+      "limitId": "shipped-in-a-later-codex",
+      "limitName": null,
+      "primary": { "usedPercent": 3, "windowDurationMins": 90, "resetsAt": 1787200207 },
+      "unheardOfField": { "nested": [1, 2, 3] }
+    }
+  }
+}

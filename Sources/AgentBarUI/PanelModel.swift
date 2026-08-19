@@ -24,8 +24,12 @@ public protocol PanelServices: AnyObject {
     func perform(
         _ action: IntegrationAction, for provider: Provider
     ) async -> IntegrationActionResult
-    /// Subscription usage windows. Empty until step 10 supplies them, which is
-    /// not an error and gets no error styling.
+    /// Subscription usage windows, as the provider last reported them.
+    ///
+    /// A property read behind an actor hop and **never** a fetch, which is why
+    /// the panel can ask for it on its open clock: whoever implements this
+    /// refreshes on a schedule of their own. Empty is not an error and gets no
+    /// error styling.
     func usageWindows() async -> [UsageWindow]
 
     /// The Caffeine indicator's state.
@@ -124,6 +128,16 @@ public final class PanelModel {
         // worse than never having shown it.
         actionResults.removeAll()
         integrations = await services.integrationStatuses()
+        await refreshUsage()
+    }
+
+    /// Re-reads the usage windows alone.
+    ///
+    /// Separate from `refreshIntegrations` because it costs an actor hop rather
+    /// than a disk read, so the open panel can run it on its one-second clock —
+    /// otherwise a refresh landing while the panel is open would not appear
+    /// until it was closed and opened again.
+    public func refreshUsage() async {
         usage = await services.usageWindows()
     }
 

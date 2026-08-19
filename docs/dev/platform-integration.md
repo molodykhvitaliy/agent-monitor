@@ -2,9 +2,10 @@
 
 Verified facts about the extension surfaces AgentBar builds on.
 
-**Verification date:** 2026-08-18 (§1 re-verified in full while building step 04;
-`AskUserQuestion`'s `tool_input` shape added 2026-08-19 for step 06; **§2
-re-verified in full on 2026-08-19 while building step 09**)
+**Verification date:** 2026-08-19 (§1 re-verified in full while building step 04;
+`AskUserQuestion`'s `tool_input` shape added 2026-08-19 for step 06; §2
+re-verified in full on 2026-08-19 while building step 09; **§3 re-verified in
+full on 2026-08-19 while building step 10**)
 **Verified against:** Claude Code `2.1.233`, Codex CLI `0.147.0`, macOS `27.0`
 
 > **Precedence rule.** Official platform documentation wins over this file, and
@@ -558,8 +559,24 @@ transcribing docs by hand.
 
 Note that this cannot run in CI as designed: the `codex` binary is not present on
 GitHub runners. Drift is therefore caught locally by `make schema-sync` and
-prompted weekly by the `version-watch` workflow. Wiring a CI-side check is part
-of step 10.
+prompted weekly by the `version-watch` workflow.
+
+**The CI-side half exists now.** `scripts/generate-appserver-models.py` emits
+`Sources/CodexAppServer/Generated` from the *checked-in* schema, and
+`make check-generated` regenerates and asks git whether anything moved. That
+needs neither Codex nor a network, so it runs on every change: the binary→schema
+gap is caught locally, the schema→Swift gap is caught in CI, and a protocol
+change cannot reach a release with stale models behind it.
+
+Only three roots are generated — `GetAccountResponse`,
+`GetAccountRateLimitsResponse`, `GetAccountTokenUsageResponse`. The v2 schema
+carries 248 definitions and the rest have no owner here.
+
+**`schema-sync.sh` was broken until 2026-08-19** and had been since it was
+written: it ran `diff -ruq`, and BSD `diff` rejects `-u` together with `-q`
+("conflicting output format options"), so the script reported drift on every run
+whatever the schema said. Fixed to `diff -rq`, with the unified diff a separate
+invocation. The schema itself had **not** drifted.
 
 `codex app-server generate-ts` produces TypeScript bindings from the same source.
 
@@ -577,12 +594,26 @@ account/workspaceMessages/read
 95 methods total. Transports: stdio (default),
 `--listen ws://127.0.0.1:PORT`, `--listen unix://`.
 
-### 3.3 Handshake
+### 3.3 Handshake and wire format
 
-`initialize` request → `initialized` notification → other methods. Requests
-before initialization fail with "Not initialized". `capabilities.experimentalApi`
-gates `process/*`, thread backgrounding and some filtering — **not** needed for
-account methods.
+`initialize` request → `initialized` notification → other methods.
+`capabilities.experimentalApi` gates `process/*`, thread backgrounding and some
+filtering — **not** needed for account methods.
+
+Reproduced on 2026-08-19 against `0.147.0`:
+
+| Fact | Evidence |
+|---|---|
+| **`"jsonrpc": "2.0"` is omitted on the wire.** Requests carry `id`/`method`/`params`; replies carry `id` plus `result` or `error` | documented — *"with the `"jsonrpc":"2.0"` header omitted on the wire"* — and confirmed by the binary |
+| The handshake is enforced | a call before it answers `{"error":{"code":-32600,"message":"Not initialized"},"id":1}` |
+| **`account/read` requires `params`** | omitting it answers `-32600 "Invalid request: missing field \`params\`"`; `{}` is accepted |
+| `account/rateLimits/read` and `account/usage/read` take **no** `params` | schema declares `"params": {"type": "null"}` |
+| An **unknown method** is `-32600`, not `-32601`, and **still carries the id** | the envelope fails against a closed enum of method names: `"unknown variant \`account/thisDoesNotExist\`, expected one of …"` |
+| Replies arrive **out of order** | id 4 answered before id 3; id 79 before id 78. Correlation by id is mandatory |
+| Notifications interleave from the first moment | `configWarning` and `remoteControl/status/changed` arrive before anything is asked for |
+| A **garbage line does not kill the server** | a non-JSON line was ignored and the next request was answered normally |
+| **Escaped forward slashes are accepted** | `account\/rateLimits\/read` — the form Foundation's `JSONEncoder` writes by default — was answered normally. AgentBar sets `withoutEscapingSlashes` anyway, to send what every other client sends |
+| The Codex version is in the handshake | `initialize` replies with `userAgent: "AgentBar/0.147.0 (Mac OS 27.0.0; arm64) unknown (AgentBar; 0.1.0)"`, so no second process is needed to learn it |
 
 ### 3.4 Response shape — corrected and expanded
 
@@ -632,11 +663,83 @@ buckets came back, keyed by `limitId`, labelled from `limitName` with a
 needs a hard deadline, and on timeout the child process must be **killed** —
 otherwise the reader blocks forever.
 
+### 3.5.1 Re-measured 2026-08-19
+
+Same account, same transport, without the artificial pauses of the first run:
+
+```
+spawn → initialize reply       0.30 s
+whole exchange to rateLimits   1.39 s
+```
+
+The 3.2 s figure stands as the pessimistic case; the budget is 20 s, which has to
+cover a bad connection without ever becoming unbounded.
+
+The reading itself: **one** bucket (`codex`), `limitName: null`, `primary` only,
+`windowDurationMins: 10080`, `secondary: null`, `credits` an object
+(`{hasCredits: false, unlimited: false, balance: "0"}`), `planType: "plus"`,
+`rateLimitResetCredits: {availableCount: 0, credits: []}`.
+
+### 3.5.2 Shutting the child down
+
+Measured four ways, and the answer is not the obvious one:
+
+| Method | Result |
+|---|---|
+| close stdin, idle | exits 0 in **0.04 s** |
+| close stdin, RPC in flight | exits 0 in **2.74 s** — it finishes answering first |
+| `SIGTERM`, idle | dies in **0.00 s** |
+| `SIGTERM`, RPC in flight | dies in **0.01 s** |
+
+So `Process.terminate()` is the shutdown and closing stdin is the courtesy before
+it, not the other way round: waiting politely for an in-flight request to finish
+would leave a child alive across a quit. `SIGTERM` is enough, which means no
+`SIGKILL`, which means **no `import Darwin`** in `CodexAppServer` and no widening
+of the socket guard in `ModuleBoundaryTests`.
+
+Closing stdin also covers the case AgentBar cannot: if the app is force-quit
+mid-exchange, the pipe's write end closes with the process and the child exits on
+its own within those 2.74 s.
+
+**The reverse direction raises `SIGPIPE`.** `Process` closes the parent's copy of
+the stdin pipe's *read* end at spawn — which is what makes closing the write end
+give the child EOF — so a write after the child has exited goes into a pipe with
+no reader. That raises `SIGPIPE`, and a signal is not something a `catch` can
+answer: reproduced by removing the guard, where the test process died with
+signal 13. The window is real rather than theoretical, because a child that fails
+on a bad `config.toml` writes to stderr and exits, and the very next thing the
+exchange does is send `initialize`. `CodexProcessTransport` marks stdin
+unwritable the moment the child's output ends.
+
+### 3.5.3 Finding the binary
+
+`codex` is at `~/.local/bin/codex` on the developer's machine (a symlink into
+`~/.codex/packages/standalone/current/bin`). `launchctl getenv PATH` is **empty**,
+so an app launched from the Finder or at login comes up with
+`/usr/bin:/bin:/usr/sbin:/sbin` and `codex` is on none of it.
+
+A build that trusted `PATH` would work perfectly from a terminal and find nothing
+once installed — the worst way for this to fail. Discovery is therefore: a
+defaults override, then the directories Codex installs into, then `PATH`.
+
 ### 3.6 Stability
 
 `codex app-server` is labelled `[experimental]` in `--help`. Isolate it behind a
 version-aware adapter, detect the Codex version, degrade to "limits unavailable"
 rather than failing.
+
+**Version-aware is not the same as a version floor.** The only floor anybody
+could name is the version this was verified against, and refusing to try below it
+would break users on a Codex that works while buying nothing. The server answers
+the question exactly, in one round trip, by rejecting a method it does not
+implement — so AgentBar asks, remembers the answer **against the version string
+from the handshake**, and forgets it the moment the user updates.
+
+The account methods are **not in the prose documentation** at all
+(<https://learn.chatgpt.com/docs/app-server> describes the transport, the
+handshake and the thread API, and mentions none of `account/*`). The schema
+shipped with the binary is the only contract there is, which is the whole
+argument for generating the models from it.
 
 ---
 

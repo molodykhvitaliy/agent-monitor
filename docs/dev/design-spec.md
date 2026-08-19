@@ -1175,16 +1175,42 @@ re-reads the state and reports what it found, which is the honest reading of a
 row whose action is "go and do this in another application". The card's footnote,
 already specified above, is what explains the rule.
 
-### Step 10 — Codex limits
+### Step 10 — Codex limits, as delivered
 
-An ordered `[UsageWindow]` of `name: String`, `percentUsed: Double?`,
-`resetsAt: Date?`. Count not fixed — a live sample returned exactly one bucket.
+An ordered `[UsageWindow]` of `name: String?`, `fractionUsed: Double?`,
+`resetsAt: Date?`. Count not fixed — the live account returns exactly one bucket.
 Each field independently omittable, degrading by omission and never by a
-placeholder zero.
+placeholder zero. Step 06's section needed **no change** to receive it.
 
-Until it exists, the Codex half of the Limits section is simply absent — no
-header, no empty state, no error — leaving the permanent Claude Code caveat row.
-Step 06 therefore ships a complete and honest Limits section without step 10.
+**Naming is the one thing step 10 added to this surface.** `limitName` came back
+`null` from every live reading, so "the server's own name, verbatim" is a path
+the real data does not take. `UsageWindow.label` fills the gap the way the
+prototype did — by the window's **length**: `Weekly`, `5 hours`. In order:
+
+| Source | Renders |
+|---|---|
+| `limitName` | the provider's name, verbatim |
+| `windowDurationMins` | `Hourly`, `Daily`, `Weekly`, `Monthly`, else `5 hours` / `2 days` / `90 minutes` |
+| `limitId` | `codex` — an identifier, and last for that reason |
+| none of them | `nil`, so the row falls back to `Usage` |
+
+A name and a length are **joined** — `Pro limit · 5 hours` — rather than one
+replacing the other: a bucket that has a name *and* two windows would otherwise
+draw two identical rows, and the list is keyed on position.
+
+When there is nothing to show — no Codex, no account, an older Codex without the
+account API, a refresh that failed before the first success — the Codex half is
+simply absent. No header, no empty state, no error styling, and the permanent
+Claude Code caveat row keeps the section whole. `PanelModel.refreshUsage()` is
+new and runs on the open panel's one-second clock, so a refresh landing while the
+panel is open appears without it being closed and opened again.
+
+**Token usage has no surface, deliberately.** `account/usage/read` returns
+lifetime tokens, a peak day and streaks — what an account has *spent*, not what
+it has left. §4.4 of the brief scopes Limits to remaining quota, §4.5 enumerates
+the settings window and does not include a stats block, and §3.3 makes "not
+overloaded" an explicit product requirement. The call is implemented and tested;
+nothing renders it.
 
 ### Whenever the dashboard is built
 
