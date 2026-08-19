@@ -36,13 +36,19 @@ struct HelperTimingProof {
     /// The measurement is taken against `/bin/cat`, which drains stdin exactly as
     /// the helper must and does nothing else, so the difference between the two
     /// is the helper: dynamic linking, reading two small files, one socket round
-    /// trip. Comparing against a baseline rather than against a fixed number is
-    /// what keeps this from failing because the machine was busy — which it will
-    /// be, since the thing being measured runs while an agent is working.
-    static let budget = Duration.milliseconds(10)
-    /// A ceiling on the whole run regardless. Codex's smallest allowance is a
-    /// thousand milliseconds, so this is a regression alarm rather than a limit.
-    static let ceiling = Duration.milliseconds(50)
+    /// trip.
+    ///
+    /// **This is a regression alarm, not the requirement.** The requirement is
+    /// Codex's own: a thousand milliseconds for a `SessionEnd` hook. Measured on
+    /// the developer's Mac the helper's own share was 5.5 ms with the machine
+    /// idle and 11 ms with several builds running — and the baseline moved with
+    /// it, from 1.0 ms to 1.9 ms, which is what a loaded machine does to every
+    /// process launch. The number here has to sit above the loaded case or the
+    /// suite fails for the machine's reasons rather than the code's.
+    static let budget = Duration.milliseconds(25)
+    /// A ceiling on the whole run regardless — still forty times inside the cap
+    /// the number actually has to respect.
+    static let ceiling = Duration.milliseconds(100)
     static let runs = 40
 
     @Test("The compiled helper delivers a payload in single-digit milliseconds")

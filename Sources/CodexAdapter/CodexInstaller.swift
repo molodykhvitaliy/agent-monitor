@@ -42,18 +42,31 @@ public enum CodexInstallerError: Error, Sendable, Hashable, CustomStringConverti
 public struct CodexInstaller {
     let hooksURL: URL
     let configURL: URL
+    /// Where AgentBar remembers what Codex had recorded when it last wrote —
+    /// **in AgentBar's own directory**, never in `~/.codex`. `nil` disables the
+    /// memory, which is what the pure merge-rule tests want and what the app
+    /// never does.
+    let baseline: CodexTrustBaselineFile?
     let fileManager: FileManager
     let clock: any TimeSource
 
     public init(
         home: URL = CodexConfigFile.defaultHome(),
+        trustBaselineURL: URL? = nil,
         fileManager: FileManager = .default,
         clock: any TimeSource = SystemTimeSource()
     ) {
         hooksURL = home.appending(path: "hooks.json")
         configURL = home.appending(path: "config.toml")
+        baseline = trustBaselineURL.map(CodexTrustBaselineFile.init(url:))
         self.fileManager = fileManager
         self.clock = clock
+    }
+
+    /// Forgets the baseline, because a delivery has settled the question the
+    /// baseline exists to ask.
+    public func clearTrustBaseline() {
+        baseline?.clear(fileManager: fileManager)
     }
 
     public var hooksFileURL: URL { hooksURL }
@@ -71,8 +84,15 @@ public struct CodexInstaller {
     /// already arrived, so the hooks demonstrably run. It outranks the trust
     /// table, because the table's format is observed rather than documented and
     /// a delivery is proof (ADR-0008).
+    ///
+    /// `trustPending` is the other half of that asymmetry, and the caller is the
+    /// only one who can supply it: AgentBar has rewritten a hook definition
+    /// since the last delivery, so whatever Codex trusted, it did not trust
+    /// *this*. Trust records are keyed by position, not by content, so a repair
+    /// that changes only the command leaves a record standing that now describes
+    /// a definition Codex will refuse to run.
     public func report(
-        for endpoint: CodexEndpoint?, hasDelivered: Bool = false
+        for endpoint: CodexEndpoint?, hasDelivered: Bool = false, trustPending: Bool = false
     ) -> CodexInstallReport {
         let root: JSONValue
         do {
@@ -117,13 +137,26 @@ public struct CodexInstaller {
                 warnings: warnings)
         }
 
-        let trust = Self.trustStatus(of: installed, source: hooksURL, in: config)
+        let recorded = baseline?.read(fileManager: fileManager)
+        let trust = Self.trustStatus(
+            of: installed, source: hooksURL, in: config, baseline: recorded)
         let state: CodexInstallState
         switch trust {
         // A delivery proves the hooks ran, whatever the trust table says or
         // fails to say. It cannot prove the opposite, which is why only this
         // direction is short-circuited.
         case _ where hasDelivered: state = .installed
+        // A definition AgentBar has rewritten since the last delivery is one
+        // Codex has never run. The record left at the same position still says
+        // `trusted_hash`, because the key is a *position* and only the hash
+        // changed — so reading it at face value would report a hook that cannot
+        // run as `Connected`, the exact outcome ADR-0008 exists to forbid.
+        //
+        // The baseline answers this properly, and answers it in both directions:
+        // a record that has *changed* since the write is consent for what is
+        // there now. This flag is the fallback for the launch whose baseline
+        // could not be written at all, and it is deliberately one-way.
+        case _ where trustPending && recorded == nil: state = .installedNotTrusted(.notTrusted)
         case .trusted: state = .installed
         case .disabled: state = .disabledInCodex
         case .notTrusted, .unknown: state = .installedNotTrusted(trust)
@@ -148,15 +181,32 @@ public struct CodexInstaller {
         // Read before the write, from the document as it was: whether the user
         // still owes Codex a trust decision is a question about the definitions
         // that were there, and after the write every definition is ours.
+        let before = CodexHooksFile.installedHooks(in: root)
         let wasTrusted =
             Self.trustStatus(
-                of: CodexHooksFile.installedHooks(in: root), source: hooksURL, in: config)
-            == .trusted
+                of: before, source: hooksURL, in: config,
+                baseline: baseline?.read(fileManager: fileManager)) == .trusted
+        // **Whole entries**, not just the commands. Codex hashes the definition,
+        // so a changed timeout or matcher invalidates trust exactly as a changed
+        // path does — and comparing only commands would miss both, because every
+        // entry AgentBar writes carries the same command string.
         let definitionsChanged =
-            CodexHooksFile.installedHooks(in: updated).map(\.command)
-            != CodexHooksFile.installedHooks(in: root).map(\.command)
+            Set(CodexHooksFile.installedHooks(in: updated)) != Set(before)
 
         let backup = try write(updated, ifDifferentFrom: root)
+        let requiresTrust = !wasTrusted || definitionsChanged
+        if requiresTrust {
+            // Written after the file, and from the records as they stand *now*:
+            // these are the hashes that must change before the definitions just
+            // written can be called trusted. A failure to record it is survivable
+            // — the caller keeps the same fact in memory for this launch — so it
+            // must not fail the install that succeeded.
+            try? baseline?.write(
+                CodexTrustBaseline(
+                    observed: Self.observedHashes(
+                        of: CodexHooksFile.installedHooks(in: updated), source: hooksURL,
+                        in: config)))
+        }
         var warnings: [CodexInstallWarning] = []
         if config.isPresent, !config.isReadable { warnings.append(.trustStateUnavailable) }
         if !config.hooks.isEmpty {
@@ -166,7 +216,7 @@ public struct CodexInstaller {
         return CodexInstallOutcome(
             changed: backup.changed,
             backupURL: backup.backupURL,
-            requiresTrust: !wasTrusted || definitionsChanged,
+            requiresTrust: requiresTrust,
             overlaps: CodexHooksFile.foreignHooks(in: updated) + config.hooks,
             warnings: warnings)
     }
@@ -181,9 +231,12 @@ public struct CodexInstaller {
         let hadOurs = !CodexHooksFile.installedHooks(in: root).isEmpty
         let updated = CodexHooksFile.uninstalled(root)
 
-        // A file AgentBar filled and has now emptied is a file the user did not
-        // have before AgentBar arrived. It goes with the hooks — but only when
-        // removing ours is what emptied it, never merely because it was empty.
+        // A file that holds nothing but AgentBar's hooks goes with them. The
+        // condition is "removing ours emptied it", so a file with anything else
+        // in it — a description, somebody else's hook, an event AgentBar never
+        // touched — survives untouched. A user who happened to keep an *empty*
+        // `hooks.json` before AgentBar arrived loses that file here; the backup
+        // taken a line below is what makes that recoverable rather than rude.
         if hadOurs, CodexHooksFile.isVacant(updated) {
             let backup = try makeBackup()
             do {
@@ -255,7 +308,10 @@ public struct CodexInstaller {
     /// trust, because the failure this exists to prevent is an integration that
     /// says `Connected` and delivers nothing.
     static func trustStatus(
-        of installed: [InstalledCodexHook], source: URL, in config: CodexConfigReading
+        of installed: [InstalledCodexHook],
+        source: URL,
+        in config: CodexConfigReading,
+        baseline: CodexTrustBaseline? = nil
     ) -> CodexTrustStatus {
         guard !installed.isEmpty else { return .notTrusted }
         guard config.isReadable else { return .unknown }
@@ -266,8 +322,24 @@ public struct CodexInstaller {
                 return .notTrusted
             }
             guard record.trustedHash != nil else { return .notTrusted }
+            // With a baseline, the record has to have *moved* since AgentBar
+            // wrote: the key names a position, so an unchanged record is consent
+            // for the definition that used to be there.
+            if let baseline, !baseline.isSatisfied(at: key, by: record) { return .notTrusted }
             if !record.enabled { sawDisabled = true }
         }
         return sawDisabled ? .disabled : .trusted
+    }
+
+    /// The hashes recorded at AgentBar's own keys right now, for a baseline.
+    static func observedHashes(
+        of installed: [InstalledCodexHook], source: URL, in config: CodexConfigReading
+    ) -> [String: String] {
+        var observed: [String: String] = [:]
+        for hook in installed {
+            guard let key = hook.trustKey(source: source) else { continue }
+            observed[key] = config.trust[key]?.trustedHash ?? ""
+        }
+        return observed
     }
 }

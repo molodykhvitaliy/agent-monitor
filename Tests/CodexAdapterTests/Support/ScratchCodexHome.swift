@@ -33,9 +33,16 @@ final class ScratchCodexHome {
 
     /// An executable file standing in for the helper, so a report can tell
     /// "installed and present" from "installed and gone".
+    ///
+    /// `path` is relative to this home, and its intermediate directories are
+    /// created — a moved app is `Old.app/Contents/MacOS/agentbar-helper`, and
+    /// the file name has to stay `agentbar-helper` or the entry is not
+    /// recognised as AgentBar's at all.
     @discardableResult
-    func makeHelper(named name: String = "agentbar-helper") throws -> URL {
-        let url = directory.appending(path: name)
+    func makeHelper(at path: String = "agentbar-helper") throws -> URL {
+        let url = directory.appending(path: path)
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         FileManager.default.createFile(
             atPath: url.path(percentEncoded: false), contents: Data("#!/bin/sh\n".utf8),
             attributes: [.posixPermissions: 0o755])

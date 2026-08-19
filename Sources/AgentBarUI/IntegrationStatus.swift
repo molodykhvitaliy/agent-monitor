@@ -168,7 +168,10 @@ nonisolated extension IntegrationCondition {
         case .notReceiving:
             String(localized: "Installed, not receiving", comment: "Integration status")
         case .settingsUnreadable:
-            String(localized: "Can't read settings.json", comment: "Integration status")
+            // Provider-neutral: the Codex row reaches this rung too, and Codex
+            // has no `settings.json`. Which file it was is already on the second
+            // line, in the report's own words.
+            String(localized: "Can't read its configuration", comment: "Integration status")
         case .needsRepair:
             String(localized: "Needs repair", comment: "Integration status")
         case .notTrusted:

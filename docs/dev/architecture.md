@@ -539,20 +539,30 @@ Four rules, each of which is a rule rather than a preference:
   reader that leaves early hands the writer `EPIPE` — a visible effect on the
   agent, from a tool that is supposed to leave no trace. What is *kept* is
   bounded; what is *consumed* is not.
-- **It is bounded everywhere else too.** Connect 100 ms, send 200 ms, reply
-  150 ms. A connection to a port nobody holds is refused immediately, which is
-  the common case; the deadlines exist for the other one, where something
-  accepts and never speaks.
-- **POSIX sockets, never Network.framework.** `ModuleBoundaryTests` restricts
-  that framework to `AgentBarIngest` so the loopback-only guarantee is a failing
-  test rather than a promise. Three syscalls and a `poll` are also faster than an
-  `NWConnection` on a path with a millisecond budget.
+- **It is bounded by one clock, not by three timeouts.** A budget of 500 ms is
+  taken once and every stage is clamped to what is left of it: connect 100 ms,
+  send 200 ms, reply 150 ms are what a *syscall* gets, and syscall timeouts do
+  not compose. A partial write restarts `SO_SNDTIMEO`, a read loop restarts it
+  per chunk, and the socket-then-port ladder would otherwise pay for both rungs —
+  three ways for "bounded" to quietly mean "twice as long as it says".
+- **POSIX sockets, never Network.framework**, and the destination is pinned to
+  `127.0.0.0/8` at the point where text becomes an address. The host is read from
+  a file, and a file can say anything; ADR-0002's guarantee is that AgentBar
+  talks to loopback and to nothing else, so this is where that is enforced rather
+  than assumed. The token file is pinned the same way — it has to sit in the
+  directory the description itself sits in, or a planted description could point
+  the helper at a credential store. `ModuleBoundaryTests` now polices both
+  `import Darwin` and the connect-shaped syscalls, so the guarantee is a failing
+  test rather than a promise.
 
 Measured on the developer's machine, Release build, 40 runs against a live
-endpoint: p50 6.5 ms, p95 7.6 ms for the whole spawn-to-exit run, against a
-1.0 ms p50 for `/bin/cat` through the same harness. The helper's own share is
-therefore around five milliseconds, nearly all of it dynamic linking, inside a
-budget of a thousand. `HelperTimingProof` is the gated suite that measures it.
+endpoint, spawn to exit: **p50 6.5 ms with the machine idle and 11 ms with
+several builds running**, against a `/bin/cat` baseline of 1.0 ms and 1.8 ms
+through the same harness. The helper's own share is therefore five to ten
+milliseconds, nearly all of it dynamic linking, inside a budget of a thousand.
+`HelperTimingProof` is the gated suite that measures it, and it compares against
+that baseline rather than a fixed number — otherwise it fails for the machine's
+reasons rather than the code's.
 
 ### No secret crosses the disk
 
@@ -574,9 +584,19 @@ that file from ever becoming a value AgentBar holds.
 
 The reading is evidence, not proof: the format is observed rather than
 documented. What is proof is a delivery — a Codex event cannot arrive from a hook
-that did not run — so `report(for:hasDelivered:)` takes that fact from the app
-and lets it outrank the table. Everything else resolves to *not trusted*, which
-asks the user to look rather than claiming that silence is success. ADR-0008.
+that did not run — so `report(for:hasDelivered:trustPending:)` takes that fact
+from the app and lets it outrank the table. Everything else resolves to *not
+trusted*, which asks the user to look rather than claiming that silence is
+success.
+
+The trap in the middle is worth naming, because a review found it and no test
+had: a trust record is keyed to a hook's **position**, so a repair that rewrites
+the command leaves the record standing at the same key, looking exactly like
+consent for a definition Codex will now refuse to run. Reading the table alone
+would put `Connected` under an integration that is inert — the one outcome this
+design exists to prevent. So AgentBar remembers, in its own directory, what was
+recorded at the moment it wrote: a record that has *changed since* is consent for
+what is there now, and one that has not is not. ADR-0008.
 
 ## The menu bar
 

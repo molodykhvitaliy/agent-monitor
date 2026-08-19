@@ -61,6 +61,11 @@ public struct EndpointDiscoveryFile: EndpointPublishing {
         self.url = url
     }
 
+    /// Where the description is read from. The Codex helper needs it to check
+    /// that the token file the description names sits beside the description
+    /// itself, rather than anywhere on the disk.
+    public var fileURL: URL { url }
+
     /// Reached for rather than stored: `FileManager` is not `Sendable`.
     private var fileManager: FileManager { .default }
 

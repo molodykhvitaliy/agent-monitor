@@ -36,9 +36,10 @@ Codex trusted our hooks?** Three facts constrain the answer.
 - **The hash cannot be recomputed.** Four candidate pre-images were tried against
   three live records; none matched.
 - `--dangerously-bypass-hook-trust` exists, and using it would make AgentBar the
-  reason a user's hooks ran without review. This is the only place in the
-  repository that names the flag, and naming it here is the point: the decision
-  is recorded rather than left to memory.
+  reason a user's hooks ran without review. The flag is named in this ADR, in
+  `platform-integration.md` §2.5 and in `tos-boundary.md`'s checklist — all
+  prose, none of it code. No source file, test or configuration in this
+  repository contains it, and `make tos-check` fails if one starts to.
 
 ## Decision drivers
 
@@ -62,25 +63,48 @@ Codex trusted our hooks?** Three facts constrain the answer.
    consequence of a Codex release.
 3. **Ignore trust and report "installed".** Honest about what AgentBar wrote and
    useless about whether it works. It is the design the brief exists to reject.
-4. **Read the trust table, and let a delivered event outrank it.** Chosen.
+4. **Read the trust table, and let a delivered event outrank it.** Chosen, with
+   the correction below.
 
 ## Decision
 
 **Trust is observed from two sources, and the stronger one is behaviour.**
 
-`CodexInstaller.report(for:hasDelivered:)` decides in this order:
+`CodexInstaller.report(for:hasDelivered:trustPending:)` decides in this order:
 
 1. **A Codex event has arrived since launch → `installed`.** A hook that did not
    run cannot deliver anything, so a delivery is proof. The app feeds this in
    from the push leg, where a `StateChange` carries its provider.
-2. **Every installed entry has a `trusted_hash` and none is disabled →
-   `installed`.** The `[hooks.state]` reading, used as evidence.
+2. **Every installed entry has a `trusted_hash`, none is disabled, and the
+   record has moved since AgentBar last wrote the definition → `installed`.**
 3. **Every entry has a record and at least one is disabled → `disabledInCodex`.**
    Trusted and switched off is a different sentence, and a `Trust` button cannot
    fix it.
 4. **Anything else → `installedNotTrusted`.** No record, an unreadable
    `config.toml`, a key format that has moved — all of it resolves to the state
    that asks the user to open `/hooks`.
+
+### The correction: a record is a position, not a definition
+
+The first version of this decision read the table at face value, and a review
+found what that costs. A trust key is
+`<source>:<event>:<group>:<hook>` — a **position**. AgentBar's own repair rewrites
+the command at the same position, so the record survives unchanged, still saying
+`trusted_hash`, now describing a definition whose hash no longer matches and
+which Codex will therefore skip. Reading it would have put `Connected` under an
+inert integration on the most ordinary path there is: the documented `cp -R …
+/Applications`, which produces `helperMoved` drift and a `Repair` button.
+
+So AgentBar records, in **its own** directory, the hashes present at the moment
+it wrote (`CodexTrustBaseline`). A record that has *changed since* is consent for
+what is there now; one that has not is consent for what used to be there. The
+question the baseline asks is settled by a delivery, and the file is deleted when
+one arrives. If the baseline cannot be written at all, an in-memory flag keeps
+the same pessimism for the launch that wrote it — one-way, because only the
+baseline can promote a verdict, never demote it.
+
+This remains a note about AgentBar's own action rather than a copy of somebody
+else's decision, which is the line this ADR draws.
 
 The asymmetry is deliberate. A delivery can only make the verdict *better*, and
 uncertainty always makes it *worse*. If the undocumented key format changes, the
@@ -111,7 +135,12 @@ into a value AgentBar could log by accident.
 - The proof-by-delivery signal is per launch and is not persisted. A restart of
   AgentBar with an unreadable `config.toml` shows "not trusted" until the next
   Codex event. Persisting it was rejected as a second source of truth about
-  somebody else's decision.
+  somebody else's decision — the baseline is not the same thing, because it
+  records what AgentBar wrote and when, not what the user decided.
+- The baseline is one small file in AgentBar's application support directory. It
+  is disposable: losing it means the table is read at face value again, which is
+  the behaviour this ADR corrected, so the in-memory flag covers the launch that
+  wrote it and the next delivery settles it for good.
 - One key format remains unconfirmed: `[hooks.state]` keys for entries declared
   in `hooks.json` rather than in `config.toml`. Confirming it needs a real
   session, and until then the fallback above is what carries the feature.

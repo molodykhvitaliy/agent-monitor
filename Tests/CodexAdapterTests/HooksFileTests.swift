@@ -121,6 +121,14 @@ struct HooksFileTests {
         #expect(!CodexHookCommand.isAgentBarCommand("echo agentbar-helper"))
         #expect(!CodexHookCommand.isAgentBarCommand("/opt/agentbar-helper-wrapper"))
         #expect(!CodexHookCommand.isAgentBarCommand(""))
+        // Quoted, ends in the right file name, and still somebody else's line:
+        // treating it as ours would delete it on uninstall.
+        #expect(!CodexHookCommand.isAgentBarCommand("'echo hi; /opt/agentbar-helper'"))
+        #expect(!CodexHookCommand.isAgentBarCommand("'$(id) /opt/agentbar-helper'"))
+        #expect(!CodexHookCommand.isAgentBarCommand("'relative/agentbar-helper'"))
+        // A path with a space in it is still a path, which is why the command is
+        // quoted in the first place.
+        #expect(CodexHookCommand.isAgentBarCommand("'/Users/dev/My Apps/agentbar-helper'"))
     }
 
     @Test("A path with a quote in it survives the round trip")

@@ -513,8 +513,9 @@ Two consequences for the product:
    and the installer detects a moved app rather than silently rewriting it.
 
 `--dangerously-bypass-hook-trust` exists. AgentBar never uses it and never
-suggests it; ADR-0008 is where that decision is recorded, and it is the only
-place in the repository that names the flag.
+suggests it; ADR-0008 records the decision. The flag is named only in prose —
+here, in that ADR, and in `tos-boundary.md`'s checklist — and `make tos-check`
+fails the moment it appears in code.
 
 ### 2.6 Timeouts
 
@@ -525,8 +526,9 @@ milliseconds, which alone rules out a Python or shell bridge.
 
 AgentBar sets an explicit timeout on every handler it installs: 2 seconds
 everywhere, 1 second on `SessionEnd`. Measured for the compiled helper on
-2026-08-19, Release build, 40 runs against a live endpoint: **p50 6.5 ms, p95
-7.6 ms** spawn to exit, against 1.0 ms for `/bin/cat` through the same harness.
+2026-08-19, Release build, 40 runs against a live endpoint, spawn to exit:
+**p50 6.5 ms on an idle machine and 11 ms under load**, against a `/bin/cat`
+baseline of 1.0 ms and 1.8 ms through the same harness.
 
 ### 2.7 notify — unavailable in practice
 

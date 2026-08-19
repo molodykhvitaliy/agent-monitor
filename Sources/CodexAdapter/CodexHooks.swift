@@ -148,9 +148,17 @@ public enum CodexHookCommand {
         } else {
             path = trimmed
         }
-        guard !path.isEmpty, URL(filePath: path).lastPathComponent == executableName else {
-            return nil
-        }
+        // An absolute path, and nothing that a shell would read as more than
+        // one word. `'echo hi; /tmp/agentbar-helper'` is quoted, ends in the
+        // right file name, and is emphatically not something AgentBar wrote —
+        // and treating it as ours would mean deleting it on uninstall. Spaces
+        // stay legal, because a path may contain one and quoting is why this
+        // module quotes.
+        let metacharacters: Set<Character> = [";", "&", "|", "`", "$", "<", ">", "(", ")", "\n"]
+        guard !path.isEmpty, path.hasPrefix("/"),
+            !path.contains(where: metacharacters.contains),
+            URL(filePath: path).lastPathComponent == executableName
+        else { return nil }
         return path
     }
 

@@ -45,26 +45,58 @@ final class CodexIntegration: ProviderIntegration {
     /// `[hooks.state]` table is only evidence, and evidence in a format Codex
     /// does not document.
     private var hasDelivered = false
+    /// Whether AgentBar has rewritten a hook definition that Codex has not run
+    /// since.
+    ///
+    /// The counterweight to `hasDelivered`, and the reason a repair cannot read
+    /// as `Connected`. Codex keys a trust record to a hook's **position**, so
+    /// rewriting the command at the same position leaves the old record in place
+    /// looking exactly like consent — for a definition whose hash no longer
+    /// matches and which Codex will therefore skip. Only this object knows the
+    /// rewrite happened; the disk cannot tell.
+    private var trustPending = false
 
-    init(ingest: IngestService?, home: URL? = nil, helperURL: URL? = nil) {
+    /// Where AgentBar remembers what Codex had trusted when it last wrote.
+    ///
+    /// In AgentBar's own directory, never in `~/.codex`. Absent only when the
+    /// application support directory could not be resolved at all, in which case
+    /// the launch's own `trustPending` flag is all that carries the fact.
+    private let trustBaselineURL: URL?
+
+    init(
+        ingest: IngestService?,
+        home: URL? = nil,
+        helperURL: URL? = nil,
+        trustBaselineURL: URL? = nil
+    ) {
         self.ingest = ingest
         self.home = home ?? CodexConfigFile.defaultHome()
         self.helperURL = helperURL ?? CodexHookCommand.bundledHelperURL()
+        self.trustBaselineURL =
+            trustBaselineURL
+            ?? (try? IngestPaths.applicationSupport())?.directory
+            .appending(path: "codex-trust-baseline.json")
     }
 
     var provider: Provider { .codex }
 
     /// Called from the push leg when a change carrying `.codex` arrives.
     func noteDelivery() {
+        trustPending = false
         guard !hasDelivered else { return }
         hasDelivered = true
         Self.logger.notice("codex hooks are live — an event arrived")
+        // The baseline exists to ask "has Codex reviewed what we wrote?". A
+        // delivery answers it, so the question — and the file — can go.
+        let installer = CodexInstaller(home: home, trustBaselineURL: trustBaselineURL)
+        Task.detached { installer.clearTrustBaseline() }
     }
 
     func status() async -> IntegrationStatus {
         let endpoint = await currentEndpoint()
         let report = await Self.readReport(
-            home: home, endpoint: endpoint, hasDelivered: hasDelivered)
+            home: home, baselineURL: trustBaselineURL, endpoint: endpoint,
+            hasDelivered: hasDelivered, trustPending: trustPending)
         var status = Self.status(from: report)
         // A bundle with no helper in it cannot install anything, and the report
         // has no way to say so — it is a fact about this build, not about the
@@ -88,9 +120,18 @@ final class CodexIntegration: ProviderIntegration {
     /// helper each block for as long as the volume takes, and on the main thread
     /// that is a frozen panel at the moment it is being presented.
     nonisolated private static func readReport(
-        home: URL, endpoint: CodexEndpoint?, hasDelivered: Bool
+        home: URL, baselineURL: URL?, endpoint: CodexEndpoint?, hasDelivered: Bool,
+        trustPending: Bool
     ) async -> CodexInstallReport {
-        CodexInstaller(home: home).report(for: endpoint, hasDelivered: hasDelivered)
+        // `Task.detached`, not a bare `nonisolated async` call. The app target
+        // builds with `SWIFT_APPROACHABLE_CONCURRENCY`, under which a
+        // `nonisolated async` function runs on its **caller's** executor — and
+        // the caller here is the main actor, which is precisely the frozen panel
+        // this indirection exists to avoid.
+        await Task.detached {
+            CodexInstaller(home: home, trustBaselineURL: baselineURL).report(
+                for: endpoint, hasDelivered: hasDelivered, trustPending: trustPending)
+        }.value
     }
 
     static func status(from report: CodexInstallReport) -> IntegrationStatus {
@@ -186,31 +227,49 @@ final class CodexIntegration: ProviderIntegration {
                         """,
                     comment: "Install refused because the bundle has no helper"))
         }
-        let outcome = await Self.install(home: home, endpoint: CodexEndpoint(helperURL: helperURL))
-        return outcome
+        let (result, requiresTrust) = await Self.install(
+            home: home, baselineURL: trustBaselineURL,
+            endpoint: CodexEndpoint(helperURL: helperURL))
+        if requiresTrust {
+            // Whatever Codex trusted, it did not trust what was just written.
+            // Both flags move together: the delivery that would clear this is
+            // the next one, from the definition that now exists.
+            trustPending = true
+            hasDelivered = false
+        }
+        return result
     }
 
     /// Writes **off the main actor**, for the same reason the read is: this one
     /// reads the file, takes a backup and writes it back.
+    ///
+    /// `requiresTrust` comes back rather than only reaching the log, because it
+    /// is what the caller has to remember: Codex keys trust to a position, so
+    /// the record left behind by a definition AgentBar has just replaced would
+    /// otherwise read as consent for the one it wrote.
     nonisolated private static func install(
-        home: URL, endpoint: CodexEndpoint
-    ) async -> IntegrationActionResult {
-        do {
-            let outcome = try CodexInstaller(home: home).install(endpoint)
-            // A write that needs trusting is still a write that succeeded, and
-            // must not be painted as a failure. The row's next report is
-            // `Installed, not trusted`, which carries the instruction as its own
-            // second line — that is the designed path through this flow, and the
-            // reason the state exists at all.
-            if outcome.requiresTrust {
-                Self.logger.notice("codex hooks written; they are inert until the user trusts them")
+        home: URL, baselineURL: URL?, endpoint: CodexEndpoint
+    ) async -> (result: IntegrationActionResult, requiresTrust: Bool) {
+        await Task.detached {
+            do {
+                let outcome = try CodexInstaller(home: home, trustBaselineURL: baselineURL)
+                    .install(endpoint)
+                // A write that needs trusting is still a write that succeeded,
+                // and must not be painted as a failure. The row's next report is
+                // `Installed, not trusted`, which carries the instruction as its
+                // own second line — the designed path through this flow, and the
+                // reason the state exists at all.
+                if outcome.requiresTrust {
+                    logger.notice(
+                        "codex hooks written; they are inert until the user trusts them")
+                }
+                return (outcome.changed ? .changed : .unchanged, outcome.requiresTrust)
+            } catch let error as CodexInstallerError {
+                return (.failed(error.description), false)
+            } catch {
+                return (.failed("\(error)"), false)
             }
-            return outcome.changed ? .changed : .unchanged
-        } catch let error as CodexInstallerError {
-            return .failed(error.description)
-        } catch {
-            return .failed("\(error)")
-        }
+        }.value
     }
 
     /// The `Trust` button, which cannot trust anything.
@@ -222,7 +281,8 @@ final class CodexIntegration: ProviderIntegration {
     private func recheckTrust() async -> IntegrationActionResult {
         let endpoint = await currentEndpoint()
         let report = await Self.readReport(
-            home: home, endpoint: endpoint, hasDelivered: hasDelivered)
+            home: home, baselineURL: trustBaselineURL, endpoint: endpoint,
+            hasDelivered: hasDelivered, trustPending: trustPending)
         switch report.state {
         case .installed:
             return .changed

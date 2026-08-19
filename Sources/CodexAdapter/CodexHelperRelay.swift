@@ -73,9 +73,13 @@ public struct CodexHelperRelay: Sendable {
     ///
     /// A test seam, and the only one: without it the timing proof would measure
     /// a helper that could not find the endpoint it was supposed to be talking
-    /// to, and would call that fast. It can do nothing but point the helper at a
-    /// different file — there is no path here that reaches an endpoint the
-    /// running app did not publish.
+    /// to, and would call that fast.
+    ///
+    /// What it can reach is bounded by two rules that hold whatever the file
+    /// says: the destination must be on the loopback network, and the token must
+    /// live in the same directory as the description that names it. So the worst
+    /// a planted file can do is point the helper at a different local port with
+    /// a token the planter already had.
     public static let discoveryOverrideVariable = "AGENTBAR_ENDPOINT_FILE"
 
     /// The discovery file the running app publishes, in the app support
@@ -97,12 +101,26 @@ public struct CodexHelperRelay: Sendable {
             return .payloadTooLarge(bytes: payload.count)
         }
         guard let descriptor = discovery.read() else { return .endpointUnknown }
+        // The token is read from the path the description names, so the
+        // description must not be able to name *any* path — a planted file
+        // naming a credential store elsewhere in the home directory would turn
+        // the helper into a reader of one. It has to sit in the directory the
+        // description itself sits in, which is where the endpoint publishes
+        // both of them.
+        guard Self.isBesideDescription(descriptor.tokenPath, discoveryURL: discovery.fileURL) else {
+            return .undelivered(reason: "the endpoint's token file is not beside its description")
+        }
         guard let token = Self.readToken(at: descriptor.tokenPath) else {
             return .undelivered(reason: "the endpoint's token file could not be read")
         }
 
         let request = Self.request(
             payload: payload, token: token, host: descriptor.host, port: descriptor.port)
+        // One deadline for the whole relay, both destinations included. Codex
+        // caps a `SessionEnd` hook at a second, and a ladder whose rungs each
+        // carried their own budget would quietly cost twice what the timeouts
+        // say — which is how a hook that "cannot delay an agent" delays one.
+        let deadline = ContinuousClock.now + timeouts.total
         var lastFailure: String?
         // The Unix socket first, when the endpoint managed to bind one: it skips
         // the TCP stack and cannot be answered by anything but the process that
@@ -117,7 +135,7 @@ public struct CodexHelperRelay: Sendable {
         for destination in Self.destinations(for: descriptor) {
             do {
                 let reply = try RelaySocket.exchange(
-                    request, with: destination, timeouts: timeouts)
+                    request, with: destination, timeouts: timeouts, deadline: deadline)
                 return .delivered(status: Self.status(of: reply) ?? 0)
             } catch {
                 lastFailure = "\(error)"
@@ -133,6 +151,13 @@ public struct CodexHelperRelay: Sendable {
         }
         destinations.append(.loopback(host: descriptor.host, port: descriptor.port))
         return destinations
+    }
+
+    /// Whether `path` names a file in the same directory as the description.
+    static func isBesideDescription(_ path: String, discoveryURL: URL) -> Bool {
+        let token = URL(filePath: path).standardizedFileURL.deletingLastPathComponent()
+        let description = discoveryURL.standardizedFileURL.deletingLastPathComponent()
+        return token.path(percentEncoded: false) == description.path(percentEncoded: false)
     }
 
     /// The token as the endpoint wrote it, validated rather than trusted.
