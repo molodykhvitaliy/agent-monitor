@@ -40,9 +40,14 @@ more than one command therefore begins with `$(STRICT)`, which is literally
 `make build` exits 65.
 
 `make verify-bundle` exists for the same reason a test does: it asserts
-`LSUIElement` is still true and the helper is still at
-`Contents/MacOS/agentbar-helper`, resolving the products directory through
-`xcodebuild -showBuildSettings` rather than guessing. It depends on `build`,
+`LSUIElement` is still true, that the helper is still at
+`Contents/MacOS/agentbar-helper`, and that AgentBar's four notification sounds
+are at the **top** of `Contents/Resources` — resolving the products directory
+through `xcodebuild -showBuildSettings` rather than guessing. The sounds are
+checked because `UNNotificationSound` looks only in the bundle root and in
+`~/Library/Sounds`, so a resource phase that quietly stopped copying them would
+ship a matrix whose every default silently plays the system sound, with no error
+anywhere ([ADR-0006](../adr/ADR-0006-notification-sounds-are-files-agentbar-can-resolve.md)). It depends on `build`,
 because certifying a bundle left over from an earlier commit is the failure it
 exists to catch. CI runs it after `make build`, where the rebuild is a no-op.
 

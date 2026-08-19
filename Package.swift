@@ -59,6 +59,9 @@ let package = Package(
             resources: [.copy("Fixtures")]),
 
         .testTarget(name: "AgentBarUITests", dependencies: ["AgentBarUI", "AgentBarCore"]),
+        .testTarget(
+            name: "AgentBarNotificationsTests",
+            dependencies: ["AgentBarNotifications", "AgentBarCore"]),
 
         // Reads source files rather than symbols: it guards boundaries the
         // compiler cannot express.

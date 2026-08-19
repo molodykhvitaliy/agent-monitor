@@ -12,10 +12,10 @@ import os
 /// is why `refresh()` exists and why the read is the service's status rather
 /// than a stored preference.
 ///
-/// > The settings screen this belongs to is deferred. Until it lands the toggle
-/// > lives in the footer's Settings menu, which is the smallest honest surface:
-/// > a menu-bar app the user has to launch by hand every morning is not one they
-/// > keep.
+/// > It lives in the settings window's `General` section (step 07). A menu-bar
+/// > app the user has to launch by hand every morning is not one they keep,
+/// > which is why it was the first setting to exist and the reason the window
+/// > has a `General` section for step 08's Caffeine to join.
 @Observable
 @MainActor
 public final class LaunchAtLogin {
@@ -31,9 +31,13 @@ public final class LaunchAtLogin {
         isEnabled = SMAppService.mainApp.status == .enabled
     }
 
-    /// Re-reads the service's own status. Called whenever the menu is about to
-    /// open: the user can revoke the registration in System Settings and
-    /// AgentBar is not told.
+    /// Re-reads the service's own status.
+    ///
+    /// Called from `SettingsModel.refresh()` — on the window appearing and every
+    /// time the app becomes active again. The user can revoke the registration
+    /// in System Settings › General › Login Items and AgentBar is not told, so a
+    /// toggle read once at launch would offer to unregister something already
+    /// unregistered.
     public func refresh() {
         isEnabled = SMAppService.mainApp.status == .enabled
     }

@@ -9,5 +9,22 @@
 	     Developer ID and notarization instead (step 12). -->
 	<key>com.apple.security.app-sandbox</key>
 	<false/>
+
+	<!-- com.apple.developer.usernotifications.time-sensitive is deliberately
+	     ABSENT, and this is the record of why. It needs no approval from Apple,
+	     but it does need a provisioning profile: adding it makes xcodebuild fail
+	     with "AgentBar requires a provisioning profile", which would cost a
+	     clean checkout its ability to build with no Apple Developer account —
+	     the invariant CODE_SIGN_IDENTITY "-" exists to protect. Verified by
+	     experiment, 2026-08-19.
+
+	     The notifications still ask for interruptionLevel .timeSensitive. An
+	     unentitled app has the level silently downgraded to .active, so the
+	     notification is delivered either way and the entitlement is a privilege
+	     to be gained rather than a dependency to be met. It belongs to step 12,
+	     which introduces Developer ID signing and a profile with it.
+
+	     com.apple.developer.usernotifications.critical is never requested:
+	     that one is for health and safety, which this is not. -->
 </dict>
 </plist>

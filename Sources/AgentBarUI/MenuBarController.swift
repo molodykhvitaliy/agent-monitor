@@ -31,15 +31,19 @@ public final class MenuBarController {
     static let pushCoalescingInterval: Duration = .milliseconds(150)
 
     private let model: PanelModel
-    private let launchAtLogin = LaunchAtLogin()
+    private let settingsWindow: SettingsWindowController
     private var statusItem: StatusItemController?
     private var panel: PanelController?
     private var timer: Timer?
     private var pushPending = false
     private var screenObserver: NSObjectProtocol?
 
-    public init(services: any PanelServices) {
+    /// Two seams rather than one: the panel and the settings window need
+    /// different things from the assembly, and a single protocol carrying both
+    /// would make every panel test declare a sound matrix it does not use.
+    public init(services: any PanelServices, settings: any SettingsServices) {
         model = PanelModel(services: services)
+        settingsWindow = SettingsWindowController(model: SettingsModel(services: settings))
     }
 
     public func start() {
@@ -51,7 +55,7 @@ public final class MenuBarController {
         panel = PanelController(
             content: PanelView(
                 model: model,
-                onSettings: { [weak self] in self?.showSettingsMenu() },
+                onSettings: { [weak self] in self?.showSettings() },
                 onQuit: { NSApp.terminate(nil) }
             )
             .environment(\.accessibilityPreferences, AccessibilityPreferences.shared),
@@ -82,6 +86,7 @@ public final class MenuBarController {
         }
         panel?.hide()
         panel = nil
+        settingsWindow.close()
         statusItem?.remove()
         statusItem = nil
     }
@@ -193,35 +198,26 @@ public final class MenuBarController {
 
     // MARK: - Settings
 
-    /// The gear's menu until the settings screen exists.
-    ///
-    /// One item, because one thing is genuinely ready: an `LSUIElement` app the
-    /// user has to launch by hand every morning is not one they keep. The sound
-    /// matrix, quiet hours and Caffeine belong to the deferred screen, and this
-    /// menu is not where they get invented.
-    private func showSettingsMenu() {
-        launchAtLogin.refresh()
-        let menu = NSMenu()
-
-        let item = NSMenuItem(
-            title: String(localized: "Launch at Login", comment: "Settings menu item"),
-            action: #selector(toggleLaunchAtLogin),
-            keyEquivalent: "")
-        item.target = self
-        item.state = launchAtLogin.isEnabled ? .on : .off
-        menu.addItem(item)
-
-        if let error = launchAtLogin.lastError {
-            menu.addItem(.separator())
-            let failure = NSMenuItem(title: error, action: nil, keyEquivalent: "")
-            failure.isEnabled = false
-            menu.addItem(failure)
-        }
-
-        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+    /// Opens the settings window, which is what the footer gear was reserved
+    /// for. The panel closes first: it is a transient surface and would be
+    /// dismissed by the window taking focus anyway, so doing it deliberately
+    /// avoids a frame of both being on screen.
+    public func showSettings() {
+        panel?.hide()
+        scheduleTimer(open: false)
+        settingsWindow.show()
     }
 
-    @objc private func toggleLaunchAtLogin() {
-        launchAtLogin.set(!launchAtLogin.isEnabled)
+    /// Opens the panel because the user clicked a notification.
+    ///
+    /// Taking key focus, and activating: clicking a banner is an explicit
+    /// request to look at AgentBar, the same kind of request as pressing the
+    /// gear. Without `NSApp.activate` a `.nonactivatingPanel` opened from an
+    /// inactive accessory app can fail to become key — and `windowDidResignKey`
+    /// would then close it again immediately, which reads as the click having
+    /// done nothing.
+    public func revealPanel() {
+        NSApp.activate()
+        openTakingKeyFocus()
     }
 }

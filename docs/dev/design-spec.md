@@ -759,10 +759,21 @@ accepted, not overlooked: the panel is one click away and disambiguates.
 a small AgentBar badge in its corner: 38 pt image at radius 10, 16 pt badge at
 radius 5 offset −3 / −3, ringed 2 pt in the banner's own background. That
 composite has to be generated and attached as a `UNNotificationAttachment` — one
-static PNG per provider, rendered once. **Verify it in a real banner before
-committing to it.** If the OS will not place it that way, fall back to the
-standard leading-icon slot with the provider glyph and drop the composite: match
-the intent, not the pixel.
+static PNG per provider, rendered once.
+
+> **Deviation, step 07: the corner badge is dropped.** What ships is the provider
+> tile alone, 38 pt at 2×, rendered by `ProviderBadgeImage` and written to
+> Caches. On macOS a banner already shows the **app's own icon** in its leading
+> slot and places an attachment as a separate thumbnail beside it, so the
+> AgentBar badge in the corner would repeat the app icon three centimetres from
+> itself. The composite's job — "which agent is this from" — is done by the tile.
+> This section's own instruction for that case is to match the intent, not the
+> pixel.
+>
+> The attachment is re-rendered on demand: `UNNotificationAttachment` **moves**
+> the file it is given into the notification's own store, so every badge is
+> consumed by its first use. When it cannot be produced at all the title becomes
+> `Question · Claude Code · agentbar-web`, as specified above.
 
 **Reserved.** Two `UNNotificationAction`s — `Approve` and `Deny` — are planned
 and out of scope. One category per event type exists so they can be added
@@ -772,6 +783,99 @@ may break when they appear.
 **Never auto-approve.** No notification path — timeout, dismissal, dropped
 delivery, failure to render — may ever resolve into granting a permission. This
 applies pre-emptively to those reserved buttons.
+
+---
+
+## Settings window
+
+Added by step 07. This document deferred a settings screen and reserved the
+footer gear for it; the sound matrix has to be editable, so the screen exists
+now.
+
+**It is deliberately not the panel's vocabulary.** A settings window is system
+chrome: an ordinary titled `NSWindow` with a grouped SwiftUI `Form` and native
+controls. Three reasons. macOS users already know what one looks like and how it
+behaves. Reproducing the panel's glass in a resizable window would need the dark
+chip inks [design-system.md](design-system.md) says do not exist yet, which would
+mean designing rather than transcribing. And a form of standard controls inherits
+every accessibility behaviour — focus order, VoiceOver, Full Keyboard Access —
+that the panel had to build by hand.
+
+What it does take from the design system is the type scale, the ink tokens, the
+provider badge and the **state shapes**, so a Waiting row in the matrix is
+recognisably the same Waiting as the session row and the status glyph.
+
+**Activation.** Unlike the panel, this window activates the app and takes key
+status. It is asked for by name with a click, and a window the user cannot type
+in would be worse than the focus rule it would be honouring. Closing it calls
+`NSApp.hide` — otherwise an accessory app is left active with nothing on screen
+and every keystroke going nowhere.
+
+Minimum 560 × 520, opening at 620 × 620, resizable.
+
+### Sections, in order
+
+| Section | Contents |
+|---|---|
+| *(unnamed, conditional)* | The authorisation problem, when there is one. First in the window, because every other setting is moot if macOS will not deliver. Carries the failed state shape, the sentence, and either **Allow…** or **Open System Settings** |
+| `Events` | The global switch, the matrix, one **Test {Provider}** button per registered provider, and the last action's result |
+| `Quiet Hours` | Enable, plus From and Until at half-hour granularity |
+| `While You're Working` | Enable, plus the application list with add and remove |
+| `Sounds` | **Add Sound File…**, **Reveal Sounds Folder**, and every current sound problem |
+| `General` | Launch at login, and its last error if it has one |
+
+Section headers use the panel's `sectionLabel` — 11 pt semibold, uppercase,
+tracked — in `ink400`. Every section has a footnote in Caption explaining the one
+thing about it a user cannot infer.
+
+### The matrix
+
+A `Grid`: one row per verb, one column per **registered** provider. The columns
+come from the providers the app assembly actually registers, never from
+`Provider.allCases` — a Codex column before step 09 lands would offer settings
+for notifications that cannot arrive, which is the footer's hardcoded `1 of 2`
+mistake in another place. Today it is one column.
+
+The row label is the verb's state shape, the verb, and one line saying what the
+event actually is — the settings window is the one surface with room for it:
+
+| Verb | Shape | Explanation |
+|---|---|---|
+| Question | waiting triangle | An agent asked you something |
+| Waiting | waiting triangle | An agent is blocked and needs you |
+| Finished | idle hollow ring | An agent finished its turn |
+| Failed | failed rounded square | A turn ended in an error |
+
+Each cell is a **Notify** checkbox, a sound picker, and a play button that
+auditions the selection. The picker is grouped — Standard (Default, None),
+AgentBar, Your Sounds — and a cell whose sound is unusable carries the problem
+underneath it in `stateFailed`, in the sentence the sound library wrote.
+
+**Test {Provider}** fires one real notification per enabled verb, through the
+real delivery path. It is the step's own validation criterion handed to the user
+rather than kept for a developer: nothing short of a real banner confirms that a
+chosen sound plays, because `UNNotificationSound` falls back to the default
+without saying so. It bypasses the coalescer and quiet hours — four notifications
+a millisecond apart would collapse into one, and the settings window is frontmost
+by definition — but **not** the matrix, so a disabled event sends nothing and the
+test shows what the user will actually get.
+
+### What the copy has to say and why
+
+- Quiet hours: *a window that ends earlier than it starts crosses midnight, and
+  both ends equal means no quiet hours at all.* Both readings of the second are
+  defensible from the numbers, and only one of them can silently swallow every
+  notification the product exists to deliver.
+- Focus suppression: *AgentBar can see which application is frontmost, but not
+  which project its window belongs to — so this silences every project, not just
+  the one you are looking at.* Nothing in a hook payload says which project a
+  frontmost editor window belongs to, so the feature is honest about its own
+  bluntness and ships **off, with an empty list**.
+- Sounds: *macOS plays notification sounds only from AgentBar's own bundle and
+  from your Sounds folder, so a file added here is copied there.* This is the
+  user-facing half of [ADR-0006](../adr/ADR-0006-notification-sounds-are-files-agentbar-can-resolve.md).
+- Events: *a burst of activity in one session produces one notification, not one
+  per event.* Otherwise coalescing looks like dropped notifications.
 
 ---
 
@@ -972,10 +1076,11 @@ It landed in step 06, verified against seven recorded `AskUserQuestion` payloads
 produced, the `Question` notification is title-only and the Waiting row is state
 and duration; both degrade correctly, and neither looks broken.
 
-### Step 07 — notifications
+### Step 07 — notifications — **delivered**
 
-Three things are fixed in [Notifications](#notifications) so they cannot be
-invented later, and step 07 owes all three:
+Three things were fixed in [Notifications](#notifications) so they could not be
+invented later, and step 07 owes all three. All three landed, each with a test
+per row of the table:
 
 1. **The verb predicates.** Each verb is a condition on the `StateChange`, and
    two reachable shapes — `from == nil` and `to == nil` — fire nothing at all.
@@ -986,6 +1091,15 @@ invented later, and step 07 owes all three:
 3. **A clamp on the body.** `failureReason` passes an unrecognised provider error
    type through, and `NativeEventDecoder`'s own bound is 120 characters — a
    transport cap, not a readable line. Do not assume a short sentence arrives.
+
+Two deviations, both recorded where they belong: the leading image is the
+provider tile without the corner badge ([Notifications](#notifications)), and
+`Provider.displayName` moved into `AgentBarCore` because a notification title and
+a panel row both need the same fixed string and their modules may not import each
+other.
+
+Step 07 also delivered the **settings window** below, which this document had
+deferred.
 
 ### Step 09 — Codex adapter
 
@@ -1017,6 +1131,9 @@ contradiction. Recorded here so it is not rediscovered as a bug.
 
 | Deferred | What step 05 leaves for it |
 |---|---|
-| Settings — sound matrix, quiet hours, launch at login, Caffeine | the footer gear; the chip and control tokens in the design system |
 | Dashboard window | a footer entry point; `StoreSnapshot.finished` already carries the history |
-| Approve / Deny in notifications | one notification category per event type |
+| Approve / Deny in notifications | one notification category per event type, registered by step 07 with no actions attached |
+
+Settings was the third row here until step 07. It is now a real surface — see
+[Settings window](#settings-window) — and the footer gear opens it. Caffeine
+joins it in step 08 as one more section.

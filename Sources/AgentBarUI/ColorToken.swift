@@ -163,15 +163,6 @@ nonisolated extension SessionStateKind {
 }
 
 nonisolated extension Provider {
-    /// The provider's own name, spelled the one way the panel spells it: never
-    /// "OpenAI Codex", never abbreviated, never localised.
-    public var displayName: String {
-        switch self {
-        case .claudeCode: "Claude Code"
-        case .codex: "Codex"
-        }
-    }
-
     /// The badge fill. The glyph on top is always `onAccent` — one rule, not a
     /// per-provider decision.
     public var badgeColor: ColorToken {
