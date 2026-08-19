@@ -76,6 +76,7 @@ and the domain value each element comes from).
 ```
 Sources/
   AgentBarCore/          domain model, session state machine, store — no I/O
+  AgentBarJSON/          ordered, lossless JSON, shared by the two installers
   AgentBarIngest/        loopback endpoint, auth, event decoding
   ClaudeCodeAdapter/     Claude Code hook payloads + settings.json installer
   CodexAdapter/          Codex hook payloads + hooks.json installer

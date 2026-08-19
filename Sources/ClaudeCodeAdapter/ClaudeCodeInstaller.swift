@@ -1,4 +1,5 @@
 import AgentBarCore
+import AgentBarJSON
 import Foundation
 
 public enum ClaudeCodeInstallerError: Error, Sendable, Hashable, CustomStringConvertible {

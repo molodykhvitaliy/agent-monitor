@@ -176,8 +176,12 @@ The generous tier is reached by having an open tool call, so a provider whose
 tool events carry no identifier can reach it by accident: nothing can recognise
 a repeated `toolStarted`, and the extra entry keeps `hasOpenTool` true until the
 turn ends. A dead agent is then believed for an hour rather than a quarter of
-one. Codex documents no `tool_use_id`, so its adapter should synthesise a stable
-per-call id if the payload allows, and say so explicitly if it cannot.
+one. **Both providers do carry one.** An earlier version of this file said Codex
+documented no `tool_use_id`; the hooks reference lists it on `PreToolUse` and
+`PostToolUse`, and `CodexEventDecoder` reads it, so no synthesised identifier is
+needed. If a capture ever contradicts the documentation the field simply goes
+absent, and the generous tier is what a Codex session gets by accident — the
+direction that keeps the Mac awake under a build rather than asleep.
 
 ### Reading and sweeping
 
@@ -472,6 +476,12 @@ policy change in the other direction.
 
 ### Why the JSON goes through a hand-written reader
 
+It lives in **`AgentBarJSON`**, a module of its own that knows neither provider
+and imports nothing but Foundation. It started inside `ClaudeCodeAdapter` and
+moved out in step 09, when the Codex installer needed the same guarantees about
+a different file the user owns: no adapter may import another, and two copies of
+a parser is two places for the next overflow-class bug to live.
+
 `JSONSerialization` returns a dictionary that has forgotten the order its keys
 arrived in and a `Double` that has forgotten whether `5` was written `5` or
 `5.0`. Writing that back reformats every line of a file AgentBar is supposed to
@@ -499,6 +509,94 @@ write.
 now, or `nil`. Everything the panel needs — installed, not installed, repairable
 drift, or configured-but-unreachable — is derived from that plus one read of the
 file. AgentBar originates no HTTP request, not even to itself.
+
+## The Codex adapter
+
+The same two jobs as the Claude Code adapter — the payloads, and the file that
+makes them arrive — plus two Codex only has: a process that has to exist, and a
+trust decision that is not AgentBar's to make.
+
+### The helper is a dumb pipe, and its logic is not in the helper
+
+`Apps/agentbar-helper/main.swift` is twenty lines. Everything it does lives in
+`CodexAdapter`, which the tool target links, because the alternative is the one
+piece of AgentBar that runs inside somebody else's process tree being the one
+piece `swift test` cannot reach. `CodexHelperRelay` is exercised against a live
+endpoint with a real store behind it; the entry point is what is left over.
+
+It reads one JSON object from stdin and posts the bytes **unread** — no parsing,
+no interpretation, no retry. Everything about what an event means happens in the
+app, on the far side of the socket.
+
+Four rules, each of which is a rule rather than a preference:
+
+- **It exits 0, always.** Codex reads a non-zero exit from `PreToolUse`,
+  `PostToolUse` or `UserPromptSubmit` as a *block*. A monitor that could block a
+  tool call is the failure this project exists to avoid, so no path here returns
+  anything else, and both streams stay empty unless `AGENTBAR_HELPER_DEBUG` is
+  set.
+- **It drains stdin before it exits.** Codex writes the payload into a pipe. A
+  reader that leaves early hands the writer `EPIPE` — a visible effect on the
+  agent, from a tool that is supposed to leave no trace. What is *kept* is
+  bounded; what is *consumed* is not.
+- **It is bounded by one clock, not by three timeouts.** A budget of 500 ms is
+  taken once and every stage is clamped to what is left of it: connect 100 ms,
+  send 200 ms, reply 150 ms are what a *syscall* gets, and syscall timeouts do
+  not compose. A partial write restarts `SO_SNDTIMEO`, a read loop restarts it
+  per chunk, and the socket-then-port ladder would otherwise pay for both rungs —
+  three ways for "bounded" to quietly mean "twice as long as it says".
+- **POSIX sockets, never Network.framework**, and the destination is pinned to
+  `127.0.0.0/8` at the point where text becomes an address. The host is read from
+  a file, and a file can say anything; ADR-0002's guarantee is that AgentBar
+  talks to loopback and to nothing else, so this is where that is enforced rather
+  than assumed. The token file is pinned the same way — it has to sit in the
+  directory the description itself sits in, or a planted description could point
+  the helper at a credential store. `ModuleBoundaryTests` now polices both
+  `import Darwin` and the connect-shaped syscalls, so the guarantee is a failing
+  test rather than a promise.
+
+Measured on the developer's machine, Release build, 40 runs against a live
+endpoint, spawn to exit: **p50 6.5 ms with the machine idle and 11 ms with
+several builds running**, against a `/bin/cat` baseline of 1.0 ms and 1.8 ms
+through the same harness. The helper's own share is therefore five to ten
+milliseconds, nearly all of it dynamic linking, inside a budget of a thousand.
+`HelperTimingProof` is the gated suite that measures it, and it compares against
+that baseline rather than a fixed number — otherwise it fails for the machine's
+reasons rather than the code's.
+
+### No secret crosses the disk
+
+`hooks.json` holds a path and a timeout. The token is read from the endpoint's
+own file at the moment the helper runs, so a rotated token and a moved port
+change nothing on disk — which matters more here than it would anywhere else,
+because a changed hook definition costs the user a trust prompt.
+
+### Trust, and the two files behind it
+
+Codex will not run a `command` hook until the user has reviewed and trusted the
+exact definition, and it records that decision as a hash keyed to the entry's
+position: `<source path>:<event_in_snake_case>:<group>:<hook>`, under
+`[hooks.state]` in `config.toml`. So the adapter **reads** that file — for trust,
+and for the user's own hooks, which on this machine live there rather than in
+`hooks.json` — and never writes it. `TOMLTables` reads tables and scalars and
+skips everything else, which is what keeps a provider credential elsewhere in
+that file from ever becoming a value AgentBar holds.
+
+The reading is evidence, not proof: the format is observed rather than
+documented. What is proof is a delivery — a Codex event cannot arrive from a hook
+that did not run — so `report(for:hasDelivered:trustPending:)` takes that fact
+from the app and lets it outrank the table. Everything else resolves to *not
+trusted*, which asks the user to look rather than claiming that silence is
+success.
+
+The trap in the middle is worth naming, because a review found it and no test
+had: a trust record is keyed to a hook's **position**, so a repair that rewrites
+the command leaves the record standing at the same key, looking exactly like
+consent for a definition Codex will now refuse to run. Reading the table alone
+would put `Connected` under an integration that is inert — the one outcome this
+design exists to prevent. So AgentBar remembers, in its own directory, what was
+recorded at the moment it wrote: a record that has *changed since* is consent for
+what is there now, and one that has not is not. ADR-0008.
 
 ## The menu bar
 

@@ -15,7 +15,7 @@ import os
 /// adapter knows the providers exist says the same thing from the other
 /// direction.
 @MainActor
-final class ClaudeCodeIntegration {
+final class ClaudeCodeIntegration: ProviderIntegration {
     private static let logger = Logger(
         subsystem: "com.molodykhvitalii.AgentBar", category: "integration")
 
@@ -64,11 +64,20 @@ final class ClaudeCodeIntegration {
     nonisolated private static func readReport(
         at settingsURL: URL, for endpoint: ClaudeCodeEndpoint?
     ) async -> (report: ClaudeCodeInstallReport?, failure: String?) {
-        do {
-            return (try ClaudeCodeInstaller(settingsURL: settingsURL).report(for: endpoint), nil)
-        } catch {
-            return (nil, "\(error)")
-        }
+        // `Task.detached`, not a bare `nonisolated async` body. The app target
+        // builds with `SWIFT_APPROACHABLE_CONCURRENCY`, under which a
+        // `nonisolated async` function runs on its **caller's** executor — and
+        // the caller is the main actor, so the reads below would happen on the
+        // main thread after all. That is the frozen panel this exists to avoid.
+        await Task.detached {
+            do {
+                return (
+                    try ClaudeCodeInstaller(settingsURL: settingsURL).report(for: endpoint), nil
+                )
+            } catch {
+                return (nil, "\(error)")
+            }
+        }.value
     }
 
     static func status(from report: ClaudeCodeInstallReport) -> IntegrationStatus {
@@ -161,14 +170,16 @@ final class ClaudeCodeIntegration {
     nonisolated private static func install(
         at settingsURL: URL, endpoint: ClaudeCodeEndpoint
     ) async -> IntegrationActionResult {
-        do {
-            let outcome = try ClaudeCodeInstaller(settingsURL: settingsURL).install(endpoint)
-            return outcome.changed ? .changed : .unchanged
-        } catch let error as ClaudeCodeInstallerError {
-            return .failed(error.description)
-        } catch {
-            return .failed("\(error)")
-        }
+        await Task.detached {
+            do {
+                let outcome = try ClaudeCodeInstaller(settingsURL: settingsURL).install(endpoint)
+                return outcome.changed ? .changed : .unchanged
+            } catch let error as ClaudeCodeInstallerError {
+                return .failed(error.description)
+            } catch {
+                return .failed("\(error)")
+            }
+        }.value
     }
 
     /// `Retry` is **not** a bare `start()`: that throws `alreadyRunning` when an

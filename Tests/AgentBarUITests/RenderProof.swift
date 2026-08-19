@@ -126,6 +126,21 @@ struct RenderProof {
     @Test("The settings window, in both appearances")
     func renderSettings() throws {
         let services = StubSettingsServices()
+        // Both providers, because the app registers both from step 09 on: the
+        // matrix gains a second column there, and a column that does not fit is
+        // exactly what this render exists to catch. The cells have to be given
+        // too — the stub's default matrix has one provider in it, and a column
+        // whose cells are missing renders as a header over empty space, which
+        // is what the first run of this render showed.
+        services.providers = [.claudeCode, .codex]
+        services.stored = NotificationPreferences(
+            cells: services.providers.flatMap { provider in
+                NotificationVerb.allCases.map { verb in
+                    NotificationCell(
+                        provider: provider, verb: verb, isEnabled: provider == .claudeCode,
+                        soundID: "AgentBar \(verb.title).aiff")
+                }
+            })
         services.caffeineIndicator = CaffeineIndicator(
             setting: .whileWorking, isHolding: true, workingSessionCount: 2)
         let view = SettingsView(model: SettingsModel(services: services))

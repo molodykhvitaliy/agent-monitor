@@ -18,6 +18,7 @@ let package = Package(
     platforms: [.macOS(.v26)],
     products: [
         .library(name: "AgentBarCore", targets: ["AgentBarCore"]),
+        .library(name: "AgentBarJSON", targets: ["AgentBarJSON"]),
         .library(name: "AgentBarIngest", targets: ["AgentBarIngest"]),
         .library(name: "ClaudeCodeAdapter", targets: ["ClaudeCodeAdapter"]),
         .library(name: "CodexAdapter", targets: ["CodexAdapter"]),
@@ -32,11 +33,25 @@ let package = Package(
         // dependency and so the module graph alone cannot police this.
         .target(name: "AgentBarCore"),
 
+        // Ordered, lossless JSON, shared by the two adapters because both merge
+        // into a configuration file the user owns. Depends on nothing but
+        // Foundation and knows nothing about either provider — it moved out of
+        // ClaudeCodeAdapter in step 09 rather than being copied into the second
+        // adapter, because no adapter may import another.
+        .target(name: "AgentBarJSON"),
+
         .target(name: "AgentBarIngest", dependencies: ["AgentBarCore"]),
         // Reaches AgentBarIngest for `EventDecoding`, the seam the endpoint
         // publishes for adapters. Every other edge points straight at the core.
-        .target(name: "ClaudeCodeAdapter", dependencies: ["AgentBarCore", "AgentBarIngest"]),
-        .target(name: "CodexAdapter", dependencies: ["AgentBarCore"]),
+        .target(
+            name: "ClaudeCodeAdapter",
+            dependencies: ["AgentBarCore", "AgentBarIngest", "AgentBarJSON"]),
+        // The same two edges as the Claude Code adapter, for the same two
+        // reasons. `agentbar-helper` links this module as well as the app does:
+        // the relay is the adapter's transport, and putting it here is what lets
+        // `swift test` exercise the code the hook actually runs.
+        .target(
+            name: "CodexAdapter", dependencies: ["AgentBarCore", "AgentBarIngest", "AgentBarJSON"]),
         .target(name: "CodexAppServer", dependencies: ["AgentBarCore"]),
         .target(name: "AgentBarNotifications", dependencies: ["AgentBarCore"]),
         .target(name: "AgentBarPower", dependencies: ["AgentBarCore"]),
@@ -51,11 +66,16 @@ let package = Package(
         ),
 
         .testTarget(name: "AgentBarCoreTests", dependencies: ["AgentBarCore"]),
+        .testTarget(name: "AgentBarJSONTests", dependencies: ["AgentBarJSON"]),
         .testTarget(
             name: "AgentBarIngestTests", dependencies: ["AgentBarIngest", "AgentBarCore"]),
         .testTarget(
             name: "ClaudeCodeAdapterTests",
-            dependencies: ["ClaudeCodeAdapter", "AgentBarIngest", "AgentBarCore"],
+            dependencies: ["ClaudeCodeAdapter", "AgentBarIngest", "AgentBarCore", "AgentBarJSON"],
+            resources: [.copy("Fixtures")]),
+        .testTarget(
+            name: "CodexAdapterTests",
+            dependencies: ["CodexAdapter", "AgentBarIngest", "AgentBarCore", "AgentBarJSON"],
             resources: [.copy("Fixtures")]),
 
         .testTarget(name: "AgentBarUITests", dependencies: ["AgentBarUI", "AgentBarCore"]),

@@ -1,3 +1,4 @@
+import AgentBarJSON
 import Foundation
 import Testing
 

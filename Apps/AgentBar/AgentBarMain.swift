@@ -5,6 +5,7 @@ import AgentBarPower
 import AgentBarUI
 import AppKit
 import ClaudeCodeAdapter
+import CodexAdapter
 import os
 
 // The app target is the assembly point: it is the only place that knows every
@@ -38,7 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Every provider the assembly registers. One list, so the footer's
     /// denominator, the settings matrix's columns and the integrations built
     /// below cannot disagree about what exists.
-    private static let providers: [Provider] = [.claudeCode]
+    private static let providers: [Provider] = [.claudeCode, .codex]
 
     private let store = SessionStore()
     /// Keeps the Mac awake while an agent works. Built here rather than lazily:
@@ -183,7 +184,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Still register the integration: without an endpoint it reports
             // what is on disk, which is the difference between a footer that
             // says `Not receiving events` and a panel with nothing in it.
-            startMenuBar(with: [ClaudeCodeIntegration(ingest: nil)])
+            startMenuBar(with: [ClaudeCodeIntegration(ingest: nil), CodexIntegration(ingest: nil)])
             return
         }
 
@@ -194,22 +195,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let service = IngestService(
             paths: paths,
             store: store,
-            decoders: [ClaudeCodeEventDecoder.route: ClaudeCodeEventDecoder()],
+            decoders: [
+                ClaudeCodeEventDecoder.route: ClaudeCodeEventDecoder(),
+                CodexEventDecoder.route: CodexEventDecoder(),
+            ],
             stateChanges: relay)
         ingest = service
 
-        let menuBar = startMenuBar(with: [ClaudeCodeIntegration(ingest: service)])
-        // The push leg fans out to three observers. The menu bar re-reads the
+        let codex = CodexIntegration(ingest: service)
+        let menuBar = startMenuBar(with: [ClaudeCodeIntegration(ingest: service), codex])
+        // The push leg fans out to four observers. The menu bar re-reads the
         // store and redraws; the router decides whether anything is worth
         // interrupting the user for; the caffeine controller decides whether the
-        // Mac should still be kept awake. None of them knows the others exist.
-        relay.destination = { [weak menuBar, weak notifications, caffeine] changes in
+        // Mac should still be kept awake; and the Codex integration learns the
+        // one thing no file on disk can tell it. None of them knows the others
+        // exist.
+        relay.destination = { [weak menuBar, weak notifications, caffeine, weak codex] changes in
             menuBar?.stateDidChange(changes)
             notifications?.record(changes)
-            // Held strongly, unlike the other two: the assertion must be
+            // Held strongly, unlike the others: the assertion must be
             // reconsidered on every move, and a caffeine controller released
             // early would leave the Mac awake with nothing left to notice.
             caffeine.stateDidChange()
+            // A Codex event can only come from a hook Codex actually ran, which
+            // is the proof of trust that `config.toml` can only hint at.
+            if changes.contains(where: { $0.provider == .codex }) { codex?.noteDelivery() }
         }
 
         Task {
@@ -233,7 +243,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @discardableResult
-    private func startMenuBar(with integrations: [ClaudeCodeIntegration]) -> MenuBarController {
+    private func startMenuBar(with integrations: [any ProviderIntegration]) -> MenuBarController {
         let controller = MenuBarController(
             services: AppServices(
                 store: store, integrations: integrations, caffeine: caffeineBridge),

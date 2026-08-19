@@ -1,0 +1,15 @@
+{
+  "session_id": "0198f6a3-2b71-7c4e-9d10-2f5a1c3b8e44",
+  "transcript_path": "/Users/dev/.codex/sessions/0198f6a3-2b71-7c4e-9d10-2f5a1c3b8e44.jsonl",
+  "cwd": "/Users/dev/projects/probe",
+  "hook_event_name": "PreToolUse",
+  "model": "gpt-5.1-codex-max",
+  "permission_mode": "on-request",
+  "turn_id": "0198f6a3-2b95-7a02-bb31-6d4c9f2a7e11",
+  "tool_name": "apply_patch",
+  "tool_use_id": "call_2c7e1a55b0f3428d",
+  "tool_input": {
+    "file_path": "/Users/dev/projects/probe/Sources/Probe/Main.swift",
+    "patch": "*** Begin Patch\n*** Update File: Sources/Probe/Main.swift\n@@\n-let x = 1\n+let x = 2\n*** End Patch\n"
+  }
+}

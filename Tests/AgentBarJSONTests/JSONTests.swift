@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import ClaudeCodeAdapter
+@testable import AgentBarJSON
 
 @Suite("JSON reading")
 struct JSONParserTests {
@@ -124,12 +124,5 @@ struct JSONWriterTests {
         let value = JSONValue.object(
             JSONObject([("k", .string("a/b\"c\\d\ne\u{01}f é"))]))
         #expect(JSONWriter.render(value).contains(#""a/b\"c\\d\ne\u0001f é""#))
-    }
-
-    @Test("A settings file written this way round-trips byte for byte")
-    func roundTripsRealSettings() throws {
-        let original = try Fixtures.data("settings-with-foreign-hooks")
-        let rendered = JSONWriter.data(try JSONParser.parse(original))
-        #expect(rendered == original)
     }
 }

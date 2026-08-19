@@ -1,0 +1,8 @@
+{
+  "session_id": "0198f6a3-2b71-7c4e-9d10-2f5a1c3b8e44",
+  "transcript_path": "/Users/dev/.codex/sessions/0198f6a3-2b71-7c4e-9d10-2f5a1c3b8e44.jsonl",
+  "cwd": "/Users/dev/projects/probe",
+  "hook_event_name": "SessionEnd",
+  "model": "gpt-5.1-codex-max",
+  "reason": "other"
+}

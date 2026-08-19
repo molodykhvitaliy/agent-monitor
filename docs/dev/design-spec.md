@@ -587,7 +587,7 @@ row stays until the watchdog evicts it.
 
 The card that answers "why is nothing appearing?". Its content is one row per
 provider, built from that provider's install report — `ClaudeCodeInstallReport`
-today, its Codex counterpart at step 09.
+and, since step 09, `CodexInstallReport`.
 
 **When it is shown.** Empty list and "not installed" are different facts, and
 conflating them turns a quiet morning into a broken app. The precedence, in
@@ -628,7 +628,7 @@ each. Buttons: padding 6 / 12, radius 7, Body medium, no wrapping.
 | `.installed` | `Connected`, filled circle in `connected` | none |
 | `.needsRepair([drift])` | `Needs repair`, in `stateWaiting`, with the first drift's own sentence on a second line | `Repair` |
 | `.endpointUnavailable` | `Installed, not receiving` | `Retry` |
-| `.settingsUnreadable(reason)` | `Can't read settings.json`, in `stateFailed`, with `reason` on a second line | `Reveal in Finder` |
+| `.settingsUnreadable(reason)` | `Can't read its configuration`, in `stateFailed`, with `reason` on a second line | `Reveal in Finder` |
 | Installed, not trusted — **Codex only** | `Installed, not trusted`, in `stateWaiting`, preceded by the waiting triangle | `Trust`, filled `stateWaiting` |
 
 Every drift case already carries a finished English sentence in its
@@ -637,6 +637,11 @@ drifts are present, show the first and append `and N more`.
 
 `.settingsUnreadable` gets **no write action of any kind**. AgentBar refuses to
 write over a file it could not read, and the UI must not offer to.
+
+The line names no file, and that is a step-09 correction: the Codex row reaches
+this rung through `hooks.json`, and a status line reading `Can't read
+settings.json` under it would name a file Codex does not have. The reason line
+under it comes from the report and names the real one.
 
 #### What an action leaves behind
 
@@ -868,7 +873,9 @@ A `Grid`: one row per verb, one column per **registered** provider. The columns
 come from the providers the app assembly actually registers, never from
 `Provider.allCases` — a Codex column before step 09 lands would offer settings
 for notifications that cannot arrive, which is the footer's hardcoded `1 of 2`
-mistake in another place. Today it is one column.
+mistake in another place. Since step 09 the app registers both providers, so
+there are two columns; before it there was one, and the rule is what made that
+correct rather than accidental.
 
 The row label is the verb's state shape, the verb, and one line saying what the
 event actually is — the settings window is the one surface with room for it:
@@ -1154,11 +1161,19 @@ other.
 Step 07 also delivered the **settings window** below, which this document had
 deferred.
 
-### Step 09 — Codex adapter
+### Step 09 — Codex adapter — delivered
 
-A `CodexInstallState` with an explicit `installedNotTrusted` case, plus the same
-degraded cases Claude Code has. The onboarding card's third state is a hard
-requirement from the brief, and there is no domain type behind it today.
+`CodexInstallState` has the explicit `installedNotTrusted(CodexTrustStatus)` case
+the brief asked for, plus `disabledInCodex` — a state the spec did not
+anticipate, because Codex lets a user trust a hook and then switch it off, which
+is a different sentence from "not trusted" and cannot be fixed by the `Trust`
+button. Both map onto `IntegrationCondition.notTrusted`; the difference reaches
+the user as the row's second line, which each state supplies for itself.
+
+The `Trust` button does not trust anything — nothing outside Codex can. It
+re-reads the state and reports what it found, which is the honest reading of a
+row whose action is "go and do this in another application". The card's footnote,
+already specified above, is what explains the rule.
 
 ### Step 10 — Codex limits
 

@@ -1,3 +1,4 @@
+import AgentBarJSON
 import Foundation
 
 /// Turns a tool's arguments into the one line a session row shows.

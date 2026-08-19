@@ -44,6 +44,16 @@ extension JSONValue {
         return value
     }
 
+    /// The number exactly as it was written.
+    ///
+    /// For a reader that wants to *show* a number rather than compute with one —
+    /// an argument in a tool call, say — where reformatting it through `Double`
+    /// would be the one transformation this type exists to avoid.
+    public var numberText: String? {
+        guard case .number(let text) = self else { return nil }
+        return text
+    }
+
     /// The value as an integer, or `nil` when it was not written as one.
     ///
     /// Deliberately refuses `5.0`: everything this module reads a number for —
@@ -68,7 +78,9 @@ extension JSONValue {
 
 /// A JSON object that remembers the order its keys arrived in.
 public struct JSONObject: Sendable, Hashable {
-    private(set) var keys: [String]
+    /// The keys in the order they were written, which is the whole reason this
+    /// type exists rather than a `[String: JSONValue]`.
+    public private(set) var keys: [String]
     private var storage: [String: JSONValue]
 
     public init() {

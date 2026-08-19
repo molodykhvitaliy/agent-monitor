@@ -84,6 +84,8 @@ targets:
       - package: AgentBar
         product: AgentBarCore
       - package: AgentBar
+        product: AgentBarJSON
+      - package: AgentBar
         product: AgentBarIngest
       - package: AgentBar
         product: ClaudeCodeAdapter
@@ -120,6 +122,12 @@ targets:
         # A hook process that must finish in single-digit milliseconds: no
         # main-actor default, and nothing linked that is not needed.
         SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
+    dependencies:
+      # The relay lives in CodexAdapter rather than in this target's own sources
+      # so `swift test` exercises the code the hook actually runs. `main.swift`
+      # is an entry point and nothing else.
+      - package: AgentBar
+        product: CodexAdapter
 
 schemes:
   AgentBar:

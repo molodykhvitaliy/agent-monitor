@@ -72,13 +72,17 @@ struct ModuleBoundaryTests {
     /// another adapter.
     static let allowedInternalDependencies: [String: Set<String>] = [
         "AgentBarCore": [],
+        // Ordered, lossless JSON. Knows neither provider and reaches nothing,
+        // which is what lets both adapters share it without importing each
+        // other — the rule that decided where it lives.
+        "AgentBarJSON": [],
         "AgentBarIngest": ["AgentBarCore"],
         // The one edge that points at the transport rather than straight at the
         // core: `EventDecoding` is the seam AgentBarIngest publishes for
         // adapters, and conforming to it where the payload knowledge lives is
         // what keeps provider JSON inside the adapter.
-        "ClaudeCodeAdapter": ["AgentBarCore", "AgentBarIngest"],
-        "CodexAdapter": ["AgentBarCore"],
+        "ClaudeCodeAdapter": ["AgentBarCore", "AgentBarIngest", "AgentBarJSON"],
+        "CodexAdapter": ["AgentBarCore", "AgentBarIngest", "AgentBarJSON"],
         "CodexAppServer": ["AgentBarCore"],
         "AgentBarNotifications": ["AgentBarCore"],
         "AgentBarPower": ["AgentBarCore"],
@@ -102,6 +106,11 @@ struct ModuleBoundaryTests {
     /// be held to releasing it.
     static let frameworksRestrictedToModules: [String: Set<String>] = [
         "Network": ["AgentBarIngest"],
+        // Raw syscalls open sockets too, and a rule that policed only
+        // Network.framework would have said nothing about the one module that
+        // actually connects outwards. `CodexAdapter` holds the helper's relay;
+        // `AgentBarPower` and `AgentBarIngest` need none of it.
+        "Darwin": ["CodexAdapter"],
         // A power assertion is process-owned and released when the process
         // dies, which is the whole reason AgentBar takes one instead of
         // spawning `caffeinate`. One owner means one release path: an
@@ -119,6 +128,21 @@ struct ModuleBoundaryTests {
     static let remoteClientSymbols = [
         "URLSession", "URLRequest", "NSURLConnection", "NWBrowser",
     ]
+
+    /// Ways to open an outbound connection with a syscall rather than a
+    /// framework, and the one module allowed to.
+    ///
+    /// `CodexAdapter` is that module: the Codex helper cannot use
+    /// Network.framework (see `frameworksRestrictedToModules`) and dials a
+    /// loopback address directly. Everything else in the tree answers
+    /// connections and opens none, and this is what keeps that true.
+    ///
+    /// `socket(` is deliberately **not** on the list: a listener creates one too,
+    /// and `AgentBarIngest` legitimately does. What distinguishes dialling out is
+    /// the connect and the address it is given — and reaching either needs
+    /// `import Darwin`, which the table above already restricts.
+    static let outboundSyscalls = ["Darwin.connect(", "sendto(", "inet_pton("]
+    static let outboundSyscallsAllowedIn: Set<String> = ["CodexAdapter"]
 
     @Test("Every module directory has a declared dependency policy")
     func moduleInventoryIsComplete() throws {
@@ -209,6 +233,22 @@ struct ModuleBoundaryTests {
                 \(module) references \(hits.sorted()). AgentBar answers connections and \
                 originates none; a remote HTTP client in the graph is the failure \
                 docs/dev/tos-boundary.md §5.2 exists to prevent.
+                """
+            )
+        }
+    }
+
+    @Test("Nothing outside the helper's relay dials out with a syscall")
+    func noRawOutboundConnectionExists() throws {
+        let moduleNames = try SourceTree.moduleNames()
+        for module in moduleNames.sorted() where !Self.outboundSyscallsAllowedIn.contains(module) {
+            let hits = try SourceTree.occurrences(of: Self.outboundSyscalls, inModule: module)
+            #expect(
+                hits.isEmpty,
+                """
+                \(module) references \(hits.sorted()). Opening a socket by hand outside \
+                \(Self.outboundSyscallsAllowedIn.sorted()) is how the loopback-only guarantee \
+                in ADR-0002 stops being true without anybody noticing.
                 """
             )
         }
