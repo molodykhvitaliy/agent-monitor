@@ -75,7 +75,15 @@ verify-bundle: build ## Assert the built app bundle has the layout later steps d
 	     | grep -qx true; then \
 	  echo "error: LSUIElement is not true — the app would take a Dock icon" >&2; exit 1; \
 	fi; \
-	echo "bundle ok: helper at Contents/MacOS/agentbar-helper, LSUIElement = true"
+	for sound in Question Waiting Finished Failed; do \
+	  if [ ! -f "$$app/Contents/Resources/AgentBar $$sound.aiff" ]; then \
+	    echo "error: 'AgentBar $$sound.aiff' is not at the top of Contents/Resources" >&2; \
+	    echo "  UNNotificationSound looks only in the bundle root and ~/Library/Sounds," >&2; \
+	    echo "  so a sound anywhere else plays as the default with no diagnostic." >&2; \
+	    exit 1; \
+	  fi; \
+	done; \
+	echo "bundle ok: helper at Contents/MacOS/agentbar-helper, LSUIElement = true, 4 sounds"
 
 .PHONY: test
 test: ## Run SPM module tests (no Xcode required)

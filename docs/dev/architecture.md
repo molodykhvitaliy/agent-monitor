@@ -538,6 +538,89 @@ without activating the app, a shortcut opens it as key window.
 No shortcut is registered yet, so the capability exists and the trigger is a
 seam.
 
+## Notifications
+
+`AgentBarNotifications` consumes `StateChange` and nothing else. It does not know
+that hooks exist, that Claude Code exists, or how an event reached the store; its
+only intra-package edge is `AgentBarCore`, and `ModuleBoundaryTests` fails the
+build if that changes.
+
+**The push leg fans out.** `Apps/AgentBar` hands `IngestService` one
+`StateChangeSink` that forwards each batch to two observers: the menu bar, which
+re-reads the store and redraws, and the router, which decides whether anything is
+worth interrupting the user for. Neither knows the other exists, and the sink
+still returns immediately — a sink that waits is a hook handler that waits.
+
+The module is a pipeline of pure decisions with one stateful object at the end:
+
+| Piece | Decides | Pure |
+|---|---|---|
+| `NotificationPolicy` | which verb a `StateChange` deserves, and what its body says | ✅ |
+| `NotificationCoalescer` | how many of a burst a person should hear about | ✅ value type |
+| `NotificationGate` | whether this one is delivered at all, and why not | ✅ |
+| `SoundLibrary` | whether the chosen sound still exists and is usable | filesystem |
+| `NotificationRouter` | joins them, holds the settings and the authorisation | `@MainActor` |
+| `UserNotificationCentre` | the only file that imports `UserNotifications` | — |
+
+Keeping the first three pure is what lets the verb table be tested case by case
+without a notification centre, an entitlement, or a user who has to click Allow.
+`NotificationPresenting` is the seam; the tests drive a recording double.
+
+**Three mechanisms stop a storm**, and they solve different problems. Within a
+1.5 s window only the newest draft per session survives, so a session that went
+waiting and then failed produces one notification saying it failed. Across
+windows an identical draft — same verb, same body — is dropped for twenty
+seconds, while a *different* question gets through, because that is genuinely new
+information. And every notification carries the session id as its notification
+identifier, so the notification centre itself replaces a session's previous
+banner rather than stacking a second one beside it. The thread identifier is the
+project, which is what groups a project's notifications together.
+
+The repeat window starts when a notification is **delivered**, not when one is
+considered: `drain()` hands the router one draft per session and the router
+records the delivery only after the gate has passed it. Otherwise a draft
+suppressed by quiet hours would begin a twenty-second window during which the
+same news is refused for a second reason. A repeat is the one suppression the
+user could not observe anywhere, so it is reported through the same path as every
+other — and `notAuthorized` is reported **once at error level**, because it means
+AgentBar is running and doing nothing at all.
+
+**One category per verb, registered from the first release**, because a category
+identifier is baked into every notification already delivered and renaming one
+orphans them. They carry no actions. Approve/Deny will add a category of its
+own rather than hanging buttons on `waiting`: the verb is chosen by the presence
+of a question line, so `waiting` is shared by a permission prompt and by an
+ordinary blocked-on-a-human event, and actions there would put permission buttons
+on notifications that are not permission requests.
+
+**Two `StateChange` shapes fire nothing**, and both are reachable: `from == nil`
+is the store adopting a session it had not seen, which would otherwise announce a
+turn that never happened here, and `to == nil` is the session leaving. `working`
+and `unknown` fire nothing either. The predicates are written as conditions on
+`from` and `to` rather than as a feeling about the event, and every one of them
+has a test.
+
+**Sounds are names, not paths**, because that is what `UNNotificationSound` takes
+— and it resolves them in only two directories, neither of which is
+`/System/Library/Sounds`. [ADR-0006](../adr/ADR-0006-notification-sounds-are-files-agentbar-can-resolve.md)
+records what follows from that. The practical consequence for this file is that
+the sound is validated twice, once when the picker is built and once at send
+time, and that a selection which has become unusable falls back to the default
+rather than to silence.
+
+**The settings window is a second UI seam.** `SettingsServices` is declared in
+`AgentBarUI` and implemented in `Apps/AgentBar`, exactly as `PanelServices` and
+`IntegrationStatus` are, because `AgentBarUI` and `AgentBarNotifications` are
+siblings and neither may import the other. The four verbs are therefore declared
+twice — `NotificationEvent` in the notifications module, `NotificationVerb` in
+the UI — and mapped one for one in the bridge. That duplication is the price of
+the boundary, and it is what stops a view importing a sound library.
+
+Unlike the panel, the settings window **does** activate the app: it is asked for
+by name with a click, and a window the user cannot type in would be worse than
+the focus rule it would be honouring. Closing it hides AgentBar again, so an
+accessory app is never left active with nothing on screen.
+
 ## Concurrency
 
 Swift 6 strict concurrency. `SessionStore` is an actor and the single source of

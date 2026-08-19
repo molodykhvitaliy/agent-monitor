@@ -57,6 +57,13 @@ targets:
         excludes:
           - Info.plist
           - AgentBar.entitlements
+          - Sounds
+      # UNNotificationSound resolves a bare file name against the app bundle and
+      # against ~/Library/Sounds, and nowhere else — so AgentBar's own sounds
+      # have to sit at the top of Contents/Resources, not in a subfolder of it.
+      # A `resources` phase copies them flat, which is exactly what is wanted.
+      - path: Apps/AgentBar/Sounds
+        buildPhase: resources
     settings:
       base:
         PRODUCT_NAME: AgentBar

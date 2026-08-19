@@ -556,3 +556,93 @@ Observed on the developer's machine — the installer must handle these.
 - **`~/.codex/hooks.json` does not exist yet** — the installer creates it and
   must handle both the create and the merge-into-existing case.
 - `~/.codex/hooks/caffeine.sh` exists; same coexistence rule applies.
+
+---
+
+## 6. macOS notifications
+
+Verified by experiment on macOS 27.0 (build 26A5416b), 2026-08-19, against the
+real AgentBar bundle. Every one of these fails **silently** when it is got
+wrong, which is why they are recorded rather than left to be rediscovered.
+
+### 6.1 Where a notification sound may live
+
+`UNNotificationSound(named:)` resolves a **file name**, not a path, and it looks
+in exactly two places:
+
+| Location | For AgentBar |
+|---|---|
+| The app bundle's own resources | `AgentBar.app/Contents/Resources/*.aiff`, at the **top level** — not a `Sounds/` subfolder |
+| `Library/Sounds` of the app's container | `~/Library/Sounds` — an unsandboxed app has no container, so this is the real one |
+
+**`/System/Library/Sounds` is not one of them.** A selection named `Glass.aiff`
+therefore resolves to nothing, and the initialiser reports nothing: it returns a
+sound object whatever it is handed, and the system substitutes the default at
+play time. There is no error, no log line and no API to ask.
+
+That single fact shapes the whole sound matrix. AgentBar does not offer a system
+sound as a choice it cannot honour; it offers to **copy** one into
+`~/Library/Sounds`, where it works — see
+[ADR-0006](../adr/ADR-0006-notification-sounds-are-files-agentbar-can-resolve.md).
+
+Container formats: `aiff`, `wav`, `caf`. Encoding: Linear PCM or IMA4. Length:
+**strictly under 30 seconds** — at exactly thirty the system already substitutes
+the default. All four are checked with `AudioFileGetProperty` before a sound is
+offered and again before it is sent, because `~/Library/Sounds` is the user's own
+folder and can be emptied between the two.
+
+`make verify-bundle` asserts the four bundled sounds are at the top of
+`Contents/Resources`. Without that assertion a resource phase that quietly
+stopped copying them would ship a matrix whose every default silently plays the
+system sound.
+
+### 6.2 `.timeSensitive` needs a provisioning profile
+
+`com.apple.developer.usernotifications.time-sensitive` needs no approval from
+Apple — but it does need a **provisioning profile**. Adding it to
+`AgentBar.entitlements` makes `xcodebuild` fail outright:
+
+```
+error: "AgentBar" requires a provisioning profile. Enable development signing
+and select a provisioning profile in the Signing & Capabilities editor.
+```
+
+That would cost a clean checkout its ability to build with no Apple Developer
+account, which is what `CODE_SIGN_IDENTITY = "-"` exists to protect (ADR-0003).
+The entitlement is therefore **deliberately absent** and belongs to step 12,
+which introduces Developer ID signing.
+
+The notifications still set `interruptionLevel = .timeSensitive`. An unentitled
+app has the level silently downgraded to `.active`, so nothing is lost but the
+privilege of breaking through Focus. `.critical` is never requested at all: it is
+for health and safety, and it does need Apple's approval.
+
+### 6.3 The first-launch authorisation trap
+
+**Requesting authorisation from a bundle in `DerivedData` fails, and the failure
+is recorded permanently against the bundle identifier.**
+
+```
+UNErrorDomain Code=1 "Notifications are not allowed for this application"
+```
+
+Afterwards `authorizationStatus()` returns `denied` for that identifier for ever
+— re-signing, `lsregister -f`, reinstalling to `/Applications`, deleting the
+DerivedData copy and restarting `usernoted` all leave it denied. The only route
+back is System Settings › Notifications, where the app now appears switched off.
+
+An ad-hoc signature is **not** the problem. The same bundle built with a fresh
+identifier (`com.molodykhvitalii.AgentBarProbe`), copied to `/Applications`,
+ad-hoc signed and registered with `lsregister -f`, showed the ordinary system
+prompt on first launch. What matters is where the app is when it first asks.
+
+Consequences, all of them acted on:
+
+- **Never run AgentBar straight out of `DerivedData`** if it will ever need
+  notifications. `make build && cp -R … /Applications/` first.
+- The settings window shows the authorisation state and offers **Open System
+  Settings** when the answer is `denied`, because a refusal cannot be re-prompted
+  from inside the app.
+- `NotificationRouter.start()` logs the status it found on every launch, whether
+  or not it asked. A launch that silently decides not to ask is otherwise
+  indistinguishable from one that failed to start.

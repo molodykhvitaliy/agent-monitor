@@ -1,5 +1,6 @@
 import AgentBarCore
 import AgentBarIngest
+import AgentBarNotifications
 import AgentBarUI
 import AppKit
 import ClaudeCodeAdapter
@@ -33,15 +34,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let logger = Logger(
         subsystem: "com.molodykhvitalii.AgentBar", category: "lifecycle")
 
+    /// Every provider the assembly registers. One list, so the footer's
+    /// denominator, the settings matrix's columns and the integrations built
+    /// below cannot disagree about what exists.
+    private static let providers: [Provider] = [.claudeCode]
+
     private let store = SessionStore()
     private var menuBar: MenuBarController?
     private var ingest: IngestService?
+    private var notifications: NotificationRouter?
+    /// Held strongly: `UNUserNotificationCenter` keeps its delegate **weakly**,
+    /// and a released one stops receiving responses with nothing to say so.
+    private var notificationDelegate: NotificationDelegate?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // LSUIElement in Info.plist already selects accessory activation. This
         // repeats it so a build with a mis-merged plist still comes up without a
         // Dock icon rather than as a windowless regular app the user cannot quit.
         NSApp.setActivationPolicy(.accessory)
+        // Notifications first: the ingest relay needs the router to fan out to,
+        // and the delegate has to be installed here rather than later because
+        // the system may relaunch the app to deliver a response.
+        startNotifications()
         startIngest()
     }
 
@@ -72,8 +86,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        notifications?.stop()
         menuBar?.stop()
         menuBar = nil
+    }
+
+    /// Brings up the notification router and installs the delegate.
+    ///
+    /// A failure here is survivable and deliberately not fatal: no notification
+    /// centre means a menu bar that still shows every session, and Claude Code
+    /// still behaves exactly as if AgentBar were not installed.
+    private func startNotifications() {
+        guard let centre = UserNotificationCentre.ifAvailable() else {
+            Self.logger.error("notifications unavailable — the app is not running as a bundle")
+            return
+        }
+        let router = NotificationRouter(
+            presenter: centre,
+            attachments: ProviderBadgeAttachments(directory: Self.badgeDirectory()),
+            frontmost: WorkspaceFrontmostApplication())
+        notifications = router
+
+        // Opening a notification shows the panel. The menu bar does not exist
+        // yet, hence the deferred lookup rather than a captured reference.
+        //
+        // The identifier is the session the banner was about. The panel has no
+        // way to scroll to or select one row, so it is logged rather than acted
+        // on — the panel shows every session and the user is already looking at
+        // the project the banner named.
+        let delegate = NotificationDelegate { [weak self] session in
+            Self.logger.notice(
+                "notification opened for session \(session, privacy: .public)")
+            self?.menuBar?.revealPanel()
+        }
+        notificationDelegate = delegate
+        centre.installDelegate(delegate)
+
+        Task { await router.start() }
+    }
+
+    /// Where the pre-rendered provider badges live.
+    ///
+    /// Caches, because they are derived and re-creatable — which they have to
+    /// be: `UNNotificationAttachment` **moves** the file it is given into the
+    /// notification's own store, so every badge is consumed by its first use.
+    private static func badgeDirectory() -> URL {
+        let base =
+            (try? FileManager.default.url(
+                for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true))
+            ?? URL(filePath: NSTemporaryDirectory(), directoryHint: .isDirectory)
+        return base.appending(path: "AgentBar/badges", directoryHint: .isDirectory)
     }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
@@ -113,8 +175,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ingest = service
 
         let menuBar = startMenuBar(with: [ClaudeCodeIntegration(ingest: service)])
-        relay.destination = { [weak menuBar] changes in
+        // The push leg fans out to both observers. The menu bar re-reads the
+        // store and redraws; the router decides whether anything is worth
+        // interrupting the user for. Neither knows the other exists.
+        relay.destination = { [weak menuBar, weak notifications] changes in
             menuBar?.stateDidChange(changes)
+            notifications?.record(changes)
         }
 
         Task {
@@ -140,10 +206,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @discardableResult
     private func startMenuBar(with integrations: [ClaudeCodeIntegration]) -> MenuBarController {
         let controller = MenuBarController(
-            services: AppServices(store: store, integrations: integrations))
+            services: AppServices(store: store, integrations: integrations),
+            settings: NotificationSettingsBridge(
+                router: notifications ?? Self.unavailableRouter(),
+                providers: Self.providers))
         menuBar = controller
         controller.start()
         return controller
+    }
+
+    /// A router that can be configured and will never deliver.
+    ///
+    /// Used only when the notification centre could not be reached at all. The
+    /// settings window still opens and still writes the matrix — the alternative
+    /// is a gear that does nothing, which reads as a broken app rather than as
+    /// an unavailable capability. Its permission row says notifications are not
+    /// authorised, which is true.
+    private static func unavailableRouter() -> NotificationRouter {
+        NotificationRouter(presenter: UnavailableNotificationCentre())
     }
 }
 
