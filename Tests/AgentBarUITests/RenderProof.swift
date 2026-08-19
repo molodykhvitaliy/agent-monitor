@@ -21,7 +21,12 @@ enum RenderOutput {
             let rep = NSBitmapImageRep(data: tiff),
             let png = rep.representation(using: .png, properties: [:])
         else { return }
-        try png.write(to: URL(filePath: directory).appending(path: "\(name).png"))
+        // Created rather than required. The documented incantation names a
+        // directory that does not exist yet, and the failure it produced was a
+        // "file doesn't exist" four tests over from the missing `mkdir`.
+        let folder = URL(filePath: directory, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try png.write(to: folder.appending(path: "\(name).png"))
     }
 
     /// Renders a view offscreen at its natural size, in one appearance.
