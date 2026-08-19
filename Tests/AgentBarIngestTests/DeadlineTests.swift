@@ -50,30 +50,67 @@ struct DeadlineTests {
     /// cooperative one cannot tell the two implementations apart.
     ///
     /// Asserted as an *ordering* rather than a duration: when the deadline
-    /// returns, the work must not have finished. An earlier version bounded the
-    /// elapsed wall-clock at one second instead, which says the same thing only
-    /// on an idle machine. Under `swift test --parallel` a CI runner put 1.3 s
-    /// between the two clock reads while the deadline itself had returned in
-    /// milliseconds, and the test failed for the machine's reasons rather than
-    /// the code's. A latch cannot be starved into a false failure: if the
-    /// deadline waited, the work is finished, whatever the load.
-    @Test("Work that ignores cancellation is abandoned, not awaited")
+    /// returns, the work must have started and must not have finished. An
+    /// earlier version bounded the elapsed wall-clock at one second instead,
+    /// which states the property only on an idle machine — under `swift test
+    /// --parallel` a CI runner put 1.3 s between the two clock reads while the
+    /// deadline itself had returned in milliseconds, and the test failed for the
+    /// machine's reasons rather than the code's. A latch cannot be starved into
+    /// a false failure: if the deadline waited, the work is finished, whatever
+    /// the load.
+    ///
+    /// Both halves are needed. "The work had not finished" is also true of work
+    /// the scheduler never started, and on the runner that motivated this test
+    /// that is not hypothetical.
+    @Test("Work that ignores cancellation is abandoned, not awaited", .timeLimit(.minutes(1)))
     func abandonsUncancellableWork() async {
-        let workCompleted = CompletionFlag()
+        let started = CompletionFlag()
+        let completed = CompletionFlag()
         let result: String? = await Deadline.run(within: .milliseconds(50)) {
-            await withCheckedContinuation { (continuation: StringContinuation) in
-                // Far longer than the deadline, and far longer than any
-                // scheduling delay: the gap is the test's whole margin, and it
-                // costs nothing while the property holds, because nothing waits
-                // for it.
+            started.set()
+            return await withCheckedContinuation { (continuation: StringContinuation) in
+                // Far longer than the deadline and than any plausible scheduling
+                // delay. It costs 10 s on the failing path, and on the passing
+                // path only a suspended task and a pending timer that outlive
+                // the test — nothing waits for either.
                 DispatchQueue.global().asyncAfter(deadline: .now() + 10) {
-                    workCompleted.set()
+                    completed.set()
                     continuation.resume(returning: "too late")
                 }
             }
         }
+        let finishedBeforeReturn = completed.isSet
+
         #expect(result == nil)
-        #expect(!workCompleted.isSet, "the deadline waited for work it should have abandoned")
+        #expect(!finishedBeforeReturn, "the deadline waited for work it should have abandoned")
+        #expect(await started.waitUntilSet(), "the work never ran, so the test proved nothing")
+    }
+
+    /// Expiry must be *prompt*, not merely eventual. `responseDeadline` defaults
+    /// to 750 ms because Codex caps `SessionEnd` at one second, so a deadline
+    /// that expires late eats an agent's shutdown — and every other assertion in
+    /// this suite passes just as well if `run` takes seconds to give up.
+    ///
+    /// Bounded on the *median* rather than the worst sample, deliberately. The
+    /// single 1.3 s stall that broke the old assertions cannot move a median,
+    /// while it fails any bound on the maximum.
+    @Test(
+        "Expiry lands near the deadline rather than merely eventually",
+        .timeLimit(.minutes(1)))
+    func expiresPromptly() async {
+        let clock = ContinuousClock()
+        var samples: [Duration] = []
+        for _ in 0..<21 {
+            let started = clock.now
+            let result: Int? = await Deadline.run(within: .milliseconds(50)) {
+                try? await Task.sleep(for: .seconds(30))
+                return 1
+            }
+            samples.append(clock.now - started)
+            #expect(result == nil)
+        }
+        let median = samples.sorted()[samples.count / 2]
+        #expect(median < .milliseconds(500), "expiry is drifting well past its deadline")
     }
 
     @Test("A late answer cannot overwrite the expiry that was already reported")

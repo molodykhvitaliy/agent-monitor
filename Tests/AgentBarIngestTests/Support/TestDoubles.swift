@@ -70,17 +70,29 @@ struct ScriptedHandler: IngestHandling {
     }
 }
 
-/// A one-way latch: set once, readable from anywhere.
+/// A one-way latch: set once, readable from any thread.
 ///
-/// This is how the two "abandoned, not awaited" tests are asserted. Both used to
-/// bound the elapsed wall-clock instead, which states the property only on an
-/// idle machine — see `DeadlineTests.abandonsUncancellableWork` for what that
-/// cost on a loaded runner.
+/// Callers use it to assert an *ordering* — that one thing had, or had not,
+/// happened at the moment another did. `set()` must therefore happen before
+/// whatever event the reader observes; a latch set after the fact proves
+/// nothing.
 final class CompletionFlag: Sendable {
     private let state = Mutex(false)
 
     func set() { state.withLock { $0 = true } }
     var isSet: Bool { state.withLock { $0 } }
+
+    /// Waits for the latch, up to a cap far beyond any plausible scheduling
+    /// delay. The cap only stops a broken test hanging a CI job — it is not a
+    /// measurement, and no assertion may read a duration out of it.
+    @discardableResult
+    func waitUntilSet(within limit: Duration = .seconds(30)) async -> Bool {
+        let giveUp = ContinuousClock().now.advanced(by: limit)
+        while !isSet, ContinuousClock().now < giveUp {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        return isSet
+    }
 }
 
 /// A handler that ignores cancellation entirely.
@@ -94,6 +106,10 @@ struct UncooperativeHandler: IngestHandling {
     let routes: Set<IngestRoute>
     let seconds: Double
     let response: IngestResponse
+    /// Set on entry, before the handler suspends. Without it, "the handler had
+    /// not finished" is also true of a handler the scheduler never started, and
+    /// the test would pass having exercised nothing.
+    let started = CompletionFlag()
     /// Set when the timer finally fires. A test reads it straight after the
     /// router answers: if the router had waited for this handler, it would be
     /// set by then, and that is the regression worth catching.
@@ -108,6 +124,7 @@ struct UncooperativeHandler: IngestHandling {
     typealias ResponseContinuation = CheckedContinuation<IngestResponse, Never>
 
     func handle(_ request: IngestRequest) async -> IngestResponse {
+        started.set()
         let answer = response
         let flag = completed
         return await withCheckedContinuation { (continuation: ResponseContinuation) in

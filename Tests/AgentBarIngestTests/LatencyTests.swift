@@ -60,10 +60,20 @@ struct LatencyTests {
                 samples.append(clock.now - started)
             }
             report("connect + post", samples)
-            #expect(percentile(samples, 99) < LatencyTests.ceiling)
+            // p95, not p99: nearest-rank over 60 samples puts index 99 % at 59,
+            // which is the *maximum*. Asserting that would require every one of
+            // 60 connection handshakes on a shared runner to beat the ceiling,
+            // and one descheduled connect would fail the suite. p95 still admits
+            // only the two worst round trips. The keep-alive test has 300
+            // samples and can afford a real p99.
+            #expect(percentile(samples, 95) < LatencyTests.ceiling)
         }
     }
 
+    /// Nearest-rank, which is exact but degenerates: for `rank` high enough
+    /// relative to `samples.count` the index lands on the last element and the
+    /// "percentile" is the maximum. Check the arithmetic before asserting on a
+    /// small sample.
     private func percentile(_ samples: [Duration], _ rank: Int) -> Duration {
         guard !samples.isEmpty else { return .zero }
         let sorted = samples.sorted()
