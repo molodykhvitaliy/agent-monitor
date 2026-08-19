@@ -12,10 +12,16 @@ import Foundation
 final class AppServices: PanelServices {
     private let store: SessionStore
     private let integrations: [ClaudeCodeIntegration]
+    private let caffeineBridge: CaffeineBridge
 
-    init(store: SessionStore, integrations: [ClaudeCodeIntegration]) {
+    init(
+        store: SessionStore,
+        integrations: [ClaudeCodeIntegration],
+        caffeine: CaffeineBridge
+    ) {
         self.store = store
         self.integrations = integrations
+        caffeineBridge = caffeine
     }
 
     func snapshot() async -> StoreSnapshot {
@@ -55,4 +61,13 @@ final class AppServices: PanelServices {
     /// not an error and gets no error styling — the Limits section still ships
     /// complete, because the Claude Code caveat row is the permanent half of it.
     func usageWindows() async -> [UsageWindow] { [] }
+
+    // MARK: - Caffeine
+
+    /// Read on every panel refresh, so it is a property read and never I/O. The
+    /// controller behind it is observable, which is what lets the footer's
+    /// indicator follow the assertion without a clock of its own.
+    func caffeine() -> CaffeineIndicator { caffeineBridge.indicator() }
+
+    func toggleCaffeine() { caffeineBridge.toggle() }
 }

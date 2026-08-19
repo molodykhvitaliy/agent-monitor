@@ -1,6 +1,7 @@
 import AgentBarCore
 import AgentBarIngest
 import AgentBarNotifications
+import AgentBarPower
 import AgentBarUI
 import AppKit
 import ClaudeCodeAdapter
@@ -40,6 +41,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let providers: [Provider] = [.claudeCode]
 
     private let store = SessionStore()
+    /// Keeps the Mac awake while an agent works. Built here rather than lazily:
+    /// it holds the only power assertion in the process, and one owner is what
+    /// makes "released when the process dies" a guarantee rather than a hope.
+    private let caffeine = CaffeineController()
+    private lazy var caffeineBridge = CaffeineBridge(controller: caffeine)
     private var menuBar: MenuBarController?
     private var ingest: IngestService?
     private var notifications: NotificationRouter?
@@ -57,6 +63,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // the system may relaunch the app to deliver a response.
         startNotifications()
         startIngest()
+        startCaffeine()
+    }
+
+    /// Begins holding the Mac awake, with one reading taken immediately.
+    ///
+    /// Immediately because AgentBar is usually launched while agents are already
+    /// running, and a session halfway through a long `Bash` call may not speak
+    /// again for half an hour. Waiting for the first hook payload would mean the
+    /// Mac sleeping under exactly the build this exists to protect.
+    private func startCaffeine() {
+        Task { [caffeine, store] in
+            await caffeine.start { await store.snapshot() }
+        }
     }
 
     /// Lets the endpoint retract itself before the process goes.
@@ -87,6 +106,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         notifications?.stop()
+        // Releases the power assertion. The kernel would release it anyway when
+        // this process goes — that is why AgentBar takes one instead of spawning
+        // `caffeinate` — but doing it here means the assertion disappears when
+        // the app decides to quit rather than when the last reference does.
+        caffeine.stop()
         menuBar?.stop()
         menuBar = nil
     }
@@ -175,12 +199,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ingest = service
 
         let menuBar = startMenuBar(with: [ClaudeCodeIntegration(ingest: service)])
-        // The push leg fans out to both observers. The menu bar re-reads the
+        // The push leg fans out to three observers. The menu bar re-reads the
         // store and redraws; the router decides whether anything is worth
-        // interrupting the user for. Neither knows the other exists.
-        relay.destination = { [weak menuBar, weak notifications] changes in
+        // interrupting the user for; the caffeine controller decides whether the
+        // Mac should still be kept awake. None of them knows the others exist.
+        relay.destination = { [weak menuBar, weak notifications, caffeine] changes in
             menuBar?.stateDidChange(changes)
             notifications?.record(changes)
+            // Held strongly, unlike the other two: the assertion must be
+            // reconsidered on every move, and a caffeine controller released
+            // early would leave the Mac awake with nothing left to notice.
+            caffeine.stateDidChange()
         }
 
         Task {
@@ -206,10 +235,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @discardableResult
     private func startMenuBar(with integrations: [ClaudeCodeIntegration]) -> MenuBarController {
         let controller = MenuBarController(
-            services: AppServices(store: store, integrations: integrations),
+            services: AppServices(
+                store: store, integrations: integrations, caffeine: caffeineBridge),
             settings: NotificationSettingsBridge(
                 router: notifications ?? Self.unavailableRouter(),
-                providers: Self.providers))
+                providers: Self.providers,
+                caffeine: caffeineBridge))
         menuBar = controller
         controller.start()
         return controller

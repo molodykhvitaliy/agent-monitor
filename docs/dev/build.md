@@ -29,6 +29,21 @@ because the suites live in the Swift package rather than in an Xcode target, so
 ⌘U in Xcode does nothing — use the terminal or a package test target's inline
 run button.
 
+Two suites are **off unless asked for**, because they do something to the machine
+rather than only to memory. Both are ordinary parts of the suite otherwise, and
+both are worth running when the surface they cover changes:
+
+```bash
+AGENTBAR_RENDER=/tmp/agentbar swift test --filter AgentBarUITests    # writes PNGs
+AGENTBAR_POWER_LIVE=1 swift test --filter AgentBarPowerTests         # real assertion
+```
+
+The first renders every panel state and the settings window so a person can look
+at them; it is what caught the provider badge drawing an ✕. The second takes a
+real `IOPMAssertion`, reads `pmset`, and waits out a shortened watchdog and a
+shortened lease — a suite that kept the developer's Mac awake on every run would
+be its own bug.
+
 ### Recipes set their own shell flags
 
 macOS ships **GNU Make 3.81**, which predates `.SHELLFLAGS` (3.82) and ignores

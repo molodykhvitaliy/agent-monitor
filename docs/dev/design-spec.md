@@ -499,13 +499,46 @@ left, buttons on the right.
 - The status text is itself a button: pressing it opens the integration status
   card in place. That is the answer to "why is nothing appearing?" being one
   click from the thing that says something is wrong.
-- Buttons: 22 × 22, radius 6, 2 pt apart — `Settings` (gear) and
-  `Quit AgentBar` (power). Both need tooltips and accessibility labels; neither
-  has a visible text label.
+- Buttons: 22 × 22, radius 6, 2 pt apart — `Caffeine` (cup), `Settings` (gear)
+  and `Quit AgentBar` (power). None has a visible text label, so all three need
+  tooltips and accessibility labels.
 
 Settings is the entry point reserved for the deferred settings screen, and the
 footer is where a future dashboard entry point goes. Nothing more: the brief's
 restraint requirement is a hard one.
+
+> **Deviation, step 08.** "Nothing more" was written about *entry points*, and
+> Caffeine is not one — it is a control whose state has to be readable at a
+> glance, and the panel is the only surface a user looks at without going
+> looking. It sits leftmost of the three so `Quit AgentBar` stays last. The full
+> three-state setting and the honest limitation live in the settings window's
+> `Caffeine` section; this button is the indicator and the off switch.
+
+### The Caffeine indicator
+
+One 22 × 22 icon button, and the whole of Caffeine's presence in the panel. Four
+appearances, each with its own silhouette — colour never carries the state alone,
+in the footer as anywhere else:
+
+| State | Symbol | Ink |
+|---|---|---|
+| Holding an assertion | `cup.and.heat.waves.fill` | `connected` |
+| On, nothing is working | `cup.and.heat.waves` | `ink400` |
+| Off | `cup.and.saucer` | `ink400` |
+| The system refused | `exclamationmark.triangle.fill` | `stateFailed` |
+
+*On and holding* and *on and nothing needs it* are different facts and must not
+share a face: an indicator that conflated them would tell a user the Mac is being
+kept awake when it is not. A **refusal is drawn as a fault and never as a hold** —
+the only other symptom is a Mac that fell asleep during a build, hours later,
+with nothing to connect the two.
+
+Pressing it turns Caffeine off, or back on to whatever the settings window last
+chose — so switching off and on again never silently demotes `Always` to `While
+an agent is working`. Two sentences carry it: the tooltip says what is happening
+now (`Keeping your Mac awake · 2 working`), and the accessibility hint says what
+pressing it will do (`Turn Caffeine Off`). A control that only describes its state
+leaves a user guessing whether it is a button.
 
 ---
 
@@ -822,6 +855,7 @@ Minimum 560 × 520, opening at 620 × 620, resizable.
 | `Quiet Hours` | Enable, plus From and Until at half-hour granularity |
 | `While You're Working` | Enable, plus the application list with add and remove |
 | `Sounds` | **Add Sound File…**, **Reveal Sounds Folder**, and every current sound problem |
+| `Caffeine` | The three-state setting, a live status line, and the limitation |
 | `General` | Launch at login, and its last error if it has one |
 
 Section headers use the panel's `sectionLabel` — 11 pt semibold, uppercase,
@@ -876,6 +910,25 @@ test shows what the user will actually get.
   user-facing half of [ADR-0006](../adr/ADR-0006-notification-sounds-are-files-agentbar-can-resolve.md).
 - Events: *a burst of activity in one session produces one notification, not one
   per event.* Otherwise coalescing looks like dropped notifications.
+- Caffeine: *this stops the Mac falling asleep on its own while an agent works.
+  It does not keep the display awake, it does not survive closing the lid, and
+  macOS still sleeps when the battery runs low.* All three are hard limits of
+  `PreventUserIdleSystemSleep` rather than of this implementation, and
+  [design-brief.md](design-brief.md) §5 lists the second as a limitation the
+  interface must state rather than hide.
+
+### The Caffeine section
+
+A three-state picker — **Never**, **While an agent is working** (the default),
+**Always** — over the footer button's two states. It exists because "keep the Mac
+awake" has two honest meanings, following the agents and simply staying awake,
+and a switch makes one of them unreachable.
+
+Beneath it, one live status line carrying the state shape as well as the sentence:
+`Keeping your Mac awake · 2 working`, `Not holding · no agent is working`,
+`Caffeine is off`, or the system's own refusal in `stateFailed`. It is shown for
+**every** setting, including `Never`: a Caffeine switched off beside three working
+agents is exactly the situation a user opens this window to understand.
 
 ---
 
@@ -921,7 +974,7 @@ representation. Everything `AgentBarCore`, `AgentBarIngest` and
 | `isEmpty` | half of the empty-vs-onboarding decision |
 | `mostUrgentState` | the status glyph |
 | `waitingSessionCount` | the optional numeral, when > 1 |
-| `isAnyAgentWorking` | not drawn — it drives the power assertion |
+| `isAnyAgentWorking` | not drawn as such. The count of working sessions drives the power assertion and appears in the Caffeine tooltip and status line |
 | `finished`, `FinishedSession`, `FinishOutcome` | **no MVP surface.** The dashboard is deferred; the footer gear is the entry point left for it |
 | `ApplyOutcome`, `IgnoreReason`, `StateChange`, `RawPayload` | not drawn, on purpose. A stream of `duplicate` ignores — the one a user could act on — reaches them as `ClaudeCodeInstallDrift.duplicateHandler` on the integration card, which is the actionable form |
 | `ProjectRef.root` | the group header's disambiguating suffix, and its tooltip |
@@ -1136,4 +1189,5 @@ contradiction. Recorded here so it is not rediscovered as a bug.
 
 Settings was the third row here until step 07. It is now a real surface — see
 [Settings window](#settings-window) — and the footer gear opens it. Caffeine
-joins it in step 08 as one more section.
+joined it in step 08 as one more section, plus the footer indicator described
+under [Footer](#footer).

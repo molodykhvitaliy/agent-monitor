@@ -97,9 +97,17 @@ struct ModuleBoundaryTests {
     /// `Network` is how a socket gets opened, and ADR-0002's guarantee is that
     /// AgentBar talks to loopback and to nothing else. Keeping the framework
     /// inside one module means a socket appearing anywhere else is a failing
-    /// test rather than a diff nobody looked at twice.
+    /// test rather than a diff nobody looked at twice. `IOKit` is the same
+    /// argument about power: one module takes the assertion, so one module can
+    /// be held to releasing it.
     static let frameworksRestrictedToModules: [String: Set<String>] = [
-        "Network": ["AgentBarIngest"]
+        "Network": ["AgentBarIngest"],
+        // A power assertion is process-owned and released when the process
+        // dies, which is the whole reason AgentBar takes one instead of
+        // spawning `caffeinate`. One owner means one release path: an
+        // assertion created anywhere else is one `CaffeineController` cannot
+        // let go of, and the symptom is a Mac that never sleeps again.
+        "IOKit": ["AgentBarPower"],
     ]
 
     /// Ways to originate an HTTP request to an arbitrary host.

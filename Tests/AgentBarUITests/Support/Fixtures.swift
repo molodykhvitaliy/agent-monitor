@@ -99,4 +99,11 @@ final class StubServices: PanelServices {
     }
 
     func usageWindows() async -> [UsageWindow] { storedWindows }
+
+    var caffeineIndicator = CaffeineIndicator()
+    private(set) var caffeineToggles = 0
+
+    func caffeine() -> CaffeineIndicator { caffeineIndicator }
+
+    func toggleCaffeine() { caffeineToggles += 1 }
 }

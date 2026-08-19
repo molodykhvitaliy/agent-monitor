@@ -62,6 +62,7 @@ let package = Package(
         .testTarget(
             name: "AgentBarNotificationsTests",
             dependencies: ["AgentBarNotifications", "AgentBarCore"]),
+        .testTarget(name: "AgentBarPowerTests", dependencies: ["AgentBarPower", "AgentBarCore"]),
 
         // Reads source files rather than symbols: it guards boundaries the
         // compiler cannot express.

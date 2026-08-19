@@ -39,6 +39,18 @@ public final class SettingsModel {
     public var providers: [Provider] { services.providers }
     public var launchAtLogin: LaunchAtLogin { services.launchAtLogin }
 
+    /// Computed, for the reason `PanelModel.caffeine` is: the value lives in an
+    /// observable object the assembly owns, so reading it in the view body is
+    /// what makes the status line follow the assertion rather than the window's
+    /// last refresh.
+    public var caffeine: CaffeineIndicator { services.caffeine() }
+
+    public func setCaffeine(_ setting: CaffeineSetting) {
+        guard setting != caffeine.setting else { return }
+        services.setCaffeine(setting)
+        lastMessage = nil
+    }
+
     /// Re-reads everything that can change while the window is closed: the
     /// permission the user may have revoked in System Settings, and the sounds
     /// they may have added to or removed from their Sounds folder.

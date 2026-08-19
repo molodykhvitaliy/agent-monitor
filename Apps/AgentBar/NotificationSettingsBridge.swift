@@ -31,11 +31,19 @@ final class NotificationSettingsBridge: SettingsServices {
 
     private let router: NotificationRouter
     private let preview = SoundPreview()
+    private let caffeineBridge: CaffeineBridge
 
-    init(router: NotificationRouter, providers: [Provider]) {
+    init(router: NotificationRouter, providers: [Provider], caffeine: CaffeineBridge) {
         self.router = router
         self.providers = providers
+        caffeineBridge = caffeine
     }
+
+    // MARK: - Caffeine
+
+    func caffeine() -> CaffeineIndicator { caffeineBridge.indicator() }
+
+    func setCaffeine(_ setting: CaffeineSetting) { caffeineBridge.set(setting) }
 
     // MARK: - Preferences
 
