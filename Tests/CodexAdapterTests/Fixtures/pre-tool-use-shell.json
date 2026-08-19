@@ -1,0 +1,20 @@
+{
+  "session_id": "0198f6a3-2b71-7c4e-9d10-2f5a1c3b8e44",
+  "transcript_path": "/Users/dev/.codex/sessions/0198f6a3-2b71-7c4e-9d10-2f5a1c3b8e44.jsonl",
+  "cwd": "/Users/dev/projects/probe",
+  "hook_event_name": "PreToolUse",
+  "model": "gpt-5.1-codex-max",
+  "permission_mode": "on-request",
+  "turn_id": "0198f6a3-2b95-7a02-bb31-6d4c9f2a7e11",
+  "tool_name": "shell",
+  "tool_use_id": "call_9f2b6c7a41d84e0f",
+  "tool_input": {
+    "command": [
+      "bash",
+      "-lc",
+      "swift test --parallel"
+    ],
+    "workdir": "/Users/dev/projects/probe",
+    "timeout_ms": 600000
+  }
+}

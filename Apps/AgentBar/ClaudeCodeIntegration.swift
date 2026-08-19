@@ -15,7 +15,7 @@ import os
 /// adapter knows the providers exist says the same thing from the other
 /// direction.
 @MainActor
-final class ClaudeCodeIntegration {
+final class ClaudeCodeIntegration: ProviderIntegration {
     private static let logger = Logger(
         subsystem: "com.molodykhvitalii.AgentBar", category: "integration")
 

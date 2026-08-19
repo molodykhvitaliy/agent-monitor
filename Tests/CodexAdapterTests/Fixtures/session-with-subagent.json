@@ -1,0 +1,102 @@
+[
+  {
+    "session_id": "0198f6a3-2b71-7c4e-9d10-2f5a1c3b8e44",
+    "transcript_path": "/Users/dev/.codex/sessions/0198f6a3-2b71-7c4e-9d10-2f5a1c3b8e44.jsonl",
+    "cwd": "/Users/dev/projects/probe",
+    "hook_event_name": "SessionStart",
+    "model": "gpt-5.1-codex-max",
+    "permission_mode": "on-request",
+    "turn_id": "0198f6a3-2b95-7a02-bb31-6d4c9f2a7e11",
+    "source": "startup"
+  },
+  {
+    "session_id": "0198f6a3-2b71-7c4e-9d10-2f5a1c3b8e44",
+    "transcript_path": "/Users/dev/.codex/sessions/0198f6a3-2b71-7c4e-9d10-2f5a1c3b8e44.jsonl",
+    "cwd": "/Users/dev/projects/probe",
+    "hook_event_name": "UserPromptSubmit",
+    "model": "gpt-5.1-codex-max",
+    "permission_mode": "on-request",
+    "turn_id": "0198f6a3-2b95-7a02-bb31-6d4c9f2a7e11",
+    "prompt": "run the tests and fix whatever fails"
+  },
+  {
+    "session_id": "0198f6a3-2b71-7c4e-9d10-2f5a1c3b8e44",
+    "transcript_path": "/Users/dev/.codex/sessions/0198f6a3-2b71-7c4e-9d10-2f5a1c3b8e44.jsonl",
+    "cwd": "/Users/dev/projects/probe",
+    "hook_event_name": "SubagentStart",
+    "model": "gpt-5.1-codex-max",
+    "permission_mode": "on-request",
+    "turn_id": "0198f6a3-2b95-7a02-bb31-6d4c9f2a7e11",
+    "agent_id": "agent_5d3f9b71",
+    "agent_type": "reviewer"
+  },
+  {
+    "session_id": "0198f6a3-2b71-7c4e-9d10-2f5a1c3b8e44",
+    "transcript_path": "/Users/dev/.codex/sessions/0198f6a3-2b71-7c4e-9d10-2f5a1c3b8e44.jsonl",
+    "cwd": "/Users/dev/projects/probe",
+    "hook_event_name": "PreToolUse",
+    "model": "gpt-5.1-codex-max",
+    "permission_mode": "on-request",
+    "turn_id": "0198f6a3-2b95-7a02-bb31-6d4c9f2a7e11",
+    "tool_name": "shell",
+    "tool_use_id": "call_9f2b6c7a41d84e0f",
+    "tool_input": {
+      "command": [
+        "bash",
+        "-lc",
+        "swift test --parallel"
+      ],
+      "workdir": "/Users/dev/projects/probe",
+      "timeout_ms": 600000
+    }
+  },
+  {
+    "session_id": "0198f6a3-2b71-7c4e-9d10-2f5a1c3b8e44",
+    "transcript_path": "/Users/dev/.codex/sessions/0198f6a3-2b71-7c4e-9d10-2f5a1c3b8e44.jsonl",
+    "cwd": "/Users/dev/projects/probe",
+    "hook_event_name": "PostToolUse",
+    "model": "gpt-5.1-codex-max",
+    "permission_mode": "on-request",
+    "turn_id": "0198f6a3-2b95-7a02-bb31-6d4c9f2a7e11",
+    "tool_name": "shell",
+    "tool_use_id": "call_9f2b6c7a41d84e0f",
+    "tool_input": {
+      "command": [
+        "bash",
+        "-lc",
+        "swift test --parallel"
+      ],
+      "workdir": "/Users/dev/projects/probe",
+      "timeout_ms": 600000
+    },
+    "tool_response": {
+      "output": "Executed 501 tests",
+      "exit_code": 0
+    }
+  },
+  {
+    "session_id": "0198f6a3-2b71-7c4e-9d10-2f5a1c3b8e44",
+    "transcript_path": "/Users/dev/.codex/sessions/0198f6a3-2b71-7c4e-9d10-2f5a1c3b8e44.jsonl",
+    "cwd": "/Users/dev/projects/probe",
+    "hook_event_name": "SubagentStop",
+    "model": "gpt-5.1-codex-max",
+    "permission_mode": "on-request",
+    "turn_id": "0198f6a3-2b95-7a02-bb31-6d4c9f2a7e11",
+    "agent_id": "agent_5d3f9b71",
+    "agent_type": "reviewer",
+    "agent_transcript_path": "/Users/dev/.codex/sessions/0198f6a3-2b71-7c4e-9d10-2f5a1c3b8e44-agent_5d3f9b71.jsonl",
+    "stop_hook_active": false,
+    "last_assistant_message": "The change looks correct."
+  },
+  {
+    "session_id": "0198f6a3-2b71-7c4e-9d10-2f5a1c3b8e44",
+    "transcript_path": "/Users/dev/.codex/sessions/0198f6a3-2b71-7c4e-9d10-2f5a1c3b8e44.jsonl",
+    "cwd": "/Users/dev/projects/probe",
+    "hook_event_name": "Stop",
+    "model": "gpt-5.1-codex-max",
+    "permission_mode": "on-request",
+    "turn_id": "0198f6a3-2b95-7a02-bb31-6d4c9f2a7e11",
+    "stop_hook_active": false,
+    "last_assistant_message": "All 501 tests pass."
+  }
+]

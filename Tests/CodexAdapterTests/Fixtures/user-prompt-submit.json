@@ -1,0 +1,10 @@
+{
+  "session_id": "0198f6a3-2b71-7c4e-9d10-2f5a1c3b8e44",
+  "transcript_path": "/Users/dev/.codex/sessions/0198f6a3-2b71-7c4e-9d10-2f5a1c3b8e44.jsonl",
+  "cwd": "/Users/dev/projects/probe",
+  "hook_event_name": "UserPromptSubmit",
+  "model": "gpt-5.1-codex-max",
+  "permission_mode": "on-request",
+  "turn_id": "0198f6a3-2b95-7a02-bb31-6d4c9f2a7e11",
+  "prompt": "run the tests and fix whatever fails"
+}

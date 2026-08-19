@@ -11,12 +11,12 @@ import Foundation
 @MainActor
 final class AppServices: PanelServices {
     private let store: SessionStore
-    private let integrations: [ClaudeCodeIntegration]
+    private let integrations: [any ProviderIntegration]
     private let caffeineBridge: CaffeineBridge
 
     init(
         store: SessionStore,
-        integrations: [ClaudeCodeIntegration],
+        integrations: [any ProviderIntegration],
         caffeine: CaffeineBridge
     ) {
         self.store = store

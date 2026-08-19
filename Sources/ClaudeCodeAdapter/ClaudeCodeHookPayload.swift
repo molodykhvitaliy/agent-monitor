@@ -1,3 +1,4 @@
+import AgentBarJSON
 import Foundation
 
 public enum ClaudeCodeDecodingError: Error, Sendable, Hashable, CustomStringConvertible {

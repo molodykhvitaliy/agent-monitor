@@ -72,13 +72,17 @@ struct ModuleBoundaryTests {
     /// another adapter.
     static let allowedInternalDependencies: [String: Set<String>] = [
         "AgentBarCore": [],
+        // Ordered, lossless JSON. Knows neither provider and reaches nothing,
+        // which is what lets both adapters share it without importing each
+        // other — the rule that decided where it lives.
+        "AgentBarJSON": [],
         "AgentBarIngest": ["AgentBarCore"],
         // The one edge that points at the transport rather than straight at the
         // core: `EventDecoding` is the seam AgentBarIngest publishes for
         // adapters, and conforming to it where the payload knowledge lives is
         // what keeps provider JSON inside the adapter.
-        "ClaudeCodeAdapter": ["AgentBarCore", "AgentBarIngest"],
-        "CodexAdapter": ["AgentBarCore"],
+        "ClaudeCodeAdapter": ["AgentBarCore", "AgentBarIngest", "AgentBarJSON"],
+        "CodexAdapter": ["AgentBarCore", "AgentBarIngest", "AgentBarJSON"],
         "CodexAppServer": ["AgentBarCore"],
         "AgentBarNotifications": ["AgentBarCore"],
         "AgentBarPower": ["AgentBarCore"],

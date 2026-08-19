@@ -1,3 +1,4 @@
+import AgentBarJSON
 import Foundation
 
 /// A handler AgentBar found in a settings file, as it was written there.

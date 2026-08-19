@@ -1,5 +1,6 @@
 import AgentBarCore
 import AgentBarIngest
+import AgentBarJSON
 import Foundation
 import Testing
 

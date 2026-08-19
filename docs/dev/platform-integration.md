@@ -3,7 +3,8 @@
 Verified facts about the extension surfaces AgentBar builds on.
 
 **Verification date:** 2026-08-18 (§1 re-verified in full while building step 04;
-`AskUserQuestion`'s `tool_input` shape added 2026-08-19 for step 06)
+`AskUserQuestion`'s `tool_input` shape added 2026-08-19 for step 06; **§2
+re-verified in full on 2026-08-19 while building step 09**)
 **Verified against:** Claude Code `2.1.233`, Codex CLI `0.147.0`, macOS `27.0`
 
 > **Precedence rule.** Official platform documentation wins over this file, and
@@ -328,8 +329,28 @@ Source: <https://learn.chatgpt.com/docs/hooks>
 
 Turn-scoped: `PreToolUse`, `PermissionRequest`, `PostToolUse`, `PreCompact`,
 `PostCompact`, `UserPromptSubmit`, `SubagentStop`, `Stop`.
-Session-scoped: `SessionStart`, `SessionEnd`.
-Subagent-scoped: `SubagentStart`, `SubagentStop`.
+Session- and subagent-start: `SessionStart`, `SubagentStart`.
+Main thread only: `SessionEnd` — *"It won't run for subagents."*
+
+AgentBar installs eight of them: `SessionStart`, `UserPromptSubmit`,
+`PreToolUse`, `PostToolUse`, `SubagentStart`, `SubagentStop`, `Stop`,
+`SessionEnd`.
+
+Three absences, each a decision rather than an oversight:
+
+- **`PermissionRequest` is not installed.** It is the event the Approve/Deny
+  backlog item arrives on, and subscribing to it now would put AgentBar in the
+  path of a permission prompt for a state the MVP cannot show. The cost is real
+  and is stated in the code: Codex has **no other event meaning "blocked on a
+  human"**, so a Codex session waiting on an approval reads as `working` until
+  the watchdog demotes it. Claude Code's `Notification` has no counterpart here.
+- **`PreCompact` / `PostCompact` are not installed.** Compaction is not a state
+  the panel shows, and every extra entry is another hook the user must review
+  before *any* of them run.
+- **`notify` is never written** — §2.7.
+
+`SessionEnd` not firing for subagents is not a gap: a subagent is closed by
+`SubagentStop`, and session removal is a main-thread event by definition.
 
 ### 2.2 Config discovery
 
@@ -341,9 +362,15 @@ Resolution order, **additive — higher layers do not replace lower ones**:
 4. `<repo>/.codex/config.toml` `[hooks]`
 5. plugin-bundled `hooks/hooks.json`
 
+*"If more than one hook source exists, Codex loads all matching hooks. Higher-
+precedence config layers don't replace lower-precedence hooks."* And *"Multiple
+matching command hooks for the same event are launched concurrently, so one hook
+can't prevent another matching hook from starting."*
+
 AgentBar **never writes `config.toml`.** This avoids TOML comment loss, avoids
 the merge warning Codex emits when a layer has both representations, and — see
-§5 — avoids destroying the user's existing `notify` entry.
+§2.7 — avoids destroying the user's existing `notify` entry. It is *read*, for
+the two tables in §2.5.
 
 Structure:
 
@@ -354,22 +381,69 @@ Structure:
     "EventName": [
       { "matcher": "…",
         "hooks": [ { "type": "command", "command": "…", "timeout": 600,
-                     "statusMessage": "…", "async": false } ] }
+                     "statusMessage": "…", "async": false,
+                     "additionalContextLimit": 2500 } ] }
     ]
   }
 }
 ```
 
-Only `type: "command"` is executable today.
+Only `type: "command"` is executable today. Commands run **through a shell**,
+with the session `cwd` as their working directory — the entry already on this
+machine relies on `"$HOME"` expanding — so AgentBar single-quotes the helper's
+path rather than passing argv.
+
+`async: true` runs a hook in the background, on every event except `SessionEnd`,
+which *"always run[s] synchronously, even when `async` is `true`"*, and Codex
+runs at most eight background hooks per session concurrently. **AgentBar does not
+set it.** With a helper measured in milliseconds it buys nothing, and running
+synchronously is what keeps `Stop` and `SessionEnd` in the order they happened.
+
+`statusMessage` is shown to the user while the hook runs, and AgentBar does not
+write one either: a monitor that announces itself on every tool call is not a
+monitor.
+
+**Matchers** are supported on `PreToolUse`, `PostToolUse`, `PermissionRequest`
+(tool name), `PreCompact` / `PostCompact` (trigger), `SessionStart` (source),
+`SubagentStart` / `SubagentStop` (subagent type) and `SessionEnd` (reason,
+currently only `other`). They are **ignored** on `UserPromptSubmit` and `Stop`.
+Every handler AgentBar installs is matcher-less.
 
 ### 2.3 Payload
 
-Single JSON object on **stdin** (not argv — that is `notify`, §2.6):
+A single JSON object on **stdin** (not argv — that is `notify`, §2.7).
 
-```
-session_id, transcript_path (nullable), cwd, hook_event_name,
-model, permission_mode, turn_id (turn-scoped events)
-```
+Common to every event: `session_id`, `transcript_path` (nullable), `cwd`,
+`hook_event_name`, `model`. Turn-scoped events add `turn_id`, and everything but
+`SessionEnd` carries `permission_mode`.
+
+| Event | Extra fields |
+|---|---|
+| `SessionStart` | `source` ∈ `startup \| resume \| clear \| compact` |
+| `UserPromptSubmit` | `prompt` |
+| `PreToolUse` | `tool_name`, `tool_use_id`, `tool_input` |
+| `PostToolUse` | the above plus `tool_response` |
+| `SubagentStart` | `agent_id`, `agent_type` |
+| `SubagentStop` | the above plus `agent_transcript_path`, `stop_hook_active`, `last_assistant_message` |
+| `Stop` | `stop_hook_active`, `last_assistant_message` |
+| `SessionEnd` | `reason` — and **no** `turn_id`, **no** `permission_mode` |
+
+> **Correction.** An earlier version of this file, and `architecture.md` with it,
+> said Codex documented no `tool_use_id`. It documents one on both tool events,
+> and the adapter reads it, so no synthesised identifier is needed.
+
+`model` arriving on **every** event is the one place Codex is more generous than
+Claude Code, where it comes only on `SessionStart` — an event that takes no
+`http` handler and which AgentBar therefore cannot subscribe to.
+
+Exit codes: `0` is success. **Exit code `2` blocks** on `PreToolUse`,
+`PostToolUse` and `UserPromptSubmit`, with the reason read from stderr. The
+helper therefore exits `0` on every path it has, including every failure.
+
+> **Not yet captured.** These shapes come from the documentation, not from
+> recordings: a `command` hook does not run until a human trusts it, so a
+> payload cannot be captured from a scripted run. `Tests/CodexAdapterTests/
+> Fixtures/README.md` says so in the files themselves and describes the capture.
 
 ### 2.4 PermissionRequest decision format
 
@@ -392,28 +466,67 @@ Parsed but **not supported** — do not emit:
 `PreToolUse`: `permissionDecision: "ask"`, `continue`, `stopReason`, `suppressOutput`;
 `PostToolUse`: `updatedMCPToolOutput`, `suppressOutput`.
 
-### 2.5 Trust — a product requirement, not a detail
+### 2.5 Trust — a product requirement, and where it is written down
 
 > "Before a non-managed command hook can run, Codex requires you to review and
 > trust the exact hook definition."
 
-**Trust is recorded against the hook definition's SHA hash.** Two consequences:
+Trust is recorded against *"the hook's current hash, so new or changed hooks are
+marked for review and skipped until trusted"*, and the user reviews them with
+**`/hooks`**, which *"Codex prints a warning"* about at startup when anything is
+pending. Managed hooks — system, MDM, cloud, `requirements.toml` — are trusted by
+policy instead.
 
-1. Writing `hooks.json` is not enough — onboarding must walk the user through
-   trusting it, and the UI must show an explicit "installed but not yet trusted"
-   state. Otherwise the user gets a silently dead integration.
-2. **Any change to the hook command invalidates trust.** App updates that alter
-   the helper invocation re-trigger the trust prompt. The installer must detect
-   this and tell the user, and the helper path/argv should be kept stable across
-   updates wherever possible.
+**Where the record lives — observed locally on 2026-08-19, not documented.**
+`~/.codex/config.toml` gains a `[hooks.state]` table keyed by the entry's
+position:
 
-`--dangerously-bypass-hook-trust` exists. AgentBar never suggests it.
+```toml
+[hooks.state."/Users/dev/.codex/config.toml:user_prompt_submit:0:0"]
+trusted_hash = "sha256:85fedc8a…"
+```
+
+The key is `<source file path>:<event in snake_case>:<group index>:<hook index>`.
+An `enabled = false` may sit beside the hash: Codex lets a user switch an
+individual non-managed hook off, which is trusted-and-still-inert, and a
+different sentence from "not trusted". The installed `codex` binary carries the
+matching strings — `hooks.state."`, `HookStateToml`, `trusted_hash`, `enabled`,
+and "config/batchWrite failed while updating hook trust in TUI" — which is
+consistent with the whole trust table being written through the config layer
+regardless of which file the hook itself came from. **The key format for a hook
+declared in `hooks.json` has not been observed** and is the first thing a capture
+session should confirm.
+
+**The hash is not reproducible from outside.** Four candidate pre-images were
+tried against three live records — the raw command, the command with a newline,
+the handler object as compact JSON, and several field orderings — and none
+matched. AgentBar therefore never computes one; it reads the record's presence
+and its `enabled` flag, and treats everything it cannot read as *not trusted*.
+
+Two consequences for the product:
+
+1. Writing `hooks.json` is not enough. Onboarding has to walk the user through
+   `/hooks`, and the UI needs an explicit "installed but not yet trusted" state —
+   otherwise the user gets a silently dead integration.
+2. **Any change to the hook command invalidates trust.** The command contains the
+   helper's absolute path, so the helper lives at a fixed place inside the bundle
+   and the installer detects a moved app rather than silently rewriting it.
+
+`--dangerously-bypass-hook-trust` exists. AgentBar never uses it and never
+suggests it; ADR-0008 is where that decision is recorded, and it is the only
+place in the repository that names the flag.
 
 ### 2.6 Timeouts
 
-Default 600s. **`SessionEnd` is capped at 1 second (3s maximum).** The Codex
-helper must be a compiled binary that completes in single-digit milliseconds —
-this alone rules out a Python or shell bridge.
+Default 600s — *"If `timeout` is omitted, Codex uses `600` seconds for most
+hooks"* — and **`SessionEnd` uses 1 second by default and supports up to 3**. The
+Codex helper must therefore be a compiled binary completing in single-digit
+milliseconds, which alone rules out a Python or shell bridge.
+
+AgentBar sets an explicit timeout on every handler it installs: 2 seconds
+everywhere, 1 second on `SessionEnd`. Measured for the compiled helper on
+2026-08-19, Release build, 40 runs against a live endpoint: **p50 6.5 ms, p95
+7.6 ms** spawn to exit, against 1.0 ms for `/bin/cat` through the same harness.
 
 ### 2.7 notify — unavailable in practice
 

@@ -1,4 +1,5 @@
 import AgentBarCore
+import AgentBarJSON
 import Foundation
 
 /// Everything the installer does that can fail for a filesystem reason.

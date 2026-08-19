@@ -36,6 +36,7 @@ both are worth running when the surface they cover changes:
 ```bash
 AGENTBAR_RENDER=/tmp/agentbar swift test --filter AgentBarUITests    # writes PNGs
 AGENTBAR_POWER_LIVE=1 swift test --filter AgentBarPowerTests         # real assertion
+AGENTBAR_HELPER_BINARY=… swift test --filter HelperTimingProof       # the built helper
 ```
 
 The first renders every panel state and the settings window so a person can look
@@ -43,6 +44,22 @@ at them; it is what caught the provider badge drawing an ✕. The second takes a
 real `IOPMAssertion`, reads `pmset`, and waits out a shortened watchdog and a
 shortened lease — a suite that kept the developer's Mac awake on every run would
 be its own bug.
+
+The third measures `agentbar-helper` spawn-to-exit against a live endpoint, and
+needs a **built** binary rather than only the package:
+
+```bash
+make build
+products=$(xcodebuild -showBuildSettings -project AgentBar.xcodeproj -scheme AgentBar \
+             -configuration Debug -destination 'platform=macOS' \
+           | awk -F' = ' '/ BUILT_PRODUCTS_DIR = /{ if (!seen++) print $2 }')
+AGENTBAR_HELPER_BINARY="$products/AgentBar.app/Contents/MacOS/agentbar-helper" \
+  swift test --filter HelperTimingProof
+```
+
+It compares against `/bin/cat` through the same harness, so what it asserts is
+the helper's own share of the run rather than what this machine charges to start
+any process at all — the number that would otherwise fail on a busy laptop.
 
 ### Recipes set their own shell flags
 

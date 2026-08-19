@@ -1154,11 +1154,19 @@ other.
 Step 07 also delivered the **settings window** below, which this document had
 deferred.
 
-### Step 09 — Codex adapter
+### Step 09 — Codex adapter — delivered
 
-A `CodexInstallState` with an explicit `installedNotTrusted` case, plus the same
-degraded cases Claude Code has. The onboarding card's third state is a hard
-requirement from the brief, and there is no domain type behind it today.
+`CodexInstallState` has the explicit `installedNotTrusted(CodexTrustStatus)` case
+the brief asked for, plus `disabledInCodex` — a state the spec did not
+anticipate, because Codex lets a user trust a hook and then switch it off, which
+is a different sentence from "not trusted" and cannot be fixed by the `Trust`
+button. Both map onto `IntegrationCondition.notTrusted`; the difference reaches
+the user as the row's second line, which each state supplies for itself.
+
+The `Trust` button does not trust anything — nothing outside Codex can. It
+re-reads the state and reports what it found, which is the honest reading of a
+row whose action is "go and do this in another application". The card's footnote,
+already specified above, is what explains the rule.
 
 ### Step 10 — Codex limits
 
