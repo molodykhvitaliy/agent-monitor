@@ -24,6 +24,13 @@ loadable as payloads:
   seconds after a permission request that nobody has answered, which a
   non-interactive capture cannot produce. Replace it with a recording the next
   time a live session raises one.
+- `pre-tool-use-ask-user-question.json` has a real envelope and a real
+  `tool_input` *shape* — `questions[].question` / `header` / `multiSelect` /
+  `options[]`, confirmed on 2026-08-19 against seven `AskUserQuestion` calls
+  recorded by Claude Code `2.1.233` in `~/.claude/projects/*.jsonl` — but the
+  question and options are written rather than captured, because every recorded
+  one belongs to a private session. Shape is what the decoder reads; the words
+  are not.
 - `stop-failure.json` was recorded from a real `authentication_failed` turn —
   a session started against a config directory with no credentials — rather
   than from a rate limit, because an API error cannot be provoked on demand.

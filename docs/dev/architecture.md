@@ -68,7 +68,7 @@ enum EventKind: Sendable {
     case toolFinished
     case subagentStarted
     case subagentStopped
-    case waitingInput
+    case waitingInput(question: String?)            // one bounded display line
     case waitingPermission(PermissionRequestRef)   // reserved, backlog
     case turnFinished
     case failed(reason: String)
@@ -81,6 +81,16 @@ prompt being submitted, and it is `SessionStore` that decides this means the
 session is now working. `RawPayload` is deliberately opaque — a bounded summary
 line readable in a log, and nothing a caller can branch on, because raw provider
 JSON stopping at the adapter is only true if the domain cannot read it.
+
+`waitingInput`'s line is the one exception to "no content above the adapter", and
+it is a narrow one ([ADR-0005](../adr/ADR-0005-waiting-input-carries-a-question-line.md)):
+the question an agent asked, bounded and redacted by the adapter that produced
+it, carried through to `SessionState.waitingInput` so the row and the
+notification can render it. It is a display value — nothing branches on it, no
+transition depends on it, and no watchdog allowance moves with it. Only the
+`AskUserQuestion` path fills it; a permission prompt's own `message` deliberately
+does not, because it is provider boilerplate present on one waiting path and not
+the other.
 
 ### Project identity
 
@@ -118,7 +128,7 @@ sessionStarted (known session)  → heartbeat only
 turnStarted                     → working
 toolStarted / toolFinished      → working  (heartbeat, current tool)
 subagentStarted / subagentStopped → working, adjust subagent count
-waitingInput                    → waitingInput
+waitingInput                    → waitingInput (carrying its question line)
 waitingPermission               → waitingPermission
 turnFinished                    → idle, close open tools and subagents
 failed                          → failed
@@ -489,6 +499,44 @@ write.
 now, or `nil`. Everything the panel needs — installed, not installed, repairable
 drift, or configured-but-unreachable — is derived from that plus one read of the
 file. AgentBar originates no HTTP request, not even to itself.
+
+## The menu bar
+
+`AgentBarUI` may import only `AgentBarCore`, which decides most of its shape.
+
+**Liveness is driven, and mostly by push.** `StoreSnapshot` is an immutable
+reading and `SessionStore` owns no timer, so nothing re-reads it by itself.
+
+| Signal | Carries | Latency |
+|---|---|---|
+| `StateChangeSink`, from `EventIngestHandler` | every move an applied event caused | immediate, coalesced over 150 ms |
+| Timer, panel open, 1 s | `snapshot()` — the durations ticking | 1 s |
+| Timer, panel closed, 45 s | `sweep()` then `snapshot()` | up to a minute |
+
+Push is not an optimisation. Without it a waiting agent — the one signal the
+product exists for — would sit unannounced behind the closed-panel poll. The
+handler already held the `[ApplyOutcome]` that `apply()` returns; the sink is
+what stops it discarding them. It is deliberately not a callback the store owns:
+the domain must not know anything is listening, so the observation belongs to the
+boundary that applied the event.
+
+The status item is redrawn only when `mostUrgentState` or `waitingSessionCount`
+actually moved. Everything else a snapshot changes is the panel's business.
+
+**Install status is a UI-owned value type.** `IntegrationStatus` is declared in
+`AgentBarUI` and populated by the app target, which is the only place that links
+both a provider's installer and the views. The switch over
+`ClaudeCodeInstallState` lives next to that installer. A view model holding a
+`ClaudeCodeInstallReport` would fail `ModuleBoundaryTests`, and would break the
+rule that nothing above the adapter knows the providers exist.
+
+**The panel is an `NSPanel`, not an `NSPopover`.** Two requirements are in
+tension — never steal focus, and be keyboard-navigable — and the resolution is
+that the input method which opened the panel decides: a click orders it front
+without activating the app, a shortcut opens it as key window.
+`.nonactivatingPanel` is the style mask that can do both; a popover cannot.
+No shortcut is registered yet, so the capability exists and the trigger is a
+seam.
 
 ## Concurrency
 

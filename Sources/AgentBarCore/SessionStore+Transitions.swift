@@ -49,8 +49,11 @@ extension SessionStore {
             else { return .keep }
             record.enter(.working)
 
-        case .waitingInput:
-            record.enter(.waitingInput)
+        case .waitingInput(let question):
+            // A new question is a new wait, so a line that changed while the
+            // session was already waiting restarts the state timer — which is
+            // what `enter` does, because the two states are not equal.
+            record.enter(.waitingInput(question: question))
 
         case .waitingPermission(let request):
             record.enter(.waitingPermission(request))

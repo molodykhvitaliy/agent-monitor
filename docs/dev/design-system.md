@@ -334,9 +334,15 @@ because a menu-bar panel is small type on glass:
 ### Provider badge
 
 26 × 26 pt, radius 7, filled with the provider colour, glyph centred at 14 pt.
-Claude Code is a four-point sparkle — two rounded bars crossed at 45°, 3 pt
-thick with 1.5 pt caps. Codex is a literal `</>` in SF Mono, 12 pt bold, −1 pt
-tracking.
+Claude Code is a four-point sparkle inscribed in 54 % of the badge. Codex is a
+literal `</>` in SF Mono, 12 pt bold, −1 pt tracking.
+
+> **Corrected in step 06.** This paragraph used to describe the sparkle as "two
+> rounded bars crossed at 45°, 3 pt thick with 1.5 pt caps", and two rectangular
+> bars at 45° draw an **✕** — which on a filled terracotta tile reads as *error*
+> or *close*, the opposite of what a provider badge means. Seen only by rendering
+> it at 26 pt. It is now a concave four-point star in the same 54 % box: four
+> points, quadratic sides, waist pulled to 28 % of the radius.
 
 In the dense list variant the badge is 22 × 22 pt at radius 6; in a notification
 attachment it is 38 × 38 pt at radius 10.
@@ -387,13 +393,20 @@ Step 12 owns that.
 
 ## How this reaches the code
 
-Step 06 lands the tokens as:
+Step 06 landed the tokens as:
 
-- an asset catalog in the app bundle with a light and dark variant per colour,
-  named exactly as the token column above (`stateWorking`, `ink600`, …) — twenty
-  colours in all;
-- a `DesignTokens` enum in `AgentBarUI` exposing spacing, radii and the type
-  roles, so no view carries a bare number.
+- a `ColorToken` enum in `AgentBarUI` holding all twenty colours by the names in
+  the tables above, each a dynamic `NSColor` with a light and a dark value;
+- a `DesignTokens` enum exposing spacing, radii and the type roles, so no view
+  carries a bare number.
+
+> **Not an asset catalog, which is what this document originally asked for.**
+> SwiftPM copies an `.xcassets` into a resource bundle **without running
+> `actool`**, so `NSColor(named:bundle:)` finds nothing under `swift test` and
+> the tokens would resolve only in an Xcode build. ADR-0003 puts the logic in SPM
+> modules precisely so the suite runs without Xcode. Established by building it
+> both ways in step 06. Everything the catalog was for survives: one place per
+> token, two values each, and a test that walks every case.
 
 The alpha-based dark values (`hairline`, `divider`, `fillQuiet`, `ringQuiet`,
 `meterTrack`) are white at a stated percentage rather than a fixed hex on

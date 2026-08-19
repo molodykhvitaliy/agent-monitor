@@ -18,6 +18,7 @@ public actor IngestService {
     private let resolver: any ProjectResolving
     private let clock: any TimeSource
     private let diagnostics: any IngestDiagnosticSink
+    private let stateChanges: any StateChangeSink
 
     private var endpoint: IngestEndpoint?
     private var bound: BoundEndpoint?
@@ -41,13 +42,15 @@ public actor IngestService {
         discovery: (any EndpointPublishing)? = nil,
         resolver: any ProjectResolving = PathProjectResolver(),
         clock: any TimeSource = SystemTimeSource(),
-        diagnostics: any IngestDiagnosticSink = SystemDiagnostics()
+        diagnostics: any IngestDiagnosticSink = SystemDiagnostics(),
+        stateChanges: any StateChangeSink = UnobservedStateChanges()
     ) {
         self.paths = paths
         self.store = store
         self.resolver = resolver
         self.clock = clock
         self.diagnostics = diagnostics
+        self.stateChanges = stateChanges
         self.credentials =
             credentials ?? FileCredentialStore(url: paths.tokenURL, diagnostics: diagnostics)
         self.discovery = discovery ?? EndpointDiscoveryFile(url: paths.discoveryURL)
@@ -91,7 +94,8 @@ public actor IngestService {
         credentialOrigin = credential.origin
 
         let handler = EventIngestHandler(
-            store: store, decoders: decoders, resolver: resolver, diagnostics: diagnostics)
+            store: store, decoders: decoders, resolver: resolver, diagnostics: diagnostics,
+            stateChanges: stateChanges)
         let service = IngestEndpoint(
             configuration: configuration,
             token: credential.token,

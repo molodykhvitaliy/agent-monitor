@@ -6,5 +6,11 @@
 //
 // The module opts into MainActor as its default isolation in Package.swift.
 //
-// Step 06 replaces the placeholder menu below with the real status item and a
-// non-activating SwiftUI panel.
+// Its only permitted intra-package import is AgentBarCore, which is why the
+// install status the panel renders is a UI-owned value type (`IntegrationStatus`)
+// populated by the app target rather than a provider's own report. The colour
+// tokens live in `ColorToken`, in code and not in an asset catalog — SwiftPM
+// copies an `.xcassets` without running `actool`, so a catalog would resolve
+// only under an Xcode build.
+//
+// Entry point: `MenuBarController`, given a `PanelServices` by the app target.

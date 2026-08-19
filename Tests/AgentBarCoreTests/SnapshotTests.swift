@@ -28,14 +28,14 @@ struct SnapshotTests {
         await store.apply(Fixture.event(.failed(reason: "api"), session: "broken"))
         #expect(await store.snapshot().mostUrgentState == .failed)
 
-        await store.apply(Fixture.event(.waitingInput, session: "asking"))
+        await store.apply(Fixture.event(.waitingInput(question: nil), session: "asking"))
         #expect(await store.snapshot().mostUrgentState == .waiting)
     }
 
     @Test("Sessions waiting on the human are counted for the icon's badge")
     func waitingSessionsAreCounted() async {
         let store = SessionStore(clock: ManualTimeSource())
-        await store.apply(Fixture.event(.waitingInput, session: "a"))
+        await store.apply(Fixture.event(.waitingInput(question: nil), session: "a"))
         let request = PermissionRequestRef(id: PermissionRequestID("req"))
         await store.apply(Fixture.event(.waitingPermission(request), session: "b"))
         await store.apply(Fixture.event(.turnStarted, session: "c"))
@@ -48,7 +48,7 @@ struct SnapshotTests {
     @Test("Only a working session counts as work in progress")
     func workInProgressIsOnlyWorking() async {
         let store = SessionStore(clock: ManualTimeSource())
-        await store.apply(Fixture.event(.waitingInput, session: "asking"))
+        await store.apply(Fixture.event(.waitingInput(question: nil), session: "asking"))
         await store.apply(Fixture.event(.turnFinished, session: "idle"))
         #expect(!(await store.snapshot().isAnyAgentWorking))
 
@@ -62,7 +62,7 @@ struct SnapshotTests {
         await store.apply(Fixture.event(.toolStarted, tool: Fixture.bash, toolUseId: "tool-1"))
         #expect(await store.snapshot().onlySession?.currentTool == Fixture.bash)
 
-        await store.apply(Fixture.event(.waitingInput, at: 1))
+        await store.apply(Fixture.event(.waitingInput(question: nil), at: 1))
         #expect(await store.snapshot().onlySession?.currentTool == nil)
     }
 
@@ -72,7 +72,7 @@ struct SnapshotTests {
         let store = SessionStore(clock: clock)
         await store.apply(Fixture.event(.turnStarted))
         clock.advance(by: .minutes(4))
-        await store.apply(Fixture.event(.waitingInput, at: 240))
+        await store.apply(Fixture.event(.waitingInput(question: nil), at: 240))
         clock.advance(by: .minutes(1))
 
         let session = await store.snapshot().onlySession

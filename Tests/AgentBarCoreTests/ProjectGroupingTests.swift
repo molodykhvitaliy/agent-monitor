@@ -62,13 +62,13 @@ struct ProjectGroupingTests {
     func parallelSessionsShareAGroup() async {
         let store = SessionStore(clock: ManualTimeSource())
         await store.apply(Fixture.event(.turnStarted, session: "a"))
-        await store.apply(Fixture.event(.waitingInput, session: "b"))
+        await store.apply(Fixture.event(.waitingInput(question: nil), session: "b"))
 
         let snapshot = await store.snapshot()
         #expect(snapshot.projects.count == 1)
         #expect(snapshot.projects.first?.sessions.count == 2)
         #expect(snapshot.session("a")?.state == .working)
-        #expect(snapshot.session("b")?.state == .waitingInput)
+        #expect(snapshot.session("b")?.state == .waitingInput(question: nil))
     }
 
     /// Two worktrees are two places to work. Merging them would put two agents

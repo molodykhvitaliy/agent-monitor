@@ -1,0 +1,29 @@
+{
+  "session_id": "061ac832-0c45-418e-832f-9012d754b61b",
+  "transcript_path": "/Users/dev/.claude/projects/-Users-dev-projects-probe/061ac832-0c45-418e-832f-9012d754b61b.jsonl",
+  "cwd": "/Users/dev/projects/probe",
+  "prompt_id": "f6d43488-1542-4d97-b06f-8712f807954a",
+  "permission_mode": "acceptEdits",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "AskUserQuestion",
+  "tool_input": {
+    "questions": [
+      {
+        "question": "Which database should the migration target?",
+        "header": "Database",
+        "multiSelect": false,
+        "options": [
+          {
+            "label": "PostgreSQL",
+            "description": "The one production already runs."
+          },
+          {
+            "label": "SQLite",
+            "description": "Simpler, but no concurrent writers."
+          }
+        ]
+      }
+    ]
+  },
+  "tool_use_id": "toolu_01Vj84rdcGMLu6tvr3GoxQRd"
+}

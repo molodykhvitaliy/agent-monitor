@@ -122,9 +122,16 @@ otherwise the count carries it.
 
 ## Panel
 
-`NSPopover`, `behavior = .transient`, **380 pt** wide, height intrinsic to
-content. It is a live list, not an `NSMenu`: rows appear, change and leave while
-it is open.
+**380 pt** wide, height intrinsic to content. It is a live list, not an
+`NSMenu`: rows appear, change and leave while it is open.
+
+> **An `NSPanel`, not an `NSPopover`.** This section originally said popover, and
+> step 06 found that a popover cannot express the key-status rule below: it has
+> no way to take key status when opened by a keyboard shortcut and refuse it when
+> opened by a click. `NSPanel` with `.nonactivatingPanel` is exactly that
+> capability, so it is what ships — `.borderless`, `becomesKeyOnlyIfNeeded`,
+> `.floating`, dismissed by a global mouse monitor and by `resignKey`. Nothing
+> else in this document changes.
 
 **It must not steal focus.** Do not call `NSApp.activate` when showing it. The
 whole product is worthless if opening the panel pulls the user out of their
@@ -238,7 +245,7 @@ or a person wrote.
 | State | Detail line | Type | From |
 |---|---|---|---|
 | Working | the tool call | Mono | `currentTool.invocation`, falling back to `currentTool.name` |
-| Waiting | none today; the question once it exists | Caption | scheduled — see [Obligations](#step-06-or-07--the-question-line) |
+| Waiting | the question, when the agent asked one | Caption | `SessionState.waitingInput(question:)` — ADR-0005, landed in step 06 |
 | Failed | the failure reason | Mono | `SessionState.failed(reason:)` |
 | Unknown | `Stopped reporting · last seen 18m ago` | Caption | `Session.timeSinceLastEvent` |
 | Idle | none | — | — |
@@ -254,13 +261,15 @@ stderr never reaches the domain — `PostToolUseFailure` is decoded as
 `The API is overloaded`, `Server error`. Short English sentences, set in mono. The
 example copy in the canvas should not be implemented against.
 
-**But the reason is not bounded.** `failureReason`'s `default` branch passes an
-unrecognised provider error type through with nothing but underscores replaced and
-the first letter capitalised — deliberately, so a value Claude Code adds later
-still reads as something — and `NativeEventDecoder` applies no length limit at
-all. The row truncates to one line, so it is safe. **The notification body is not
-safe and must clamp**: take the first 60 characters on a word boundary and drop
-the rest. Step 07 must not assume a short sentence arrives.
+**But the reason is not bounded by the taxonomy.** `failureReason`'s `default`
+branch passes an unrecognised provider error type through with nothing but
+underscores replaced and the first letter capitalised — deliberately, so a value
+Claude Code adds later still reads as something. `NativeEventDecoder` now bounds
+every display string it carries to 120 characters (step 06), which is a cap on
+the wire, not a sentence. The row truncates to one line, so it is safe. **The
+notification body is not safe and must clamp**: take the first 60 characters on a
+word boundary and drop the rest. Step 07 must not assume a short sentence
+arrives.
 
 `ToolRef.invocation` is `nil` more often than the canvas suggests:
 `ToolInvocation.summarise` has no rule for `TodoWrite`, `AskUserQuestion`,
@@ -285,13 +294,13 @@ blank line. Idle rows, which never have a detail line, are one line tall.
 (`SessionStore.reading`), so "only while Working" is enforced by the domain and
 not by the view.
 
-**The Waiting row has no second line today, and is complete without one.** The
-canvas's hero rows show a quoted question there, but its own dense variant draws
-Waiting as tint, state and duration with nothing beneath, and its closing note
-credits the full-row wash — not a detail line — with making the row catch the
-eye. The wash is what makes it unmissable; the question is what makes the
-*notification* worth reading. The line is scheduled for the sake of the
-notification and the row inherits it when it lands; see
+**The Waiting row carries the question when there is one, and is complete
+without it.** Only the `AskUserQuestion` path produces a line; a permission or
+elicitation prompt renders as tint, state and duration with nothing beneath, and
+that is not a degraded row — the canvas's own dense variant draws it that way,
+and its closing note credits the full-row wash, not a detail line, with making
+the row catch the eye. The wash is what makes it unmissable; the question is
+what makes the *notification* worth reading. Landed in step 06 (ADR-0005); see
 [Obligations](#step-06-or-07--the-question-line).
 
 **Idle and Failed rows are ordinary rows.** They persist for as long as the store
@@ -846,6 +855,12 @@ suggestion — the surface above cannot be built honestly without it.
 
 ### Step 06 — menu-bar UI
 
+**Delivered.** All seven, plus the question line below. Three deviations, each
+recorded where it belongs: the panel is an `NSPanel` (above), the tokens are
+Swift rather than an asset catalog and the sparkle is a concave star
+([design-system.md](design-system.md)). Kept for the record because the
+reasoning is what a later step needs, not the tick.
+
 1. A view model holding both the latest `StoreSnapshot` **and** an integration
    status per provider. Neither alone decides what the panel shows. Statuses are
    refreshed on panel open and after any install action, never on a timer:
@@ -906,7 +921,7 @@ which matters, because `ClaudeCodeInstallReport` has no public initialiser.
 install vocabulary; adding one there to satisfy the view would be exactly the
 kind of leak the boundary test exists to prevent.
 
-### Step 06 or 07 — the question line
+### Step 06 or 07 — the question line — **landed in step 06**
 
 The `Question` notification is specified to carry "the question asked" as its
 body, and nothing in AgentBar can produce that string.
@@ -951,8 +966,11 @@ The `AskUserQuestion` path is the one where a real, specific question exists, so
 that is the only path that gets a line. The permission and elicitation paths stay
 bare, correctly: there the state label already says everything there is to say.
 
-Until it lands the `Question` notification is title-only and the Waiting row is
-state and duration. Both degrade correctly, and neither looks broken.
+It landed in step 06, verified against seven recorded `AskUserQuestion` payloads
+— see [platform-integration.md](platform-integration.md) §1 for the shape. Step
+07 therefore has both verbs available from the day it starts. Where no line is
+produced, the `Question` notification is title-only and the Waiting row is state
+and duration; both degrade correctly, and neither looks broken.
 
 ### Step 07 — notifications
 
@@ -966,8 +984,8 @@ invented later, and step 07 owes all three:
    new payload plumbing through the adapter and the store; it is not worth one
    notification line.
 3. **A clamp on the body.** `failureReason` passes an unrecognised provider error
-   type through unbounded, and `NativeEventDecoder` applies no limit at all. Do
-   not assume a short sentence arrives.
+   type through, and `NativeEventDecoder`'s own bound is 120 characters — a
+   transport cap, not a readable line. Do not assume a short sentence arrives.
 
 ### Step 09 — Codex adapter
 

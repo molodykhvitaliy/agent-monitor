@@ -35,13 +35,36 @@ enum ToolInvocation {
             raw = string("description") ?? string("subagent_type")
         case "Skill":
             raw = string("skill")
-        case "TodoWrite", "AskUserQuestion", "ExitPlanMode":
+        case "AskUserQuestion":
+            // The one tool whose arguments *are* the thing worth showing: this
+            // is the line the Waiting row and the `Question` notification carry
+            // (ADR-0005). `question` is the sentence a person answers; `header`
+            // is its two-word label and stands in only if the sentence is
+            // absent. A multi-question call shows the first — one bounded line
+            // is the whole budget, and the first is the one being asked.
+            raw = firstQuestion(in: object["questions"])
+        case "TodoWrite", "ExitPlanMode":
             // Nothing in the arguments reads better than the tool's own name.
             raw = nil
         default:
             raw = nil
         }
         return raw.map(condense)
+    }
+
+    /// `tool_input.questions[0].question`, as Claude Code 2.1.233 sends it —
+    /// verified against seven recorded local payloads and recorded in
+    /// docs/dev/platform-integration.md.
+    ///
+    /// Read defensively like every other field here: a `questions` that arrives
+    /// as something else, or an entry with neither key, makes the row slightly
+    /// less informative rather than making the payload fail.
+    private static func firstQuestion(in value: JSONValue?) -> String? {
+        guard let first = value?.array?.first?.object else { return nil }
+        for key in ["question", "header"] {
+            if let text = first[key]?.string, !text.isEmpty { return text }
+        }
+        return nil
     }
 
     /// The last two path components, which is enough to tell two files apart

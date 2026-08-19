@@ -2,7 +2,8 @@
 
 Verified facts about the extension surfaces AgentBar builds on.
 
-**Verification date:** 2026-08-18 (§1 re-verified in full while building step 04)
+**Verification date:** 2026-08-18 (§1 re-verified in full while building step 04;
+`AskUserQuestion`'s `tool_input` shape added 2026-08-19 for step 06)
 **Verified against:** Claude Code `2.1.233`, Codex CLI `0.147.0`, macOS `27.0`
 
 > **Precedence rule.** Official platform documentation wins over this file, and
@@ -123,6 +124,21 @@ Per-event fields, all verified against recorded payloads unless marked:
 
 > **No payload carries a timestamp.** `prompt_id` is a UUID and orders nothing.
 > Receipt time is not merely the safe stamp, it is the only one available.
+
+`tool_input` is the tool's own arguments, verbatim. One shape inside it is
+load-bearing, because ADR-0005 reads a display line out of it:
+
+```json
+"tool_input": { "questions": [
+  { "question": "…", "header": "…", "multiSelect": false,
+    "options": [ { "label": "…", "description": "…" } ] } ] }
+```
+
+Verified 2026-08-19 against seven `AskUserQuestion` calls recorded by Claude Code
+`2.1.233` in `~/.claude/projects/*.jsonl`; `questions` is always an array and
+always carries `question` and `header`. `ToolInvocation` reads
+`questions[0].question`, falls back to `header`, and degrades to no line at all —
+a shape change makes the row less informative, never broken.
 
 > **There is no `worktree` field anywhere.** `WorktreeCreate` cannot be used to
 > observe one (see §1.2), `WorktreeRemove` fires only for worktrees a hook

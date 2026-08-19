@@ -58,7 +58,9 @@ public struct WatchdogPolicy: Sendable, Hashable {
     /// How long this session may stay silent before it stops being believed.
     ///
     /// `.unknown` is never a recorded state — the store derives it — so its
-    /// entry exists only to keep the switch total.
+    /// entry exists only to keep the switch total. A waiting session's question
+    /// line is deliberately not read here: a payload must not move an
+    /// allowance (ADR-0005).
     public func silenceAllowance(for state: SessionState, hasOpenTool: Bool) -> Duration {
         switch state {
         case .working: hasOpenTool ? openToolTimeout : workingTimeout

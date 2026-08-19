@@ -58,6 +58,8 @@ let package = Package(
             dependencies: ["ClaudeCodeAdapter", "AgentBarIngest", "AgentBarCore"],
             resources: [.copy("Fixtures")]),
 
+        .testTarget(name: "AgentBarUITests", dependencies: ["AgentBarUI", "AgentBarCore"]),
+
         // Reads source files rather than symbols: it guards boundaries the
         // compiler cannot express.
         .testTarget(name: "ArchitectureTests"),
