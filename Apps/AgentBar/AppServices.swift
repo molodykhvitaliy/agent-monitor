@@ -14,9 +14,11 @@ final class AppServices: PanelServices {
     private let store: SessionStore
     private let integrations: [any ProviderIntegration]
     private let caffeineBridge: CaffeineBridge
-    /// Absent when Codex limits are not wired up at all. Distinct from "the
-    /// service found nothing", which is an empty reading and looks the same to
-    /// the panel — deliberately, because both mean the section has no Codex half.
+    /// Optional for the render proof and for any assembly that wants a panel
+    /// without a quota service, not because the app ever passes `nil` — it
+    /// always supplies one. A service that finds nothing and an absent service
+    /// look identical to the panel, deliberately: both mean the section has no
+    /// Codex half, and neither is an error.
     private let quota: QuotaService?
 
     init(

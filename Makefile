@@ -128,9 +128,9 @@ check-generated: generate-models ## Assert the generated models match the checke
 	  echo "error: the generated models are not tracked — this check would pass by looking at nothing" >&2; \
 	  exit 1; \
 	fi; \
-	if ! git diff --quiet -- Sources/CodexAppServer/Generated; then \
+	if ! git diff --quiet HEAD -- Sources/CodexAppServer/Generated; then \
 	  echo "error: the generated App Server models are out of date" >&2; \
-	  git --no-pager diff --stat -- Sources/CodexAppServer/Generated >&2; \
+	  git --no-pager diff --stat HEAD -- Sources/CodexAppServer/Generated >&2; \
 	  echo "  Run 'make generate-models' and commit the result." >&2; \
 	  exit 1; \
 	fi; \

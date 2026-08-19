@@ -18,9 +18,10 @@
     "availableCount": 2,
     "credits": [
       { "id": "a", "grantedAt": 1787000000, "resetType": "codexRateLimits", "status": "available", "title": null, "description": null, "expiresAt": null },
-      { "id": "b", "grantedAt": 1787000001, "resetType": "somethingNew", "status": "redeeming" },
       { "grantedAt": 1787000002 },
-      "not an object"
+      { "id": "b", "grantedAt": 1787000001, "resetType": "somethingNew", "status": "redeeming" },
+      "not an object",
+      { "id": "c", "grantedAt": 1787000003, "resetType": "codexRateLimits", "status": "redeemed" }
     ]
   }
 }

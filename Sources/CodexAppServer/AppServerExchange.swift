@@ -82,13 +82,23 @@ public actor AppServerExchange {
             transport.end()
         }
         do {
-            return try await work.value
+            // `Task.value` is not cancellation-aware: without this handler,
+            // cancelling the caller would leave the child running until the
+            // budget expired — up to twenty seconds after `QuotaService.stop()`
+            // returned. The handler is what makes "killed on every path,
+            // cancellation included" true rather than intended.
+            return try await withTaskCancellationHandler {
+                try await work.value
+            } onCancel: {
+                transport.end()
+                work.cancel()
+            }
         } catch {
-            // A killed child surfaces as `disconnected` or as cancellation. Both
-            // mean the same thing here, and the deadline is the honest name for
-            // it — reporting a disconnect would send a reader looking for a
-            // crash that did not happen.
+            // A killed child surfaces as `disconnected` or as cancellation.
+            // Which name to report depends on who did the killing: the deadline
+            // is a fact about Codex, and cancellation is a fact about us.
             if expired.withLock({ $0 }) { throw AppServerError.timedOut(budget) }
+            if Task.isCancelled { throw CancellationError() }
             throw error
         }
     }

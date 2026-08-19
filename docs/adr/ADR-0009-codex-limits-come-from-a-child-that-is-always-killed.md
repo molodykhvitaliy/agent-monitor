@@ -77,10 +77,25 @@ editor spends quota this process never hears about.
 **Positive.** The lifetime is bounded by construction rather than by care. A
 force-quit is covered by a second mechanism — the pipe's write end closes with
 the process and the child exits on its own within 2.74 s — so the guarantee does
-not rest on AgentBar getting to run its teardown. `SIGTERM` is sufficient
-(measured: the server dies within 10 ms, idle or mid-request), so no `SIGKILL` is
-needed, so `CodexAppServer` needs no `import Darwin` and the loopback-only guard
-in `ModuleBoundaryTests` stays exactly as narrow as it was.
+not rest on AgentBar getting to run its teardown.
+
+Two paths needed closing before that was true, and a review found both. `Task`'s
+`value` is **not** cancellation-aware, so a cancelled refresh would have left the
+child running until the budget expired — up to twenty seconds after
+`QuotaService.stop()` returned; `run` now waits inside a
+`withTaskCancellationHandler` that ends the transport. And `end()` returns early
+on every call after the first, so a `start()` after one would have spawned a
+child that the next `end()` declined to kill; `start()` now claims the transport
+under the same lock that records the process, and refuses if it has been ended.
+Both are covered by tests that fail when the fix is removed — the cancellation
+one by asserting the *elapsed time*, because without the handler it still passes,
+thirty seconds later, and the `start()` one by counting spawns, because a
+transport that spawned and then killed would throw the same error.
+
+`SIGTERM` is sufficient (measured: the server dies within 10 ms, idle or
+mid-request), so no `SIGKILL` is needed, so `CodexAppServer` needs no
+`import Darwin` and the loopback-only guard in `ModuleBoundaryTests` stays
+exactly as narrow as it was.
 
 **Negative.** A refresh costs a process launch, and the freshest possible number
 is not available: between an interval and a turn ending, the bar can be up to

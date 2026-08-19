@@ -42,10 +42,17 @@ public struct QuotaSettings: Sendable, Hashable {
     /// Reads the key, and ignores anything that is not a usable number of
     /// minutes. A hand-edited defaults value is not worth a diagnostic — the
     /// documented default is the honest fallback.
+    ///
+    /// The multiplication is checked for the same reason `RateLimitMapping`
+    /// checks its own: an overflow is a trap rather than an error, and
+    /// `defaults write … -int 9223372036854775807` would otherwise be a crash on
+    /// every launch that the user has no way to connect to what they typed.
     public static func load(from defaults: UserDefaults = .standard) -> QuotaSettings {
         guard defaults.object(forKey: intervalDefaultsKey) != nil else { return QuotaSettings() }
         let minutes = defaults.integer(forKey: intervalDefaultsKey)
         guard minutes > 0 else { return QuotaSettings() }
-        return QuotaSettings(interval: .seconds(minutes * 60))
+        let (seconds, overflowed) = minutes.multipliedReportingOverflow(by: 60)
+        guard !overflowed else { return QuotaSettings() }
+        return QuotaSettings(interval: .seconds(seconds))
     }
 }

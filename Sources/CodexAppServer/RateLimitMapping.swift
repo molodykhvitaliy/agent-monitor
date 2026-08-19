@@ -71,9 +71,19 @@ enum RateLimitMapping {
     }
 
     /// `windowDurationMins` is minutes, and a non-positive one is not a window.
+    ///
+    /// **The multiplication is checked.** This number came from outside — the
+    /// backend, by way of the user's `codex` — and an overflow in Swift is a
+    /// *trap*, not an error: it would abort the process past every `catch`, past
+    /// the exchange's error surface, and past the promise that a bad refresh
+    /// leaves the previous reading alone. The same shape has bitten this
+    /// repository twice already; see "Arithmetic on numbers a caller chose" in
+    /// docs/dev/architecture.md.
     private static func duration(minutes: Int64?) -> Duration? {
         guard let minutes, minutes > 0 else { return nil }
-        return .seconds(minutes * 60)
+        let (seconds, overflowed) = minutes.multipliedReportingOverflow(by: 60)
+        guard !overflowed else { return nil }
+        return .seconds(seconds)
     }
 
     /// `resetsAt` is Unix **seconds**, not milliseconds.

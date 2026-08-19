@@ -97,11 +97,13 @@ struct RateLimitMappingTests {
         let response = try Fixtures.decode(
             GetAccountRateLimitsResponse.self, "rate-limits-drifted")
         let credits = try #require(response.rateLimitResetCredits)
-        // `availableCount` is what the backend said; the detail rows are capped
-        // by it and by what could be read. Two of four survive: one is missing
-        // its required `id`, one is not an object.
+        // The bad entries sit *between* the good ones on purpose. With them at
+        // the end, a `drain` that failed to advance its cursor past a bad
+        // element would still produce the right answer — the failure this
+        // arrangement exists to catch is one good entry being eaten by the
+        // step over the bad one before it.
         #expect(credits.availableCount == 2)
-        #expect(credits.credits?.map(\.id) == ["a", "b"])
+        #expect(credits.credits?.map(\.id) == ["a", "b", "c"])
         #expect(credits.credits?[1].resetType == .unrecognised("somethingNew"))
     }
 
@@ -115,6 +117,32 @@ struct RateLimitMappingTests {
         // 2026-08-20, not the year 58 000.
         #expect(reset > Date(timeIntervalSince1970: 1_780_000_000))
         #expect(reset < Date(timeIntervalSince1970: 1_800_000_000))
+    }
+
+    /// The number came from the backend by way of the user's `codex`, and an
+    /// overflow in Swift is a **trap** — it would abort the process past every
+    /// `catch`. The rule this pins is the one docs/dev/architecture.md already
+    /// records under "Arithmetic on numbers a caller chose".
+    @Test("A window length that cannot be converted to seconds is absent, not a crash")
+    func survivesAnAbsurdWindowLength() throws {
+        let response = GetAccountRateLimitsResponse(
+            rateLimits: RateLimitSnapshot(
+                limitId: "codex",
+                primary: RateLimitWindow(
+                    resetsAt: 1_787_200_207, usedPercent: 40,
+                    windowDurationMins: Int64.max),
+                secondary: RateLimitWindow(
+                    resetsAt: 1_787_200_207, usedPercent: 50,
+                    windowDurationMins: Int64.max / 61)))
+        let windows = RateLimitMapping.windows(from: response)
+        #expect(windows.count == 2)
+        // The unconvertible one loses its duration and keeps everything else:
+        // the row still says 40% and still says when it resets.
+        #expect(windows[0].windowDuration == nil)
+        #expect(windows[0].fractionUsed == 0.4)
+        // Just inside the range still converts, so the guard is not a blanket
+        // rejection of large windows.
+        #expect(windows[1].windowDuration != nil)
     }
 
     @Test("Numbers outside their range are clamped, and non-values are absent")

@@ -824,6 +824,19 @@ multiplies rather than bounds. On expiry the child is killed, which is also what
 unblocks the reader: the stream finishes when the process goes, so a waiting call
 is answered rather than asked politely to stop.
 
+"Every path" costs two things that are easy to leave out. `Task.value` is not
+cancellation-aware, so the await sits inside a `withTaskCancellationHandler` that
+ends the transport — without it a cancelled refresh outlives its caller by up to
+the whole budget. And `end()` is idempotent by returning early, which means a
+`start()` after one would spawn a child the next `end()` would decline to kill:
+`start()` claims the transport under the same lock that records the process, and
+refuses if it has already ended.
+
+**Numbers from outside are never multiplied unchecked.** `windowDurationMins` is
+an `Int64` from the backend, and an overflow in Swift is a trap rather than an
+error — it would abort the process past the exchange's whole error surface. Same
+rule, same reason, and the third place in this repository to need it.
+
 Replies are **routed, not awaited in order**. The server answers out of order and
 interleaves notifications with replies from its first moment, so one pump reads
 the stream and hands each line to whichever call is waiting for that id.

@@ -29,7 +29,11 @@ extension KeyedDecodingContainer {
         // documented shape into a decoding failure. `rateLimits: {}` — every
         // field absent rather than null — is exactly that shape.
         guard contains(key), try decodeNil(forKey: key) == false else { return nil }
-        return try decodeLenient(type, forKey: key)
+        // A value of the wrong *container* kind is absent rather than fatal. An
+        // optional field arriving as an object where an array was declared says
+        // nothing about the required fields beside it, and taking the whole
+        // response down over it would discard a reading that is otherwise intact.
+        return try? decodeLenient(type, forKey: key)
     }
 
     /// Decodes a string-keyed map, skipping values that fail.
@@ -53,7 +57,8 @@ extension KeyedDecodingContainer {
         _ type: [String: Value].Type, forKey key: Key
     ) throws -> [String: Value]? {
         guard contains(key), try decodeNil(forKey: key) == false else { return nil }
-        return try decodeLenient(type, forKey: key)
+        // Absent rather than fatal, for the reason the array overload gives.
+        return try? decodeLenient(type, forKey: key)
     }
 
     /// Consumes an unkeyed container, keeping what decodes.

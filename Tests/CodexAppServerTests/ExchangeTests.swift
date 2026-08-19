@@ -198,6 +198,64 @@ struct ExchangeTests {
         #expect(transport.ended)
     }
 
+    /// `Task.value` is not cancellation-aware, so without a cancellation
+    /// handler a cancelled refresh would leave the child running until the
+    /// budget expired — up to twenty seconds after `QuotaService.stop()`
+    /// returned. The claim is "killed on every path", and this is one of them.
+    @Test("Cancelling the caller kills the child immediately")
+    func endsTheChildWhenTheCallerIsCancelled() async throws {
+        let transport = ScriptedTransport()
+        transport.reactions[AccountMethods.rateLimits] = [.silence]
+        let started = AsyncStream<Void>.makeStream()
+
+        let work = Task {
+            try await Self.run(transport, budget: .seconds(30)) { exchange, _ in
+                started.continuation.finish()
+                return try await AccountMethods.readRateLimits(on: exchange)
+            }
+        }
+        // Wait until the exchange is genuinely in flight, so this cancels work
+        // rather than a task that has not begun.
+        for await _ in started.stream {}
+
+        let clock = ContinuousClock()
+        let start = clock.now
+        work.cancel()
+        await #expect(throws: (any Error).self) { try await work.value }
+        let elapsed = clock.now - start
+
+        #expect(transport.ended)
+        // **The timing is the assertion.** Without a cancellation handler this
+        // test still passes — the budget's own timer kills the child eventually
+        // — it just takes the full thirty seconds. Only the elapsed time can
+        // tell "cancelled" from "waited out".
+        #expect(
+            elapsed < .seconds(5),
+            "cancellation took \(elapsed): the child waited for the budget, not for the cancel")
+    }
+
+    /// A message carrying both an id and a method is the server asking us
+    /// something, not answering. Unreachable today — AgentBar never starts a
+    /// thread — but server ids come from the server's own counter and would
+    /// collide with ours, and this sits one layer from the never-auto-approve
+    /// rule.
+    @Test("A server-originated request is not mistaken for a reply")
+    func doesNotTreatAServerRequestAsAReply() async throws {
+        let transport = ScriptedTransport()
+        transport.noiseWithEveryReply = [
+            #"{"id":2,"method":"execCommandApproval","params":{"command":"rm -rf /"}}"#
+        ]
+        transport.reactions[AccountMethods.rateLimits] = [
+            .result(String(data: try Fixtures.data("rate-limits-live"), encoding: .utf8) ?? "{}")
+        ]
+        let windows = try await Self.run(transport, budget: .seconds(5)) { exchange, _ in
+            RateLimitMapping.windows(from: try await AccountMethods.readRateLimits(on: exchange))
+        }
+        // The approval request shares the id of the call in flight and arrives
+        // first. Reading it as the reply would fail as `.undecodable`.
+        #expect(windows.count == 1)
+    }
+
     @Test("A reply whose body is not what the method promised is reported, not crashed")
     func reportsAnUndecodableResult() async throws {
         let transport = ScriptedTransport()

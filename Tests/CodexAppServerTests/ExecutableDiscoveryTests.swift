@@ -100,13 +100,25 @@ struct ExecutableDiscoveryTests {
         #expect(found == nil)
     }
 
-    @Test("The override expands a tilde")
-    func expandsTheOverride() {
-        // Not resolvable, but it must have been expanded before it failed —
-        // a literal `~` would be looked for in the working directory.
+    /// Asserted directly rather than through `locate`, because every indirect
+    /// version of this test passes just as well when the tilde was never
+    /// expanded: an unresolvable `~/…` path finds nothing either way. The
+    /// default search list is written with tildes and `$TMPDIR` is not under
+    /// `$HOME`, so there is nowhere to plant a real binary for it.
+    @Test("A tilde is expanded, not looked for on disk")
+    func expandsATilde() {
+        let home = NSHomeDirectory()
         #expect(
-            CodexExecutable.locate(
-                defaults: Self.defaults(override: "~/nowhere/codex"),
-                environment: [:], directories: []) == nil)
+            CodexExecutable.expand("~/.local/bin").path(percentEncoded: false)
+                == "\(home)/.local/bin")
+        #expect(
+            CodexExecutable.expand("/opt/homebrew/bin").path(percentEncoded: false)
+                == "/opt/homebrew/bin")
+        // Every entry of the shipped list resolves to an absolute path — a `~`
+        // that survived would be a directory named "~" in the working directory.
+        #expect(
+            CodexExecutable.searchDirectories.allSatisfy {
+                CodexExecutable.expand($0).path(percentEncoded: false).hasPrefix("/")
+            })
     }
 }

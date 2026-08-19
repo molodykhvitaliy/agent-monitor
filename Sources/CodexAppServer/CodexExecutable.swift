@@ -79,7 +79,15 @@ public struct CodexExecutable: Sendable, Hashable {
         return CodexExecutable(url: url)
     }
 
-    private static func expand(_ path: String) -> URL {
+    /// Internal rather than private so the suite can assert it directly.
+    ///
+    /// A tilde is the one thing standing between an app launched at login and a
+    /// `codex` it can find, and every indirect test of it — "an unresolvable
+    /// `~/…` path finds nothing" — passes just as well when the tilde was never
+    /// expanded at all. `$TMPDIR` is not under `$HOME` on macOS, so there is no
+    /// honest way to test this through `locate` without writing into the user's
+    /// home directory.
+    static func expand(_ path: String) -> URL {
         URL(filePath: (path as NSString).expandingTildeInPath)
     }
 }

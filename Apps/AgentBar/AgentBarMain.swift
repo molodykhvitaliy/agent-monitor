@@ -128,9 +128,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // `caffeinate` — but doing it here means the assertion disappears when
         // the app decides to quit rather than when the last reference does.
         caffeine.stop()
-        // Stops the interval and, with it, any chance of a child being spawned
-        // after the app has decided to go. A reading already in flight kills its
-        // own child through `AppServerExchange`'s teardown.
+        // Best-effort: this is an unstructured task and the process may exit
+        // before it runs, so it is not what makes the guarantee. What does is
+        // two things that need nobody's cooperation — `AppServerExchange` ends
+        // its transport on every path including cancellation, and a child whose
+        // stdin closes because the app died exits on its own within 2.7 s
+        // (ADR-0009). Stopping the ticker just saves a pointless last reading.
         Task { [quota] in await quota.stop() }
         menuBar?.stop()
         menuBar = nil

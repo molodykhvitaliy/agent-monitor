@@ -42,6 +42,13 @@ public final class CodexProcessTransport: AppServerTransport {
         var pending = Data()
         var diagnostics = Data()
         var ended = false
+        /// How many times `Process.run()` was actually reached.
+        ///
+        /// For the suite. The two guards in `start()` fail in the same visible
+        /// way — a thrown `.disconnected` — but they differ in whether a child
+        /// was ever created, and "spawns nothing at all" is the stronger of the
+        /// two claims.
+        var spawns = 0
     }
 
     public init(executable: URL) {
@@ -65,12 +72,23 @@ public final class CodexProcessTransport: AppServerTransport {
         process.standardError = errors
 
         let (stream, continuation) = AsyncStream<Data>.makeStream()
-        state.withLock {
-            $0.process = process
-            $0.input = input.fileHandleForWriting
-            $0.output = output.fileHandleForReading
-            $0.errors = errors.fileHandleForReading
-            $0.continuation = continuation
+        // The transport is claimed *before* the spawn. `end()` is allowed to
+        // arrive at any moment from any thread, and a transport that had already
+        // been ended would otherwise start a child that nothing is left to kill:
+        // the second `end()` returns early, having seen the flag its first call
+        // set.
+        let claimed = state.withLock { state -> Bool in
+            guard !state.ended else { return false }
+            state.process = process
+            state.input = input.fileHandleForWriting
+            state.output = output.fileHandleForReading
+            state.errors = errors.fileHandleForReading
+            state.continuation = continuation
+            return true
+        }
+        guard claimed else {
+            continuation.finish()
+            throw AppServerError.disconnected
         }
 
         output.fileHandleForReading.readabilityHandler = { [weak self] handle in
@@ -85,10 +103,21 @@ public final class CodexProcessTransport: AppServerTransport {
         process.terminationHandler = { [weak self] _ in self?.closeStream() }
 
         do {
+            state.withLock { $0.spawns += 1 }
             try process.run()
         } catch {
             end()
             throw AppServerError.cannotStart(error.localizedDescription)
+        }
+
+        // `end()` may have run while the spawn was in flight. It would have
+        // found a `Process` that was not yet running, sent no signal, and marked
+        // the transport ended — so this is the last place that can notice, and
+        // nothing else will.
+        guard !state.withLock({ $0.ended }) else {
+            process.terminate()
+            continuation.finish()
+            throw AppServerError.disconnected
         }
         return stream
     }
@@ -144,6 +173,10 @@ public final class CodexProcessTransport: AppServerTransport {
     var isChildRunning: Bool {
         state.withLock { $0.process?.isRunning ?? false }
     }
+
+    /// How many child processes this transport has tried to create. Zero or one,
+    /// and the suite is the only caller.
+    var spawnCount: Int { state.withLock { $0.spawns } }
 
     // MARK: - Reading
 

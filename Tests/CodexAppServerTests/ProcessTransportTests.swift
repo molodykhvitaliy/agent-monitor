@@ -165,6 +165,28 @@ struct ProcessTransportTests {
         #expect(diagnostics.contains("warning line"))
     }
 
+    /// The hole a review found: `end()` sets a flag every later `end()` returns
+    /// on, so a `start()` after it would spawn a child that nothing was left to
+    /// kill. It refuses instead.
+    ///
+    /// `spawnCount` is what makes this test worth having. A `start()` that
+    /// spawned and then killed the child would throw the same error and leave
+    /// `isChildRunning` false, so only the count can tell "refused" from
+    /// "cleaned up after itself".
+    @Test("Starting after ending spawns nothing at all")
+    func refusesToStartAfterEnding() async throws {
+        let fake = try FakeCodex(body: Self.answering)
+        let transport = CodexProcessTransport(executable: fake.executable)
+        transport.end()
+        #expect(throws: AppServerError.disconnected) {
+            _ = try transport.start()
+        }
+        #expect(transport.spawnCount == 0, "an ended transport must not create a child at all")
+        #expect(!transport.isChildRunning)
+        // And a second `end()` on a transport that never started is still fine.
+        transport.end()
+    }
+
     @Test("Ending twice is not an error")
     func endIsIdempotent() async throws {
         let fake = try FakeCodex(body: Self.answering)

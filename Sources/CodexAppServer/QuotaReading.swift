@@ -42,9 +42,11 @@ public struct QuotaWindow: Sendable, Hashable {
 
     /// Whether this window says anything at all.
     ///
-    /// A window with no percentage, no reset and no name is a row that would
-    /// occupy space to communicate nothing, so it is dropped rather than
-    /// rendered empty.
+    /// A **name is not information here**, deliberately. A row carrying only a
+    /// title has no bar and no meta line, so it occupies a row's worth of space
+    /// to say that a limit exists — which the section's presence already says.
+    /// A percentage or a reset time is the least this row can be worth drawing
+    /// for.
     var isInformative: Bool {
         fractionUsed != nil || resetsAt != nil
     }

@@ -141,6 +141,13 @@ enum JSONRPC {
             return .unrelated(method: nil)
         }
         guard let id = envelope.id else { return .unrelated(method: envelope.method) }
+        // A message with *both* an id and a method is the server asking us
+        // something, not answering. AgentBar never starts a thread, so nothing
+        // can prompt an approval and this is unreachable today — but server ids
+        // come from the server's own counter and would collide with ours, and a
+        // decoder that can mistake a permission request for a reply is not one
+        // to leave standing next to the never-auto-approve rule.
+        if let method = envelope.method { return .unrelated(method: method) }
         if let error = envelope.error { return .failure(id: id, error: error) }
         // The result is handed back as the whole line. Extracting it here would
         // mean re-encoding a value this layer deliberately never models.
