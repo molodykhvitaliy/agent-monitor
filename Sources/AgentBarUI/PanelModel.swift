@@ -27,6 +27,19 @@ public protocol PanelServices: AnyObject {
     /// Subscription usage windows. Empty until step 10 supplies them, which is
     /// not an error and gets no error styling.
     func usageWindows() async -> [UsageWindow]
+
+    /// The Caffeine indicator's state.
+    ///
+    /// Synchronous and cheap — a property read on the main actor, never I/O —
+    /// because the footer redraws with every panel refresh. Reading it inside a
+    /// view body is also what keeps it live without a clock of its own: the
+    /// assembly's implementation reaches through to an observable controller, so
+    /// SwiftUI re-renders when the assertion changes.
+    func caffeine() -> CaffeineIndicator
+
+    /// The footer button: turns Caffeine off, or back on to the mode the
+    /// settings window last chose.
+    func toggleCaffeine()
 }
 
 extension PanelServices {
@@ -69,6 +82,15 @@ public final class PanelModel {
     }
 
     public var footer: FooterStatus { FooterStatus.summarise(integrations) }
+
+    /// Computed rather than stored on purpose. The value comes from an
+    /// observable object the assembly owns, so reading it here — inside the
+    /// view body that renders it — is what makes the footer indicator live. A
+    /// stored copy would need a clock of its own and would lag every change by
+    /// up to a refresh.
+    public var caffeine: CaffeineIndicator { services.caffeine() }
+
+    public func toggleCaffeine() { services.toggleCaffeine() }
 
     /// One computed labelling for the whole snapshot, so the header, the
     /// tooltip and the accessibility label cannot disagree.

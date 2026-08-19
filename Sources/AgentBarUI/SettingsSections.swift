@@ -205,3 +205,60 @@ extension SettingsView {
     }
 
 }
+
+extension SettingsView {
+
+    // MARK: - Caffeine
+
+    /// The full three-state control behind the footer's two-state button, and
+    /// the only place with room for the limitation the brief requires stating.
+    ///
+    /// The status line is live: `model.caffeine` reaches an observable
+    /// controller, so it follows the assertion rather than the window's last
+    /// refresh. It is deliberately shown for every setting — a Caffeine that is
+    /// off beside three working agents is exactly the situation a user opens
+    /// this window to understand.
+    var caffeineSection: some View {
+        Section {
+            Picker(
+                selection: Binding(
+                    get: { model.caffeine.setting },
+                    set: { model.setCaffeine($0) })
+            ) {
+                ForEach(CaffeineSetting.allCases) { setting in
+                    Text(setting.title).tag(setting)
+                }
+            } label: {
+                Text("Keep the Mac awake", comment: "Caffeine picker label")
+            }
+            .pickerStyle(.inline)
+
+            caffeineStatus
+        } header: {
+            sectionHeader(String(localized: "Caffeine", comment: "Settings section"))
+        } footer: {
+            footnote(CaffeineIndicator.limitation)
+        }
+    }
+
+    /// One line, carrying the state shape as well as the sentence — the same
+    /// rule the footer and every row follow, because colour never carries a
+    /// state on its own.
+    @ViewBuilder private var caffeineStatus: some View {
+        let indicator = model.caffeine
+        HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Space.small) {
+            StateShapeView(
+                kind: indicator.appearance == .failed ? .failed : .working,
+                size: StateShapeView.rowSize(for: .working),
+                color: (indicator.tint ?? .ink400).color)
+            Text(indicator.summary)
+                .font(DesignTokens.Text.caption)
+                .foregroundStyle(
+                    indicator.appearance == .failed
+                        ? ColorToken.stateFailed.color : accessibility.secondaryInk.color
+                )
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}

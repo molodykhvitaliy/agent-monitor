@@ -41,8 +41,10 @@ public struct PanelView: View {
                 .padding(.top, DesignTokens.Limits.labelMargin)
             FooterView(
                 status: model.footer,
+                caffeine: model.caffeine,
                 showsCard: model.showsIntegrationCard,
                 onStatus: { model.showsIntegrationCard.toggle() },
+                onCaffeine: model.toggleCaffeine,
                 onSettings: onSettings,
                 onQuit: onQuit)
         }

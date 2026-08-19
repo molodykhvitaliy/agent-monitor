@@ -292,4 +292,13 @@ public protocol SettingsServices: AnyObject {
     func sendTestNotifications(for provider: Provider) async -> TestNotificationResult
 
     var launchAtLogin: LaunchAtLogin { get }
+
+    /// What Caffeine is doing, and what it has been told to do.
+    ///
+    /// The same seam as the panel's, reaching the same observable controller,
+    /// which is what keeps the status line in the `Caffeine` section live while
+    /// the window is open.
+    func caffeine() -> CaffeineIndicator
+
+    func setCaffeine(_ setting: CaffeineSetting)
 }

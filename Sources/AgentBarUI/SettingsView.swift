@@ -32,6 +32,7 @@ public struct SettingsView: View {
             quietHoursSection
             focusSection
             soundsSection
+            caffeineSection
             generalSection
         }
         .formStyle(.grouped)

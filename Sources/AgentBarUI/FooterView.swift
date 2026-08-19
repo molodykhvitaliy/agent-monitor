@@ -1,15 +1,26 @@
 import SwiftUI
 
-/// Install status on the left, two icon buttons on the right.
+/// Install status on the left, three icon buttons on the right.
 ///
 /// The status line is the **whole** diagnostics surface, deliberately: the
 /// brief's restraint requirement rules out a diagnostics panel, and pressing the
 /// status opens the integration card, whose per-provider list explains why in
 /// prose the adapter already wrote.
+///
+/// > **Deviation from `docs/dev/design-spec.md` § Footer, step 08.** That
+/// > section closed with "Nothing more", meaning no further *entry points*.
+/// > Caffeine is not an entry point: it is a control whose state has to be
+/// > readable at a glance, and the panel is the only surface a user looks at
+/// > without going looking. It sits leftmost of the three so `Quit` stays last,
+/// > and it carries a silhouette per state rather than a colour, like every
+/// > other indicator here. Its settings — the third mode, and the honest
+/// > limitation — live in the settings window's `Caffeine` section.
 public struct FooterView: View {
     private let status: FooterStatus
+    private let caffeine: CaffeineIndicator
     private let showsCard: Bool
     private let onStatus: () -> Void
+    private let onCaffeine: () -> Void
     private let onSettings: () -> Void
     private let onQuit: () -> Void
 
@@ -17,14 +28,18 @@ public struct FooterView: View {
 
     public init(
         status: FooterStatus,
+        caffeine: CaffeineIndicator,
         showsCard: Bool,
         onStatus: @escaping () -> Void,
+        onCaffeine: @escaping () -> Void,
         onSettings: @escaping () -> Void,
         onQuit: @escaping () -> Void
     ) {
         self.status = status
+        self.caffeine = caffeine
         self.showsCard = showsCard
         self.onStatus = onStatus
+        self.onCaffeine = onCaffeine
         self.onSettings = onSettings
         self.onQuit = onQuit
     }
@@ -37,6 +52,7 @@ public struct FooterView: View {
             HStack(spacing: DesignTokens.Footer.buttonSpacing) {
                 statusButton
                 Spacer(minLength: DesignTokens.Space.small)
+                caffeineButton
                 iconButton(
                     systemName: "gearshape",
                     label: String(localized: "Settings", comment: "Footer button"),
@@ -78,6 +94,35 @@ public struct FooterView: View {
             showsCard
                 ? String(localized: "Close the integration status", comment: "Footer button hint")
                 : String(localized: "Show the integration status", comment: "Footer button hint"))
+    }
+
+    /// The Caffeine indicator, and the switch that turns it off and on.
+    ///
+    /// Two sentences rather than one: the tooltip says what is happening now,
+    /// the accessibility hint says what pressing it will do. A control that only
+    /// describes its state leaves a user guessing whether it is a button.
+    private var caffeineButton: some View {
+        Button(action: onCaffeine) {
+            Image(systemName: caffeine.symbolName)
+                .font(.system(size: 12))
+                .foregroundStyle(
+                    caffeine.tint?.color ?? accessibility.secondaryInk.color
+                )
+                .frame(
+                    width: DesignTokens.Footer.buttonSize,
+                    height: DesignTokens.Footer.buttonSize
+                )
+                .contentShape(
+                    RoundedRectangle(cornerRadius: DesignTokens.Radius.iconButton))
+        }
+        .buttonStyle(QuietIconButtonStyle())
+        .help(caffeine.summary)
+        .accessibilityLabel(
+            String(
+                localized: "Caffeine: \(caffeine.summary)",
+                comment: "Footer button, spoken state")
+        )
+        .accessibilityHint(caffeine.toggleLabel)
     }
 
     /// 22 × 22, radius 6. Neither has a visible label, so both need a tooltip

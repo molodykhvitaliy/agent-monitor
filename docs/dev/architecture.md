@@ -621,6 +621,71 @@ by name with a click, and a window the user cannot type in would be worse than
 the focus rule it would be honouring. Closing it hides AgentBar again, so an
 accessory app is never left active with nothing on screen.
 
+## Caffeine
+
+`AgentBarPower` consumes `StoreSnapshot` and nothing else. Like the notifications
+module it is a sibling below `AgentBarCore`, may import nothing but the core, and
+`ModuleBoundaryTests` fails the build if that changes — with one addition:
+**`IOKit` is restricted to this module**, exactly as `Network` is restricted to
+`AgentBarIngest`. One owner is what makes "released when the process dies" a
+guarantee rather than a hope.
+
+| Piece | Decides | Pure |
+|---|---|---|
+| `CaffeineMode` | the three settings — never, while working, always | ✅ |
+| `CaffeineSettings` | the mode, and which one a toggle restores | ✅ value |
+| `CaffeineDemand` | mode × snapshot → hold or release, and the reason | ✅ |
+| `PowerAsserting` | the seam over IOKit | — |
+| `IOKitPowerAssertion` | the only file that imports IOKit | — |
+| `CaffeineController` | joins them, holds the assertion, renews the lease | `@MainActor` |
+
+**Three mechanisms release the assertion, and they fail independently.** A
+session stuck in `working` is answered by the watchdog: `StoreSnapshot` applies it
+on every read, so a missed `sweep()` cannot leave the assertion held, and the
+decision needs no timer of the domain's. A killed or force-quit AgentBar is
+answered by the kernel, because the assertion is process-owned — which is the
+whole argument against shelling out to `caffeinate`, whose child survives its
+parent. And an AgentBar that is alive but no longer deciding is answered by the
+**lease**: the assertion is created with a 150-second timeout and re-armed every
+30 seconds, so a controller that stops asking stops holding.
+[ADR-0007](../adr/ADR-0007-caffeine-is-a-leased-process-owned-assertion.md)
+records the alternatives and the numbers.
+
+**What drives it.** `start(reading:)` takes one reading immediately, because
+AgentBar is usually launched while agents are already running and a session
+halfway through a long `Bash` call may not speak again for half an hour. After
+that the push leg wakes it — a third observer on the same `StateChangeSink`
+fan-out the menu bar and the router hang off, coalesced over 150 ms like the menu
+bar's — and the renewal task re-reads while a hold is wanted. Nothing polls when
+none is.
+
+That renewal task is load-bearing, not housekeeping. **Once the assertion is
+held it is the only thing re-reading the store**: a session stuck in `working`
+emits nothing by definition, and the menu bar's clock does not reach this module.
+It is therefore what carries the watchdog's verdict to the assertion, and it runs
+while a hold is *wanted* rather than only while one was granted — so a refused
+assertion is tried again rather than waiting for an event a silent session will
+not send. `renewalInterval` and `lease` are injectable so the loop can be driven
+in a test instead of stood in for.
+
+Evaluations are **serialised**. Two overlapping ones would otherwise be free to
+apply their demands in the order they finished reading the store rather than the
+order they started, and the loser would leave the assertion describing a store
+that had already moved on.
+
+**The interface is a third seam of the familiar shape.** `AgentBarUI` may not
+import `AgentBarPower`, so `CaffeineIndicator` and `CaffeineSetting` are declared
+in the UI and populated by `Apps/AgentBar` through `CaffeineBridge` — the same
+arrangement as `IntegrationStatus` and `NotificationVerb`, and the same price for
+the same boundary. One bridge serves both the footer button and the settings
+picker, so the two cannot disagree about what Caffeine is doing. Both read an
+`@Observable` controller from inside a view body, which is what makes them live
+without a clock of their own.
+
+**A refused assertion is drawn as a fault, never as a hold.** It is the one
+failure a user cannot diagnose: the only other symptom is a Mac that fell asleep
+during a build, hours later, with nothing connecting the two.
+
 ## Concurrency
 
 Swift 6 strict concurrency. `SessionStore` is an actor and the single source of

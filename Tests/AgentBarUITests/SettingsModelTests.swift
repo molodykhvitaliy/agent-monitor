@@ -72,6 +72,19 @@ final class StubSettingsServices: SettingsServices {
         return testResult
     }
 
+    var caffeineIndicator = CaffeineIndicator()
+    private(set) var caffeineWrites: [CaffeineSetting] = []
+
+    func caffeine() -> CaffeineIndicator { caffeineIndicator }
+
+    func setCaffeine(_ setting: CaffeineSetting) {
+        caffeineWrites.append(setting)
+        caffeineIndicator = CaffeineIndicator(
+            setting: setting,
+            isHolding: setting.isActive && caffeineIndicator.workingSessionCount > 0,
+            workingSessionCount: caffeineIndicator.workingSessionCount)
+    }
+
     private(set) var launchRefreshes = 0
 
     var launchAtLogin: LaunchAtLogin {

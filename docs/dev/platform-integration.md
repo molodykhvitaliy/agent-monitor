@@ -646,3 +646,73 @@ Consequences, all of them acted on:
 - `NotificationRouter.start()` logs the status it found on every launch, whether
   or not it asked. A launch that silently decides not to ask is otherwise
   indistinguishable from one that failed to start.
+
+---
+
+## 7. macOS power assertions
+
+Verified by experiment on macOS 27, 2026-08-19, step 08. The header is
+`IOKit/pwr_mgt/IOPMLib.h`; every claim below was checked against a running
+process and `pmset -g assertions`, not read off it.
+
+### 7.1 What imports, and how
+
+`kIOPMAssertionTypePreventUserIdleSystemSleep` and the other assertion-type
+macros arrive in Swift as **`String`**, so every call site needs `as CFString`.
+`kIOPMAssertionLevelOn` and the `IOReturn` constants import as integers.
+
+**`IOPMAssertionSetTimeout` does not exist in the SDK**, whatever an older
+example may suggest. A lease is set through the properties dictionary at
+creation and re-armed with `IOPMAssertionSetProperty`.
+
+Releasing an assertion twice returns `kIOReturnBadArgument` (`0xE00002C2`,
+`-536870206` as `Int32`). It does not trap, but it is worth not doing: the
+holder in `IOKitPowerAssertion` drops its id before checking the result, so a
+failed release cannot leave it refusing to take a new assertion for ever.
+
+### 7.2 The lease, and why `TurnOff`
+
+`IOPMAssertionCreateWithProperties` accepts `kIOPMAssertionTimeoutKey` (seconds,
+as a `CFNumber`) with `kIOPMAssertionTimeoutActionKey`. AgentBar uses
+**`kIOPMAssertionTimeoutActionTurnOff`**, and `pmset -g assertions` then reports
+the countdown alongside the assertion:
+
+```
+pid 84906(AgentBar): [0x0000431a000199de] 00:00:01 PreventUserIdleSystemSleep named: "AgentBar"
+	Details: 1 agent session working in agent-monitor
+	Timeout will fire in 149 secs Action=TimeoutActionTurnOff
+```
+
+Observed, in order:
+
+- Re-arming **before** expiry, with `IOPMAssertionSetProperty(id,
+  kIOPMAssertionTimeoutKey, n)`, resets the countdown and returns
+  `kIOReturnSuccess`.
+- On expiry the assertion stops holding and **disappears from `pmset -g
+  assertions`** entirely — it is not listed as an inactive entry.
+- Re-arming **after** expiry turns it back on, with the same id still valid.
+  This is why `TurnOff` is preferred to `TimeoutActionRelease`: a recovery needs
+  no bookkeeping about whether the id is still real.
+- A timeout of `0` means *no* timeout. `IOKitPowerAssertion` clamps to one
+  second so a rounding accident cannot turn the safety net into a permanent
+  assertion.
+
+`kIOPMAssertionDetailsKey` can be set at creation and updated later through the
+same `IOPMAssertionSetProperty`. It is what makes the state diagnosable from
+outside the app, so it carries a plain-English reason rather than a code.
+
+### 7.3 What the assertion does and does not do
+
+`PreventUserIdleSystemSleep` stops the **idle** timer putting the system to
+sleep. It does not keep the display awake — that is
+`PreventUserIdleDisplaySleep`, which AgentBar deliberately does not take — and
+**no assertion type survives the lid closing**. macOS also sleeps on low battery
+regardless. All three limits are stated in the settings window's `Caffeine`
+section, because a keep-awake feature that quietly does less than the user
+believes is worse than none.
+
+Killing the process with `SIGKILL` releases the assertion immediately: verified
+by `kill -9` against a running AgentBar holding one. That property is the whole
+argument against shelling out to `/usr/bin/caffeinate`, whose subprocess can be
+orphaned instead — see
+[ADR-0007](../adr/ADR-0007-caffeine-is-a-leased-process-owned-assertion.md).

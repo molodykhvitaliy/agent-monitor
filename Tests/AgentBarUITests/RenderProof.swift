@@ -119,6 +119,23 @@ struct RenderProof {
         }
     }
 
+    /// The settings window, which the panel's own render cannot reach.
+    ///
+    /// Rendered in the state that is easiest to get wrong: Caffeine holding, so
+    /// the live status line and the picker are both showing something.
+    @Test("The settings window, in both appearances")
+    func renderSettings() throws {
+        let services = StubSettingsServices()
+        services.caffeineIndicator = CaffeineIndicator(
+            setting: .whileWorking, isHolding: true, workingSessionCount: 2)
+        let view = SettingsView(model: SettingsModel(services: services))
+            .environment(\.accessibilityPreferences, AccessibilityPreferences.shared)
+        for dark in [false, true] {
+            guard let image = RenderOutput.snapshot(view, dark: dark) else { continue }
+            try RenderOutput.write(image, to: "settings-\(dark ? "dark" : "light")")
+        }
+    }
+
     private func shoot(_ model: PanelModel, named name: String) throws {
         for dark in [false, true] {
             guard
@@ -135,6 +152,10 @@ struct RenderProof {
     /// validation asks for.
     private static func busyServices() -> StubServices {
         let services = StubServices()
+        // Two of these sessions are working, so the footer's Caffeine indicator
+        // renders in the state that is hardest to get right: holding.
+        services.caffeineIndicator = CaffeineIndicator(
+            setting: .whileWorking, isHolding: true, workingSessionCount: 2)
         services.storedSnapshot = UIFixture.snapshot([
             UIFixture.session(
                 "a", project: "/Users/dev/code/agentbar-web",
