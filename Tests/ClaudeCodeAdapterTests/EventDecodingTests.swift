@@ -109,7 +109,7 @@ struct EventDecodingTests {
     @Test("A permission prompt is the agent waiting on a person")
     func decodesNotification() throws {
         let event = try Self.single("notification-permission-prompt")
-        #expect(event.kind == .waitingInput)
+        #expect(event.kind == .waitingInput(question: nil))
         #expect(event.raw.diagnosticSummary.contains("permission_prompt"))
     }
 
@@ -122,12 +122,76 @@ struct EventDecodingTests {
              "tool_input":{"questions":[]},"tool_use_id":"toolu_1"}
             """.utf8)
         let events = try ClaudeCodeEventDecoder().decode(payload, in: Self.context())
-        #expect(events.first?.kind == .waitingInput)
+        #expect(events.first?.kind == .waitingInput(question: nil))
 
         // And it is a seam, not a rule: an installation that disagrees turns it
         // back into an ordinary tool call.
         let plain = try ClaudeCodeEventDecoder(waitingTools: []).decode(payload, in: Self.context())
         #expect(plain.first?.kind == .toolStarted)
+    }
+
+    /// The question line the `Question` notification and the Waiting row carry
+    /// (ADR-0005). It is the one place the adapter reads a tool's arguments for
+    /// their content rather than for an identifier, so its bound and its
+    /// fallbacks are worth pinning down.
+    @Test("A question the agent asked reaches the event as a bounded line")
+    func decodesQuestionLine() throws {
+        let event = try Self.single("pre-tool-use-ask-user-question")
+        #expect(event.kind == .waitingInput(question: Self.recordedQuestion))
+        // The same line is on the tool, because one rule produced both.
+        #expect(event.tool?.invocation == Self.recordedQuestion)
+    }
+
+    static let recordedQuestion = "Which database should the migration target?"
+
+    @Test(
+        "The line degrades to the header, then to nothing, and never guesses",
+        arguments: [
+            (#"{"questions":[{"header":"Database"}]}"#, "Database"),
+            (#"{"questions":[{"question":"","header":"Database"}]}"#, "Database"),
+            (#"{"questions":[{"options":[]}]}"#, String?.none),
+            (#"{"questions":[]}"#, String?.none),
+            (#"{"questions":"Database"}"#, String?.none),
+            (#"{}"#, String?.none),
+        ])
+    func degradesQuestionLine(input: String, expected: String?) throws {
+        #expect(try Self.question(askingWith: input) == expected)
+    }
+
+    @Test("A question longer than the limit is truncated, not carried whole")
+    func boundsQuestionLine() throws {
+        let long = String(repeating: "why ", count: 200)
+        let input = #"{"questions":[{"question":"\#(long)"}]}"#
+        let produced = try Self.question(askingWith: input)
+        let line = try #require(produced)
+        #expect(line.count == ToolInvocation.limit)
+        #expect(line.hasSuffix("…"))
+    }
+
+    /// Decodes a `PreToolUse(AskUserQuestion)` carrying the given `tool_input`.
+    private static func question(askingWith toolInput: String) throws -> String? {
+        let payload = Data(
+            """
+            {"session_id":"s","cwd":"/Users/dev/projects/probe",
+             "hook_event_name":"PreToolUse","tool_name":"AskUserQuestion",
+             "tool_input":\(toolInput),"tool_use_id":"toolu_1"}
+            """.utf8)
+        let events = try ClaudeCodeEventDecoder().decode(payload, in: context())
+        let event = try #require(events.first)
+        guard case .waitingInput(let question) = event.kind else {
+            Issue.record("expected a waiting event")
+            return nil
+        }
+        return question
+    }
+
+    /// Rejected option 2 in ADR-0005, kept as a test because the payload really
+    /// does carry a `message` and every future reader will be tempted by it.
+    @Test("A permission prompt's own message never becomes the question line")
+    func ignoresNotificationMessage() throws {
+        #expect(
+            try Self.single("notification-permission-prompt").kind
+                == .waitingInput(question: nil))
     }
 
     @Test("An idle prompt is not treated as waiting for input")

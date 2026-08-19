@@ -65,9 +65,9 @@ struct SessionStateMachineTests {
     func idlePromptWaits() async {
         let store = store()
         await store.apply(Fixture.event(.turnStarted))
-        await store.apply(Fixture.event(.waitingInput, at: 1))
+        await store.apply(Fixture.event(.waitingInput(question: nil), at: 1))
 
-        #expect(await store.snapshot().onlySession?.state == .waitingInput)
+        #expect(await store.snapshot().onlySession?.state == .waitingInput(question: nil))
     }
 
     /// There is no "resumed" event: recovery has to ride on the next ordinary
@@ -78,11 +78,53 @@ struct SessionStateMachineTests {
     )
     func waitingRecovers(on kind: EventKind) async {
         let store = store()
-        await store.apply(Fixture.event(.waitingInput))
-        #expect(await store.snapshot().onlySession?.state == .waitingInput)
+        await store.apply(Fixture.event(.waitingInput(question: nil)))
+        #expect(await store.snapshot().onlySession?.state == .waitingInput(question: nil))
 
         await store.apply(Fixture.event(kind, at: 1, toolUseId: "tool-1"))
         #expect(await store.snapshot().onlySession?.state == .working)
+    }
+
+    /// ADR-0005's stated consequence: `enter` compares whole states, so a second
+    /// question arriving while the session is already waiting *is* a move — the
+    /// row's duration restarts, and the push leg reports it so a notification
+    /// can fire for the new question rather than swallowing it.
+    @Test("A new question restarts the wait rather than passing unnoticed")
+    func newQuestionIsANewWait() async {
+        let store = store()
+        await store.apply(Fixture.event(.waitingInput(question: "Which database?")))
+        let second = await store.apply(
+            Fixture.event(.waitingInput(question: "Which region?"), at: 30))
+
+        #expect(second.stateChange?.to == .waitingInput(question: "Which region?"))
+        let session = await store.snapshot().onlySession
+        #expect(session?.state.question == "Which region?")
+        // Measured from the second question, not the first.
+        #expect(session?.timeInState == .zero)
+    }
+
+    /// The same line arriving twice is a heartbeat, not a new question. Without
+    /// this a hook installed twice would re-fire the notification.
+    @Test("The same question again is a heartbeat")
+    func repeatedQuestionIsUnchanged() async {
+        let store = store()
+        await store.apply(Fixture.event(.waitingInput(question: "Which database?")))
+        let again = await store.apply(
+            Fixture.event(.waitingInput(question: "Which database?"), at: 30))
+
+        #expect(again.isUnchanged)
+    }
+
+    /// A payload may not move a watchdog allowance — the states differ, the
+    /// tolerance does not (ADR-0005).
+    @Test("A question line does not change how long silence is tolerated")
+    func questionDoesNotMoveTheAllowance() {
+        let policy = WatchdogPolicy.default
+        #expect(
+            policy.silenceAllowance(
+                for: .waitingInput(question: "Which database?"), hasOpenTool: false)
+                == policy.silenceAllowance(
+                    for: .waitingInput(question: nil), hasOpenTool: false))
     }
 
     @Test("A permission request is reachable and recovers the same way")

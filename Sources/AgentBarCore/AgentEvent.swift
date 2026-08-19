@@ -103,9 +103,18 @@ public enum EventKind: Sendable, Hashable {
     case toolFinished
     case subagentStarted
     case subagentStopped
-    /// The agent is blocked on the human: an idle prompt, or a permission
+    /// The agent is blocked on the human: a question it asked, or a permission
     /// prompt answered in the agent's own UI.
-    case waitingInput
+    ///
+    /// The line is what the agent asked, already bounded and redacted by the
+    /// adapter — the same contract `ToolRef.invocation` meets, and produced by
+    /// the same machinery. `nil` on every waiting path that has no specific
+    /// question to show, which is most of them: a permission prompt says
+    /// nothing the `Waiting` label does not already say (ADR-0005).
+    ///
+    /// It is a display value. Nothing above the adapter may branch on it and no
+    /// transition may depend on whether it is there.
+    case waitingInput(question: String?)
     /// The agent is blocked on a permission decision AgentBar could answer.
     /// Reserved for the Approve/Deny backlog item and unused by the MVP; the
     /// case exists so adding that feature does not reshape the state machine.

@@ -1,7 +1,7 @@
 ---
 id: ADR-0005
 title: waitingInput carries one adapter-redacted question line
-status: proposed
+status: accepted
 date: 2026-08-18
 supersedes: null
 superseded_by: null
@@ -108,8 +108,10 @@ string, bounded and redacted by the adapter, produced by the same
 - The notification verb is chosen by the line's presence: a waiting notification
   with a line is titled `Question`, one without is titled `Waiting`.
 
-Scheduled for step 06 or 07, whichever first needs it. Until then the behaviour is
-option 1, which degrades correctly.
+Implemented in step 06. `ToolInvocation` reads
+`tool_input.questions[0].question`, falling back to `header` — the shape Claude
+Code `2.1.233` sends, confirmed against seven recorded local calls and against
+`Tests/ClaudeCodeAdapterTests/Fixtures/pre-tool-use-ask-user-question.json`.
 
 ## Consequences
 

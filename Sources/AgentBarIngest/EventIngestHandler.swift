@@ -45,17 +45,20 @@ public struct EventIngestHandler: IngestHandling {
     private let decoders: [IngestRoute: any EventDecoding]
     private let resolver: any ProjectResolving
     private let diagnostics: any IngestDiagnosticSink
+    private let stateChanges: any StateChangeSink
 
     public init(
         store: SessionStore,
         decoders: [IngestRoute: any EventDecoding],
         resolver: any ProjectResolving = PathProjectResolver(),
-        diagnostics: any IngestDiagnosticSink = SilentDiagnostics()
+        diagnostics: any IngestDiagnosticSink = SilentDiagnostics(),
+        stateChanges: any StateChangeSink = UnobservedStateChanges()
     ) {
         self.store = store
         self.decoders = decoders
         self.resolver = resolver
         self.diagnostics = diagnostics
+        self.stateChanges = stateChanges
     }
 
     public var routes: Set<IngestRoute> { Set(decoders.keys) }
@@ -72,6 +75,11 @@ public struct EventIngestHandler: IngestHandling {
             diagnostics.record(
                 .eventsAccepted(
                     path: request.route.path, applied: outcomes.count - ignored, ignored: ignored))
+            // Reported after the diagnostic and before the response, so a slow
+            // observer shows up as latency in the one place that measures it
+            // rather than as a hook that timed out.
+            let changes = outcomes.compactMap(\.change)
+            if !changes.isEmpty { stateChanges.record(changes) }
         } catch {
             diagnostics.record(
                 .payloadRejected(
@@ -85,5 +93,10 @@ extension ApplyOutcome {
     fileprivate var wasIgnored: Bool {
         guard case .ignored = self else { return false }
         return true
+    }
+
+    fileprivate var change: StateChange? {
+        guard case .changed(let change) = self else { return nil }
+        return change
     }
 }

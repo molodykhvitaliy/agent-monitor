@@ -33,12 +33,12 @@ public struct ClaudeCodeEventDecoder: EventDecoding {
 
     public func decode(_ body: Data, in context: EventDecodingContext) throws -> [AgentEvent] {
         let payload = try ClaudeCodeHookPayload(body)
-        guard let kind = kind(of: payload) else { return [] }
         let cwd = URL(filePath: payload.cwd)
         let tool = payload.toolName.map {
             ToolRef(
                 name: $0, invocation: ToolInvocation.summarise(tool: $0, input: payload.toolInput))
         }
+        guard let kind = kind(of: payload, tool: tool) else { return [] }
         return [
             AgentEvent(
                 provider: .claudeCode,
@@ -60,7 +60,11 @@ public struct ClaudeCodeEventDecoder: EventDecoding {
     }
 
     /// What the payload says happened, in domain terms.
-    private func kind(of payload: ClaudeCodeHookPayload) -> EventKind? {
+    ///
+    /// `tool` is passed in already summarised rather than re-derived, so the
+    /// question line a waiting event carries and the line a working row would
+    /// have shown come from one call to one rule.
+    private func kind(of payload: ClaudeCodeHookPayload, tool: ToolRef?) -> EventKind? {
         switch payload.event {
         case .sessionStart:
             return .sessionStarted
@@ -70,7 +74,7 @@ public struct ClaudeCodeEventDecoder: EventDecoding {
             guard let name = payload.toolName, waitingTools.contains(name) else {
                 return .toolStarted
             }
-            return .waitingInput
+            return .waitingInput(question: tool?.invocation)
         case .postToolUse, .postToolUseFailure:
             // A failed tool call is still a finished one. `PostToolUse` fires
             // only on success, so treating the failure as anything else leaves
@@ -80,7 +84,12 @@ public struct ClaudeCodeEventDecoder: EventDecoding {
             guard let notification = payload.notification, notification.meansBlockedOnHuman else {
                 return nil
             }
-            return .waitingInput
+            // No line, deliberately. `Notification` does carry a `message`, but
+            // it is provider boilerplate — "Claude needs your permission to use
+            // Bash" — and it exists on only one of the two waiting paths, so a
+            // line drawn from it would appear on one kind of waiting and not
+            // the other and read as a defect (ADR-0005, rejected option 2).
+            return .waitingInput(question: nil)
         case .subagentStart:
             return .subagentStarted
         case .subagentStop:

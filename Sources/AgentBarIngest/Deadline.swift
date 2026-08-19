@@ -16,9 +16,14 @@ import Synchronization
 /// decision at all. A deadline that can be outlasted would eventually resolve to
 /// whatever the handler said late, which for a permission prompt is the one
 /// outcome this project forbids.
-enum Deadline {
+///
+/// Public because the app target needs exactly this and must not reinvent it:
+/// bounding `IngestService.stop()` at quit has the same shape and the same
+/// trap, and a second implementation would be a second chance to reach for the
+/// task group this one exists to avoid.
+public enum Deadline {
     /// The value the work produced, or `nil` if the deadline came first.
-    static func run<Value: Sendable>(
+    public static func run<Value: Sendable>(
         within timeout: Duration,
         operation: @escaping @Sendable () async -> Value
     ) async -> Value? {

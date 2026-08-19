@@ -96,13 +96,14 @@ struct IngestRouterTests {
         let router = router(
             handlers: [slow], deadline: .milliseconds(50), diagnostics: diagnostics)
 
-        let started = ContinuousClock().now
         let response = await respond(
             router, head(method: "POST", path: "/v1/events", headers: authorised()))
-        let elapsed = ContinuousClock().now - started
 
+        // Promptness is asserted in `DeadlineTests.expiresPromptly`, on a median
+        // that a single scheduling stall cannot move. Bounding elapsed time here
+        // as well would only re-add the flake that assertion exists to avoid,
+        // and would catch nothing `abandonsUncancellableHandlers` does not.
         #expect(response == .noOpinion)
-        #expect(elapsed < .seconds(5))
         #expect(
             diagnostics.contains {
                 if case .handlerTimedOut = $0 { return true }
@@ -114,9 +115,12 @@ struct IngestRouterTests {
     /// would still pass if the deadline waited for its work instead of
     /// abandoning it. This one cannot be cancelled at all.
     ///
-    /// Asserted as an ordering rather than an elapsed time, for the reason
+    /// Asserted as an ordering rather than an elapsed time, and in both halves —
+    /// started, and not finished — for the reasons
     /// `DeadlineTests.abandonsUncancellableWork` records.
-    @Test("A handler that cannot be cancelled still does not delay the answer")
+    @Test(
+        "A handler that cannot be cancelled still does not delay the answer",
+        .timeLimit(.minutes(1)))
     func abandonsUncancellableHandlers() async {
         let diagnostics = CollectingDiagnostics()
         let stubborn = UncooperativeHandler(
@@ -126,9 +130,13 @@ struct IngestRouterTests {
 
         let response = await respond(
             router, head(method: "POST", path: "/v1/events", headers: authorised()))
+        let finishedBeforeAnswer = stubborn.completed.isSet
 
         #expect(response == .noOpinion)
-        #expect(!stubborn.completed.isSet, "the router waited for work it should have abandoned")
+        #expect(!finishedBeforeAnswer, "the router waited for work it should have abandoned")
+        #expect(
+            await stubborn.started.waitUntilSet(),
+            "the handler never ran, so the test proved nothing")
         #expect(
             diagnostics.contains {
                 if case .handlerTimedOut = $0 { return true }

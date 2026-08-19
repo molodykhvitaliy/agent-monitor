@@ -81,6 +81,10 @@ struct NativeEventEnvelope: Decodable {
     let subagent: Subagent?
     let failureReason: String?
     let permissionRequest: Permission?
+    /// The question a `waitingInput` event is reporting, when the caller has
+    /// one. Optional on purpose: most waiting has nothing specific to say
+    /// (ADR-0005).
+    let question: String?
     /// One line for a log. Bounded by `RawPayload`, and never echoed back.
     let summary: String?
 
@@ -95,10 +99,24 @@ struct NativeEventEnvelope: Decodable {
             timestamp: context.receivedAt,
             turnId: turnId.map(TurnID.init),
             model: model,
-            tool: tool.map { ToolRef(name: $0.name, invocation: $0.invocation) },
+            tool: tool.map {
+                ToolRef(name: $0.name, invocation: $0.invocation.map(NativeEventEnvelope.bounded))
+            },
             toolUseId: toolUseId.map(ToolUseID.init),
             agent: subagent.map { .subagent(id: AgentID($0.id), type: $0.type) } ?? .main,
             raw: RawPayload(summary: summary ?? ""))
+    }
+
+    /// Display lines are kept for as long as their session is, and this
+    /// envelope's are chosen by the caller. Bounding them here is the same
+    /// contract `ToolInvocation` meets on the Claude Code side; a body limit
+    /// alone would still admit one 64 KB line.
+    static let displayLineLimit = 120
+
+    static func bounded(_ text: String) -> String {
+        let collapsed = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        guard collapsed.count > displayLineLimit else { return collapsed }
+        return String(collapsed.prefix(displayLineLimit - 1)) + "…"
     }
 
     /// Accepts either spelling — the domain's own case name, or the slug the
@@ -123,14 +141,18 @@ struct NativeEventEnvelope: Decodable {
         case .toolFinished: return .toolFinished
         case .subagentStarted: return .subagentStarted
         case .subagentStopped: return .subagentStopped
-        case .waitingInput: return .waitingInput
+        case .waitingInput: return .waitingInput(question: question.map(Self.bounded))
         case .turnFinished: return .turnFinished
         case .sessionEnded: return .sessionEnded
         case .failed:
             guard let failureReason else {
                 throw NativeEventDecodingError.missingDetail(kind: kind, field: "failureReason")
             }
-            return .failed(reason: failureReason)
+            // Bounded like every other display string this envelope carries: a
+            // failure reason is held in `SessionState` for the session's life
+            // and again in the history, and this envelope's content is chosen
+            // by the caller.
+            return .failed(reason: NativeEventEnvelope.bounded(failureReason))
         case .waitingPermission:
             guard let permissionRequest else {
                 throw NativeEventDecodingError.missingDetail(kind: kind, field: "permissionRequest")

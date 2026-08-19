@@ -56,7 +56,7 @@ struct WatchdogTests {
     @Test(
         "Silence is tolerated for as long as the state makes it plausible",
         arguments: [
-            (EventKind.waitingInput, Duration.hours(2)),
+            (EventKind.waitingInput(question: nil), Duration.hours(2)),
             (EventKind.turnFinished, Duration.hours(8)),
             (EventKind.failed(reason: "overloaded_error"), Duration.hours(8)),
         ]
@@ -178,7 +178,7 @@ struct WatchdogTests {
         let (store, clock) = fixture()
         await store.apply(Fixture.event(.turnStarted, session: "quiet"))
         await store.apply(
-            Fixture.event(.waitingInput, session: "asking", cwd: "/Users/dev/other"))
+            Fixture.event(.waitingInput(question: nil), session: "asking", cwd: "/Users/dev/other"))
         await store.apply(
             Fixture.event(
                 .toolStarted, session: "building", tool: Fixture.bash, toolUseId: "tool-1"))
@@ -192,7 +192,7 @@ struct WatchdogTests {
 
         #expect(before == after, "a sweep must not change what a reading says")
         #expect(before.session("quiet")?.state == .unknown)
-        #expect(before.session("asking")?.state == .waitingInput)
+        #expect(before.session("asking")?.state == .waitingInput(question: nil))
         #expect(before.session("building")?.state == .working)
         #expect(before.session("resting")?.state == .idle)
         #expect(changes.map(\.sessionId.value) == ["quiet"], "only the quiet one moved")
