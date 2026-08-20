@@ -110,12 +110,27 @@ public struct NotificationDraft: Sendable, Hashable {
         "\(event.verb)\(NotificationDraft.separator)\(project.name)"
     }
 
-    /// `{What} · {Provider} · {project}`, used only when the provider badge
-    /// could not be attached.
+    /// The banner's second line: which agent this is from.
     ///
-    /// The provider is normally carried by the image. When there is no image the
-    /// provider would simply be lost, and losing which agent is asking costs
-    /// more than a longer title does.
+    /// > **The provider, and nothing else.** The design asks for a session
+    /// > ordinal — `Claude Code · session 2` — when several sessions are
+    /// > running, and there is no honest source for one here. A draft names one
+    /// > session; the router sees a stream of changes and holds no register of
+    /// > what is live, and the store that does is on the other side of a module
+    /// > boundary that exists precisely so a notification cannot reach into it.
+    /// > A number invented for a banner is the failure mode `NotificationPolicy`
+    /// > already refuses in `3 files changed`, so this says the true half and
+    /// > stops.
+    public var subtitle: String { provider.displayName }
+
+    /// `{What} · {Provider} · {project}`, used only when the art could not be
+    /// attached.
+    ///
+    /// Kept as a safety net rather than removed now that `subtitle` names the
+    /// provider unconditionally. `subtitle` is a slot the system may truncate or
+    /// drop before the title — an alert-style notification lays out differently
+    /// from a banner — and losing which agent is asking costs more than a
+    /// repeated word does in the rare path where no art was attached.
     public var titleNamingProvider: String {
         [event.verb, provider.displayName, project.name]
             .joined(separator: NotificationDraft.separator)

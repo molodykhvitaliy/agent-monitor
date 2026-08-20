@@ -1,5 +1,6 @@
 import AgentBarCore
 import AppKit
+import CoreImage
 import SwiftUI
 import Testing
 
@@ -128,6 +129,23 @@ struct RenderProof {
         return strip
     }
 
+    /// The four squares a banner can carry, at the size they are generated and
+    /// again with the colour taken out — because the rule they have to obey is
+    /// "silhouette first", and a colour render cannot show whether they do.
+    @Test("The four attachment squares, in colour and in grey")
+    func renderAttachments() throws {
+        for verb in NotificationVerb.allCases {
+            guard
+                let image = RenderOutput.snapshot(
+                    EventAttachmentArt(verb: verb, size: 128), dark: false)
+            else { continue }
+            try RenderOutput.write(image, to: "attachment-\(verb.rawValue)")
+            if let grey = image.desaturated() {
+                try RenderOutput.write(grey, to: "attachment-\(verb.rawValue)-grey")
+            }
+        }
+    }
+
     @Test("Both provider badges, large enough to judge")
     func renderBadges() throws {
         for provider in Provider.allCases {
@@ -240,5 +258,24 @@ struct RenderProof {
                 resetsAt: Date().addingTimeInterval(3 * 86400)),
         ]
         return services
+    }
+}
+
+extension NSImage {
+    /// The same image with its colour removed, for judging a silhouette.
+    ///
+    /// A development aid, not an assertion — `EventAttachmentTests` is what
+    /// actually holds the rule. This is for looking at.
+    func desaturated() -> NSImage? {
+        guard let tiff = tiffRepresentation,
+            let source = CIImage(data: tiff),
+            let filter = CIFilter(name: "CIPhotoEffectMono")
+        else { return nil }
+        filter.setValue(source, forKey: kCIInputImageKey)
+        guard let output = filter.outputImage else { return nil }
+        let rep = NSCIImageRep(ciImage: output)
+        let image = NSImage(size: rep.size)
+        image.addRepresentation(rep)
+        return image
     }
 }

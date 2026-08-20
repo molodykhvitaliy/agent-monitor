@@ -260,6 +260,20 @@ final class NotificationSettingsBridge: SettingsServices {
         }
     }
 
+    /// The same mapping the other way, for the attachment renderer.
+    ///
+    /// Written out rather than derived from the raw values: the two enums happen
+    /// to agree today, and a `rawValue` round-trip would turn a future
+    /// divergence into a silent fallback instead of a compiler error.
+    static func verb(for event: NotificationEvent) -> NotificationVerb {
+        switch event {
+        case .question: .question
+        case .waiting: .waiting
+        case .finished: .finished
+        case .failed: .failed
+        }
+    }
+
     private static func soundID(for selection: SoundSelection) -> String {
         switch selection {
         case .systemDefault: StandardSound.systemDefault
@@ -288,16 +302,20 @@ final class NotificationSettingsBridge: SettingsServices {
     }
 }
 
-/// Renders each provider's badge once and keeps it on disk for the notification
-/// centre to attach.
+/// Renders each event's attachment square once and keeps it on disk for the
+/// notification centre to attach.
 ///
-/// The directory is Caches, which is chosen for it by the app assembly: a badge
+/// The directory is Caches, which is chosen for it by the app assembly: the art
 /// is derived and re-creatable, and it has to be, because
 /// `UNNotificationAttachment` **moves** the file it is given into the
-/// notification's own storage. Every badge is consumed by its first use and
+/// notification's own storage. Every square is consumed by its first use and
 /// rendered again on the next.
+///
+/// The other half of the vocabulary join this file exists for:
+/// `AgentBarNotifications` names an event, `AgentBarUI` names a verb, and
+/// neither may import the other.
 @MainActor
-final class ProviderBadgeAttachments: NotificationAttachmentProviding {
+final class EventAttachments: NotificationAttachmentProviding {
     private static let logger = Logger(
         subsystem: "com.molodykhvitalii.AgentBar", category: "notifications")
 
@@ -307,16 +325,18 @@ final class ProviderBadgeAttachments: NotificationAttachmentProviding {
         self.directory = directory
     }
 
-    /// A file URL for the badge, rendering it if the last one was consumed.
+    /// A file URL for the event's art, rendering it if the last one was
+    /// consumed.
     ///
     /// Returns `nil` on any failure, which is a supported outcome rather than an
     /// error: the notification then names the provider in its title instead.
-    func badgeImageURL(for provider: Provider) -> URL? {
-        let url = directory.appending(path: "badge-\(provider.rawValue).png")
+    func attachmentURL(for event: NotificationEvent) -> URL? {
+        let url = directory.appending(path: "event-\(event.rawValue).png")
         if FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) { return url }
-        guard let png = ProviderBadgeImage.png(for: provider) else {
+        guard let png = EventAttachmentImage.png(for: NotificationSettingsBridge.verb(for: event))
+        else {
             Self.logger.error(
-                "provider badge could not be rendered: \(provider.rawValue, privacy: .public)")
+                "event art could not be rendered: \(event.rawValue, privacy: .public)")
             return nil
         }
         do {
@@ -325,7 +345,7 @@ final class ProviderBadgeAttachments: NotificationAttachmentProviding {
             try png.write(to: url, options: .atomic)
             return url
         } catch {
-            Self.logger.error("provider badge could not be written: \(error, privacy: .public)")
+            Self.logger.error("event art could not be written: \(error, privacy: .public)")
             return nil
         }
     }

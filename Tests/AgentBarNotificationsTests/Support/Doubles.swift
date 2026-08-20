@@ -53,7 +53,7 @@ final class StubAttachments: NotificationAttachmentProviding {
         self.url = url
     }
 
-    func badgeImageURL(for provider: Provider) -> URL? { url }
+    func attachmentURL(for event: NotificationEvent) -> URL? { url }
 }
 
 /// Time the test moves by hand, so a coalescing window costs no wall-clock.
