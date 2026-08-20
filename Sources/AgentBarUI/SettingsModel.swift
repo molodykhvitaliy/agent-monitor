@@ -191,6 +191,33 @@ public final class SettingsModel {
         lastMessage = Message(text: result.text, isFault: result.isFault)
     }
 
+    /// What the preview block shows, or `nil` when the settings would deliver
+    /// nothing at all.
+    ///
+    /// Ordered by the verb table, first enabled wins — so turning `Question` off
+    /// moves the preview to the next event the user would actually receive
+    /// rather than to a banner they have just switched off. When the global
+    /// switch is off, or every cell is, the answer is `nil` and the block says
+    /// so in a sentence instead of showing a banner that will never arrive.
+    public var preview: NotificationPreview? {
+        guard preferences.isEnabled else { return nil }
+        for verb in NotificationVerb.allCases {
+            for provider in providers {
+                guard let cell = preferences.cell(for: provider, verb: verb), cell.isEnabled
+                else { continue }
+                return NotificationPreview(
+                    verb: verb,
+                    provider: provider,
+                    // The name the picker shows, including `Silent` — which is a
+                    // real answer and not an absence. `nil` only when the stored
+                    // id names nothing in the catalogue, which is the same
+                    // condition the cell's own problem line reports.
+                    soundName: soundChoices.first { $0.id == cell.soundID }?.name)
+            }
+        }
+        return nil
+    }
+
     /// Every sound problem currently on a cell, deduplicated, for the summary
     /// under the Sounds section. Recomputed from the cells on every read, so a
     /// sound the user has just fixed stops being reported without waiting for
@@ -217,5 +244,22 @@ extension Int {
         let calendar = Calendar.current
         guard let date = calendar.date(from: components) else { return "\(self / 60):00" }
         return date.formatted(date: .omitted, time: .shortened)
+    }
+}
+
+/// The one notification the settings window previews.
+///
+/// A value rather than a view model: the preview is a mirror and has no state of
+/// its own, which is what stops it being a second place where the app decides
+/// what a banner says.
+nonisolated public struct NotificationPreview: Sendable, Hashable {
+    public let verb: NotificationVerb
+    public let provider: Provider
+    public let soundName: String?
+
+    public init(verb: NotificationVerb, provider: Provider, soundName: String?) {
+        self.verb = verb
+        self.provider = provider
+        self.soundName = soundName
     }
 }

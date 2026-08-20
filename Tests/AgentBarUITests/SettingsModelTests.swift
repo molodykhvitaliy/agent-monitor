@@ -301,6 +301,76 @@ struct NotificationVerbTests {
     }
 }
 
+/// The preview block is a mirror. Its whole risk is showing something the
+/// settings below would not actually produce.
+@MainActor
+@Suite("Settings preview")
+struct SettingsPreviewTests {
+
+    /// Ordered by the verb table, first enabled wins — so turning `Question` off
+    /// moves the preview to the next event the user would receive rather than to
+    /// one they have just switched off.
+    @Test("The preview follows the first enabled event")
+    func previewFollowsTheMatrix() throws {
+        let services = StubSettingsServices()
+        let model = SettingsModel(services: services)
+        #expect(model.preview?.verb == .question)
+
+        model.setCellEnabled(false, provider: .claudeCode, verb: .question)
+        #expect(model.preview?.verb == .waiting)
+
+        model.setCellEnabled(false, provider: .claudeCode, verb: .waiting)
+        model.setCellEnabled(false, provider: .claudeCode, verb: .finished)
+        let last = try #require(model.preview)
+        #expect(last.verb == .failed)
+        #expect(last.provider == .claudeCode)
+    }
+
+    /// The block says so in a sentence rather than showing a banner that will
+    /// never arrive.
+    @Test("Nothing enabled is nothing previewed")
+    func nothingEnabledPreviewsNothing() {
+        let services = StubSettingsServices()
+        let model = SettingsModel(services: services)
+        for verb in NotificationVerb.allCases {
+            model.setCellEnabled(false, provider: .claudeCode, verb: verb)
+        }
+        #expect(model.preview == nil)
+    }
+
+    /// The global switch outranks the matrix, exactly as it does in delivery.
+    @Test("The global switch turns the preview off too")
+    func globalSwitchWins() {
+        let model = SettingsModel(services: StubSettingsServices())
+        #expect(model.preview != nil)
+        model.setEnabled(false)
+        #expect(model.preview == nil)
+    }
+
+    /// The sound is the one decision a picture cannot show, so the preview names
+    /// it — from the same catalogue the picker offers, never from the raw id.
+    @Test("The preview names the sound the picker names")
+    func previewNamesTheSound() throws {
+        let model = SettingsModel(services: StubSettingsServices())
+        let preview = try #require(model.preview)
+        #expect(preview.soundName == "AgentBar Question")
+    }
+
+    /// The matrix, the banner and the preview have to agree about what colour an
+    /// event is. They would not if the matrix used the state's accent: `finished`
+    /// announces `idle`, which is the one state with no accent at all.
+    @Test("Every event's colour comes from its own attachment ramp")
+    func matrixTakesTheAttachmentColour() {
+        var seen: Set<ColorToken> = []
+        for verb in NotificationVerb.allCases {
+            let base = AttachmentRamp.ramp(for: verb).base
+            #expect(seen.insert(base).inserted, "\(verb) shares a colour with another event")
+        }
+        #expect(SessionStateKind.idle.accent == nil)
+        #expect(AttachmentRamp.ramp(for: .finished).base == .connected)
+    }
+}
+
 @Suite("Clock-face times")
 struct ClockFaceTests {
 

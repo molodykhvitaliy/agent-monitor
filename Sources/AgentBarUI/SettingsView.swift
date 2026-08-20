@@ -28,6 +28,7 @@ public struct SettingsView: View {
     public var body: some View {
         Form {
             permissionSection
+            previewSection
             eventsSection
             quietHoursSection
             focusSection
@@ -78,6 +79,25 @@ public struct SettingsView: View {
                     }
                 }
             }
+        }
+    }
+
+    // MARK: - Preview
+
+    /// First, above every setting, because it is what every setting below is
+    /// about. Built from `StatusItemGlyph` and `EventAttachmentImage` rather
+    /// than from an imitation of them — see `SettingsPreviewView`.
+    private var previewSection: some View {
+        Section {
+            SettingsPreviewView(preview: model.preview)
+        } header: {
+            sectionHeader(String(localized: "Preview", comment: "Settings section heading"))
+        } footer: {
+            footnote(
+                String(
+                    localized:
+                        "How the menu bar and a banner look with your current settings.",
+                    comment: "Settings preview explanation"))
         }
     }
 
