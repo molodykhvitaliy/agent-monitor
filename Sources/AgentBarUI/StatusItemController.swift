@@ -37,6 +37,10 @@ public final class StatusItemController {
     /// leaving a timer running with an unchanging frame is a menu-bar app
     /// costing a laptop battery for nothing.
     private var animation: Timer?
+    /// Whether the item is drawn lit. See `setHighlighted(_:)`.
+    private var isHighlighted = false
+    private var screensAreAsleep = false
+    private var sleepObservers: [NSObjectProtocol] = []
     private let accessibility: AccessibilityPreferences
 
     /// `onActivate` receives the button to anchor against and whether the click
@@ -50,6 +54,7 @@ public final class StatusItemController {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         configureButton()
         observeReduceMotion()
+        observeScreenSleep()
     }
 
     /// The anchor a panel positions itself against.
@@ -61,7 +66,16 @@ public final class StatusItemController {
     /// entire pedagogy of that flow: a Dock-less app's first job is teaching
     /// where it lives, and a lit item with a panel hanging off it says that
     /// before any copy is read.
+    ///
+    /// > **Remembered, not merely set.** `update(from:)` reassigns the button's
+    /// > image, title, position and font whenever the aggregate state moves, and
+    /// > the very first one lands a hop *after* the flow lights the item —
+    /// > `MenuBarController.start()` queues its first refresh before it shows the
+    /// > flow. If AppKit drops the cell highlight on reconfiguration, the flow
+    /// > loses the one thing it exists to say, silently. Re-applying it costs
+    /// > nothing and removes the question.
     public func setHighlighted(_ isHighlighted: Bool) {
+        self.isHighlighted = isHighlighted
         statusItem.button?.highlight(isHighlighted)
     }
 
@@ -69,6 +83,9 @@ public final class StatusItemController {
     /// rather than a side effect of deallocation.
     public func remove() {
         stopAnimating()
+        let centre = NSWorkspace.shared.notificationCenter
+        for observer in sleepObservers { centre.removeObserver(observer) }
+        sleepObservers.removeAll()
         NSStatusBar.system.removeStatusItem(statusItem)
     }
 
@@ -91,6 +108,8 @@ public final class StatusItemController {
             button.imagePosition = waiting > 1 ? .imageLeading : .imageOnly
             button.font = .monospacedDigitSystemFont(
                 ofSize: NSFont.smallSystemFontSize, weight: .medium)
+            // Last, and after every other property this branch touches.
+            if isHighlighted { button.highlight(true) }
         }
 
         // Checked separately: the sentence names a project, so it moves when the
@@ -131,10 +150,23 @@ public final class StatusItemController {
     ///
     /// A pure decision so it can be tested — `StatusItemController` itself needs
     /// a real status bar, and no test builds one.
-    static func animates(_ state: SessionStateKind?, reduceMotion: Bool) -> Bool {
-        guard let state, !reduceMotion else { return false }
+    static func animates(
+        _ state: SessionStateKind?, reduceMotion: Bool, isOnScreen: Bool = true
+    ) -> Bool {
+        guard let state, !reduceMotion, isOnScreen else { return false }
         return GlyphFigure.animates(state)
     }
+
+    /// Whether anybody can see the glyph.
+    ///
+    /// > **The one prohibition this animation could otherwise break.** The motion
+    /// > rules end with *nothing animating while its surface is closed*, and
+    /// > `waiting` is precisely the state that persists unattended — a waiting
+    /// > agent overnight, with the display asleep or the item ⌘-dragged off the
+    /// > bar, would be eight wake-ups a second and an image assignment each,
+    /// > indefinitely. Both conditions are cheap to ask and neither needs a
+    /// > permission.
+    private var isOnScreen: Bool { statusItem.isVisible && !screensAreAsleep }
 
     /// Swaps in a state's frames and starts or stops the timer accordingly.
     private func showFrames(for state: SessionStateKind?) {
@@ -151,7 +183,11 @@ public final class StatusItemController {
 
     /// Starts the timer, or invalidates it, from what is true now.
     private func refreshAnimation() {
-        guard Self.animates(shownState.flatMap { $0 }, reduceMotion: accessibility.reduceMotion),
+        guard
+            Self.animates(
+                shownState.flatMap { $0 },
+                reduceMotion: accessibility.reduceMotion,
+                isOnScreen: isOnScreen),
             frames.count > 1
         else {
             stopAnimating()
@@ -178,9 +214,38 @@ public final class StatusItemController {
     }
 
     private func advance() {
-        guard frames.count > 1 else { return }
+        // Self-healing: the item can be hidden by a ⌘-drag with no notification
+        // this class observes, so the tick that finds it gone is what stops the
+        // clock. Cheaper than watching `isVisible` for a case that is rare and
+        // costs nothing to notice late.
+        guard frames.count > 1, isOnScreen else {
+            refreshAnimation()
+            return
+        }
         frameIndex = (frameIndex + 1) % frames.count
         statusItem.button?.image = frames[frameIndex]
+    }
+
+    /// Screen sleep, observed rather than polled, because it is the case that
+    /// lasts all night.
+    private func observeScreenSleep() {
+        let centre = NSWorkspace.shared.notificationCenter
+        // The asleep answer is captured per registration rather than read off
+        // the notification: `Notification` is not `Sendable`, and the only thing
+        // needed from it is which of the two names fired.
+        for (name, asleep) in [
+            (NSWorkspace.screensDidSleepNotification, true),
+            (NSWorkspace.screensDidWakeNotification, false),
+        ] {
+            sleepObservers.append(
+                centre.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        self.screensAreAsleep = asleep
+                        self.refreshAnimation()
+                    }
+                })
+        }
     }
 
     /// Re-arms itself on every change, which is how `@Observable` is read from

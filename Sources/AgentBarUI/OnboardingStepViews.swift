@@ -275,7 +275,9 @@ struct DoneStepView: View {
             .padding(.top, DesignTokens.Space.large)
 
             Button {
-                model.finish()
+                // Not `finish()` first: the controller's handler ends the flow
+                // itself, and calling it here would open the panel on the way to
+                // the settings window.
                 onOpenSettings()
             } label: {
                 Text("Details in Settings", comment: "Onboarding footer link")

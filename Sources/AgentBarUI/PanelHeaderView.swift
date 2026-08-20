@@ -128,28 +128,36 @@ struct WaitingWash: View {
 /// > static appearance carries the same fact its motion does.
 struct WorkingHairline: View {
     @Environment(\.accessibilityPreferences) private var accessibility
+    @Environment(\.surfaceIsOnScreen) private var isOnScreen
     @State private var isSweeping = false
 
     var body: some View {
         GeometryReader { proxy in
             let width = proxy.size.width
             let sweep = width * DesignTokens.Progress.sweepWidth
+            let moving = accessibility.runsCyclicalMotion && isOnScreen
+            // **One value drives both the position and the animation**, and it
+            // has to include the motion setting. Keying the animation on
+            // `isSweeping` alone means a user who turns Reduce Motion *off* with
+            // the panel open moves the sweep without animating it — `isSweeping`
+            // is already `true`, so nothing fires — and the row is left with an
+            // empty track for as long as it lives.
+            let sweeping = moving && isSweeping
             track
                 .overlay(alignment: .leading) {
-                    if accessibility.runsCyclicalMotion {
-                        gradient
-                            .frame(width: sweep)
-                            // Off the left edge to off the right, so the sweep
-                            // enters and leaves rather than appearing at rest.
-                            .offset(x: isSweeping ? width : -sweep)
-                            .animation(
-                                DesignTokens.Motion.repeating(
+                    gradient
+                        .frame(width: sweep)
+                        // At rest it sits at the left, which is exactly the
+                        // static 40 % fill the design asks for under Reduce
+                        // Motion. Moving, it travels from there off the right.
+                        .offset(x: sweeping ? width : 0)
+                        .animation(
+                            moving
+                                ? DesignTokens.Motion.repeating(
                                     DesignTokens.Motion.hairlineSweep,
-                                    DesignTokens.Motion.cycle),
-                                value: isSweeping)
-                    } else {
-                        gradient.frame(width: sweep)
-                    }
+                                    DesignTokens.Motion.cycle)
+                                : nil,
+                            value: sweeping)
                 }
                 .clipShape(
                     RoundedRectangle(
@@ -161,6 +169,14 @@ struct WorkingHairline: View {
         // animation needs a value change to drive it, and the change has to
         // happen after the view is on screen or the first cycle is spent
         // off-screen.
+        //
+        // > **The resting position is the left edge, not off it.** An earlier
+        // > version parked the sweep at `-sweep` and only rendered it inside the
+        // > animated branch, so a user who turned Reduce Motion *off* with the
+        // > panel open got a permanently empty track: the branch flipped, the
+        // > gradient appeared parked off-screen, and `isSweeping` was already
+        // > `true` so nothing could drive it back. A working row must never look
+        // > like an idle one, whatever the setting was when the row appeared.
         .onAppear { isSweeping = true }
         .accessibilityHidden(true)
     }

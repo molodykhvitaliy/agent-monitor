@@ -91,21 +91,57 @@ public final class MenuBarController {
     /// and it runs **only** while that surface is up.
     static let onboardingWatchInterval: Duration = .seconds(3)
 
-    private let model: PanelModel
+    /// What a click on the status item means.
+    enum Activation: Sendable, Hashable {
+        /// An open is in flight. The click abandons it.
+        case cancelOpen
+        /// The first-run flow is hanging from this button.
+        case dismissOnboarding
+        case closePanel
+        case openPanel
+    }
+
+    /// The whole of the click's decision, as a function of what is on screen.
+    ///
+    /// > **The onboarding case is not a nicety.** A click on the status item is
+    /// > exempt from the panel's dismissal monitor — that exemption is what
+    /// > makes the item a toggle at all — so without a rule here the click falls
+    /// > through to the panel and opens it *on top of* the first-run flow, two
+    /// > surfaces anchored to the same point. Clicking the item while the flow
+    /// > is up means "close this", exactly as it does with a menu open.
+    ///
+    /// A pure decision on the type so it can be tested — `MenuBarController`
+    /// itself needs a real status bar, and no test builds one.
+    static func activation(
+        isOpening: Bool, onboardingIsVisible: Bool, panelIsVisible: Bool
+    ) -> Activation {
+        if isOpening { return .cancelOpen }
+        if onboardingIsVisible { return .dismissOnboarding }
+        return panelIsVisible ? .closePanel : .openPanel
+    }
+
+    /// Reached by `MenuBarController+Clock`.
+    let model: PanelModel
     /// Reached by `MenuBarController+Onboarding`.
     private(set) var onboarding: OnboardingModel
     private let settingsWindow: SettingsWindowController
     /// Reached by `MenuBarController+Onboarding`.
     private(set) var statusItem: StatusItemController?
-    private var panel: PanelController?
+    /// Reached by `MenuBarController+Clock`.
+    var panel: PanelController?
     /// The first-run flow's own panel, built only if the flow is going to run.
     /// Reached by `MenuBarController+Onboarding`.
     var onboardingPanel: PanelController?
     /// Polls the install reports while the flow is showing, and only then.
     /// Reached by `MenuBarController+Onboarding`.
     var onboardingWatch: Task<Void, Never>?
-    private var timer: Timer?
-    private var pushPending = false
+    /// The second measurement of a step, taken once its transition has settled.
+    /// See `repositionOnboarding`.
+    var onboardingRemeasure: Task<Void, Never>?
+    /// Reached by `MenuBarController+Clock`.
+    var timer: Timer?
+    /// Reached by `MenuBarController+Clock`.
+    var pushPending = false
     private var screenObserver: NSObjectProtocol?
     /// The open in flight, between deciding to open and the panel appearing.
     ///
@@ -128,7 +164,8 @@ public final class MenuBarController {
     /// changes the date, and an interval measured across that correction is
     /// wrong in the direction that matters here, leaving the watching window
     /// open indefinitely.
-    private var openedAt: ContinuousClock.Instant?
+    /// Reached by `MenuBarController+Clock`.
+    var openedAt: ContinuousClock.Instant?
 
     /// Two seams rather than one: the panel and the settings window need
     /// different things from the assembly.
@@ -161,6 +198,7 @@ public final class MenuBarController {
             )
             .environment(\.accessibilityPreferences, AccessibilityPreferences.shared),
             onDismiss: { [weak self] in
+                self?.model.isOnScreen = false
                 self?.openedAt = nil
                 self?.scheduleTimer(open: false)
             })
@@ -193,8 +231,18 @@ public final class MenuBarController {
         openTask = nil
         onboardingWatch?.cancel()
         onboardingWatch = nil
+        onboardingRemeasure?.cancel()
+        onboardingRemeasure = nil
         onboardingPanel?.hide()
         onboardingPanel = nil
+        // **Deliberately no `onboarding.finish()` here.** Every other exit —
+        // completing it, the Settings link, clicking away, Escape — writes the
+        // flag, because each of those is the user answering the flow. Quit is
+        // not an answer to it: an app that was quit halfway through its first
+        // run has not been introduced, and the next launch owes it one more
+        // showing. This is the one path where "shown once" means "shown once
+        // properly".
+
         openedAt = nil
         timer?.invalidate()
         timer = nil
@@ -203,6 +251,7 @@ public final class MenuBarController {
             self.screenObserver = nil
         }
         panel?.hide()
+        model.isOnScreen = false
         panel = nil
         settingsWindow.close()
         statusItem?.remove()
@@ -249,18 +298,28 @@ public final class MenuBarController {
 
     func toggle(from button: NSStatusBarButton, takingKeyFocus: Bool) {
         guard let panel else { return }
-        if let openTask {
+        switch Self.activation(
+            isOpening: openTask != nil,
+            onboardingIsVisible: onboardingPanel?.isVisible == true,
+            panelIsVisible: panel.isVisible)
+        {
+        case .cancelOpen:
             // An open is already in flight. Abandon it rather than queue a
             // second one, and rather than drop the click on the floor.
-            openTask.cancel()
-            self.openTask = nil
+            openTask?.cancel()
+            openTask = nil
             return
-        }
-        if panel.isVisible {
+        case .dismissOnboarding:
+            endOnboarding()
+            return
+        case .closePanel:
             panel.hide()
+            model.isOnScreen = false
             openedAt = nil
             scheduleTimer(open: false)
             return
+        case .openPanel:
+            break
         }
         // The card is opened by pressing the footer status, never by opening the
         // panel: a user with sessions running does not need to be told to
@@ -279,6 +338,7 @@ public final class MenuBarController {
                 return
             }
             panel.show(from: button, takingKeyFocus: takingKeyFocus)
+            model.isOnScreen = true
             openedAt = ContinuousClock().now
             openTask = nil
             scheduleTimer(open: true)
@@ -295,78 +355,6 @@ public final class MenuBarController {
         }
     }
 
-    // MARK: - Timers
-
-    private func scheduleTimer(open: Bool) {
-        timer?.invalidate()
-        let interval = open ? Self.openInterval : Self.closedInterval
-        // Constructed and added by hand rather than `scheduledTimer`, which
-        // would install it in `.default` as well: the panel's own tracking loop
-        // must not stop the clock while the user drags across a row, and
-        // `.common` is the mode that survives it.
-        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.startTick(open: open) }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
-    }
-
-    private func startTick(open: Bool) {
-        Task { await tick(open: open) }
-    }
-
-    private func tick(open: Bool) async {
-        if open {
-            switch Self.tick(
-                isVisible: panel?.isVisible == true,
-                openFor: openedAt.map { ContinuousClock().now - $0 })
-            {
-            case .retire:
-                // The panel went away without telling us. Put the clock back
-                // where it belongs and stop asking for anything.
-                openedAt = nil
-                scheduleTimer(open: false)
-                await model.sweepAndRefresh()
-                statusItem?.update(from: model.snapshot)
-                return
-            case .watch, .show:
-                break
-            }
-            // **Sweeping, not only reading.** The open clock used to re-read the
-            // store and leave the retiring to the closed clock, which does not
-            // run while the panel is up — so a session the watchdog had given up
-            // on stayed on the list, reading `Unknown`, for as long as somebody
-            // left the panel open. `unknown` is derived on every read, so the
-            // row was always *labelled* correctly; what never happened was it
-            // leaving. A sweep is a walk over the live records and an actor hop,
-            // which is affordable at this cadence precisely because
-            // [ADR-0012](../../docs/adr/ADR-0012-a-finished-session-is-retired-not-doubted.md)
-            // keeps that list short.
-            await model.sweepAndRefresh()
-            // Cheap enough for this clock — an actor hop, no disk — and the only
-            // thing that shows a limits refresh landing while the panel is open.
-            // Inside the watching window it also *asks* for the next reading;
-            // past it the panel goes back to only showing what arrives, because
-            // a panel left open is not the same thing as somebody watching it.
-            if Self.tick(
-                isVisible: true, openFor: openedAt.map { ContinuousClock().now - $0 }) == .watch
-            {
-                await model.watchUsage()
-            } else {
-                await model.refreshUsage()
-            }
-            // The panel is a live list in a borderless window, which does not
-            // resize itself to its content. A row appearing or leaving changes
-            // the height, so the open clock re-measures as well as re-reads.
-            if let button = statusItem?.button { panel?.reposition(under: button) }
-        } else {
-            // Nothing else retires a session whose agent died — and the power
-            // assertion in step 08 depends on that happening.
-            await model.sweepAndRefresh()
-        }
-        statusItem?.update(from: model.snapshot)
-    }
-
     func refresh(includingIntegrations: Bool) async {
         if includingIntegrations { await model.refreshIntegrations() }
         await model.refreshSnapshot()
@@ -381,6 +369,7 @@ public final class MenuBarController {
     /// avoids a frame of both being on screen.
     public func showSettings() {
         panel?.hide()
+        model.isOnScreen = false
         openedAt = nil
         scheduleTimer(open: false)
         settingsWindow.show()
@@ -395,6 +384,9 @@ public final class MenuBarController {
     /// immediately, which reads as the click having done nothing.
     public func revealPanel() {
         NSApp.activate()
+        // Unlike a click on the status item, this one is an explicit request for
+        // the panel, so the flow gets out of the way rather than swallowing it.
+        if onboardingPanel?.isVisible == true { endOnboarding() }
         openTakingKeyFocus()
     }
 }

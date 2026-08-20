@@ -109,12 +109,20 @@ nonisolated public enum ColorToken: String, CaseIterable, Sendable {
 /// The two gradient stops the notification attachment art is built from.
 ///
 /// **No new base token.** Each pair is one existing `ColorToken`'s *light*
-/// value moved ±12 % in OKLCH lightness, hue and chroma untouched — so an event
-/// square, the row tint for the state it announces, and the settings matrix's
-/// indicator are all visibly the same colour. The rule is written down here
-/// rather than left in a design document because it is what makes these
-/// regenerable: move a base token and these four pairs move with it, by
-/// applying that one transformation again.
+/// value moved ±12 % in OKLCH lightness, hue and chroma untouched. The rule is
+/// written down here rather than left in a design document because it is what
+/// makes these regenerable: move a base token and these four pairs move with it,
+/// by applying that one transformation again.
+///
+/// > **The colour is the event's, not the announced state's.** An event square
+/// > and the settings matrix's indicator for that event always agree, because
+/// > both read this table. They do **not** always agree with the row tint for
+/// > the state the event announces, and one pair diverges on purpose:
+/// > `question` and `waiting` both announce `SessionStateKind.waiting`, whose
+/// > accent is amber, and the design gives `Question` amber and `Waiting` blue —
+/// > a specific question and a bare block are different news and are worth
+/// > telling apart at a glance. Do not "fix" `waiting` back to `stateWaiting`;
+/// > that would make the two squares differ only in silhouette.
 ///
 /// > **Both stops are derived from the light appearance, and that is not an
 /// > oversight.** An attachment is a file the notification centre copies into

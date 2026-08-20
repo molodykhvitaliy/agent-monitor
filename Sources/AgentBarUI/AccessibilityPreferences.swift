@@ -108,4 +108,19 @@ public final class AccessibilityPreferences {
 extension EnvironmentValues {
     /// Passed down rather than read per view, so one observer serves the panel.
     @Entry public var accessibilityPreferences = AccessibilityPreferences.shared
+
+    /// Whether the surface this view is in is actually on screen.
+    ///
+    /// > **The last of the motion rules, made enforceable.** *Nothing animating
+    /// > while its surface is closed* — and the panel is `orderOut`, not
+    /// > destroyed, so its whole SwiftUI tree survives a dismissal with every
+    /// > `repeatForever` in it still attached. Whether AppKit suspends the
+    /// > render loop for a hidden borderless `NSPanel` is a framework behaviour
+    /// > this project cannot assert, so the cycles are gated on a fact it owns
+    /// > instead of on an assumption about one it does not.
+    ///
+    /// Defaults to `true`: a host that has not wired it — a preview, a render
+    /// proof, a test — should see the designed appearance rather than a silently
+    /// frozen one.
+    @Entry public var surfaceIsOnScreen = true
 }

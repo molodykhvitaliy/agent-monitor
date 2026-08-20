@@ -173,6 +173,22 @@ struct PanelTreatmentLayoutTests {
                 == Self.host(Self.panel(idle)).fittingSize.height)
     }
 
+    /// The two repeating indicators in the panel read this, so a panel that
+    /// starts life believing it is on screen would run both behind a window
+    /// nobody has opened yet.
+    @Test("A fresh panel does not believe it is on screen")
+    func visibilityStartsFalse() {
+        #expect(!PanelModel(services: StubServices()).isOnScreen)
+    }
+
+    /// The default is the other way round on purpose: a host that has not wired
+    /// the flag — a preview, a render proof, a test — should see the designed
+    /// appearance rather than a silently frozen one.
+    @Test("A view with nobody driving it animates")
+    func environmentDefaultRuns() {
+        #expect(EnvironmentValues().surfaceIsOnScreen)
+    }
+
     /// The hairline is the one addition that is *meant* to change a row's
     /// height, and only for the state that earns it.
     @Test("Only a working row carries the progress hairline")

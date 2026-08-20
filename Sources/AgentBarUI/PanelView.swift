@@ -84,6 +84,9 @@ public struct PanelView: View {
         // on the decision, never on a measurement — this panel has already paid
         // once for publishing a wobbling `CGFloat` out of layout.
         .animation(accessibility.rowAnimation, value: model.isAnyoneWaiting)
+        // Read by the working hairline and the all-quiet rings, so neither keeps
+        // a cycle running behind a dismissed panel.
+        .environment(\.surfaceIsOnScreen, model.isOnScreen)
     }
 
     /// Reduce Transparency replaces the material with a flat `surface` fill at
@@ -202,11 +205,20 @@ public struct PanelView: View {
 /// The resting state, and it must feel calm rather than broken.
 public struct EmptyStateView: View {
     @Environment(\.accessibilityPreferences) private var accessibility
-    /// Static at mid-coverage under Reduce Motion, which is why this starts
-    /// `false` and is only raised on appearance if motion is allowed.
+    @Environment(\.surfaceIsOnScreen) private var isOnScreen
     @State private var breathing = false
 
     public init() {}
+
+    /// Whether the cycle may run at all. Both halves are live: Reduce Motion can
+    /// be switched while the panel is open, and the panel can be dismissed
+    /// without the view being destroyed.
+    private var runsCycle: Bool { accessibility.runsCyclicalMotion && isOnScreen }
+
+    /// The value the animation is keyed on. It includes `runsCycle`, so turning
+    /// motion back on restarts the cycle rather than leaving it parked at
+    /// whichever end it stopped at.
+    private var isBreathing: Bool { runsCycle && breathing }
 
     public var body: some View {
         VStack(spacing: 0) {
@@ -233,16 +245,16 @@ public struct EmptyStateView: View {
             // the un-animated appearance — Reduce Motion, an offscreen render,
             // a frame before `onAppear` — is the rings as they were designed
             // rather than a dimmed version of them.
-            .opacity(breathing ? 0.55 : 1)
+            .opacity(isBreathing ? 0.55 : 1)
             .animation(
-                accessibility.runsCyclicalMotion
+                runsCycle
                     ? DesignTokens.Motion.animation(
                         DesignTokens.Motion.breathe, DesignTokens.Motion.cycle
                     ).repeatForever(autoreverses: true)
                     : nil,
-                value: breathing
+                value: isBreathing
             )
-            .onAppear { breathing = accessibility.runsCyclicalMotion }
+            .onAppear { breathing = true }
             .accessibilityHidden(true)
             .padding(.bottom, DesignTokens.Empty.ringsToText)
 

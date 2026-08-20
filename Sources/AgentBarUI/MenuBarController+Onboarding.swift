@@ -24,7 +24,14 @@ extension MenuBarController {
         let controller = PanelController(
             content: OnboardingView(
                 model: onboarding,
-                onOpenSettings: { [weak self] in self?.showSettings() }
+                // Ends the flow **without** opening the panel: the user asked
+                // for the settings window, and a panel flashing open behind it
+                // on the way there is the app answering a question nobody asked.
+                onOpenSettings: { [weak self] in
+                    guard let self else { return }
+                    self.endOnboarding()
+                    self.showSettings()
+                }
             )
             .environment(\.accessibilityPreferences, AccessibilityPreferences.shared),
             width: OnboardingView.width,
@@ -59,10 +66,21 @@ extension MenuBarController {
         startOnboardingWatch()
     }
 
-    /// Re-reads the install reports while an install step is showing.
+    /// Re-reads what is true while a step that can change from outside the app
+    /// is showing.
     ///
-    /// Bounded twice over: it only runs while the flow's panel is up, and it
-    /// only asks on the two steps whose answer can change from outside the app.
+    /// Bounded twice over: it only runs while the flow's panel is up, and only
+    /// on the steps whose answer somebody can change elsewhere.
+    ///
+    /// > **The notification step is one of them, and leaving it out was a
+    /// > defect.** Its `.denied` branch offers **Open System Settings**, which
+    /// > is the documented recovery from a refusal — and the flow's panel does
+    /// > not close while the user is away, because `hidesOnDeactivate` is false
+    /// > and it never became key. Without a tick here they come back to a step
+    /// > still saying *Denied in System Settings*, with Back-then-Next as the
+    /// > only way to refresh and nothing to say so. `SettingsModel.refresh`
+    /// > guards the identical case at length; this is where a first-time user
+    /// > actually meets it.
     func startOnboardingWatch() {
         onboardingWatch?.cancel()
         onboardingWatch = Task { [weak self] in
@@ -70,9 +88,26 @@ extension MenuBarController {
                 try? await Task.sleep(for: Self.onboardingWatchInterval)
                 guard let self, !Task.isCancelled else { return }
                 guard self.onboardingPanel?.isVisible == true else { return }
-                guard self.onboarding.step.provider != nil else { continue }
+                guard Self.watches(self.onboarding.step) else { continue }
                 await self.onboarding.refresh()
             }
+        }
+    }
+
+    /// Whether a step's answer can move without the user touching this surface.
+    ///
+    /// A pure decision so it can be tested — the controller itself needs a real
+    /// status bar, and no test builds one.
+    static func watches(_ step: OnboardingStep) -> Bool {
+        switch step {
+        // An installer run in a terminal, or Codex's own trust prompt.
+        case .claudeCode, .codex: true
+        // System Settings › Notifications, which this step sends people to.
+        case .notifications: true
+        // Nothing outside the app changes what these two say.
+        case .welcome: false
+        // The summary is re-read on entry and the flow ends here.
+        case .done: false
         }
     }
 

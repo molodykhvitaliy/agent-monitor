@@ -302,14 +302,21 @@ final class NotificationSettingsBridge: SettingsServices {
     }
 }
 
-/// Renders each event's attachment square once and keeps it on disk for the
-/// notification centre to attach.
+/// Renders each event's attachment square once and hands the notification centre
+/// a fresh file every time it asks.
 ///
-/// The directory is Caches, which is chosen for it by the app assembly: the art
-/// is derived and re-creatable, and it has to be, because
-/// `UNNotificationAttachment` **moves** the file it is given into the
-/// notification's own storage. Every square is consumed by its first use and
-/// rendered again on the next.
+/// > **The cache is the bytes, not the file, and that is the whole design.**
+/// > `UNNotificationAttachment` **moves** the file it is given into the
+/// > notification's own storage, so a cache keyed on "does the file still exist"
+/// > misses on every send after the first — and the thing it would then redo is
+/// > a 512 × 512 `ImageRenderer` pass plus a TIFF → bitmap → PNG round trip, on
+/// > the main actor, inside `NotificationRouter.flush()`'s loop. A coalescing
+/// > window that drains four drafts would pay four of them back to back while
+/// > the panel and the status item wait. Rendering happens once per event per
+/// > launch; the per-send cost is a write.
+///
+/// The directory is Caches, chosen by the app assembly: the art is derived and
+/// re-creatable, which it has to be for the same reason.
 ///
 /// The other half of the vocabulary join this file exists for:
 /// `AgentBarNotifications` names an event, `AgentBarUI` names a verb, and
@@ -320,25 +327,20 @@ final class EventAttachments: NotificationAttachmentProviding {
         subsystem: "com.molodykhvitalii.AgentBar", category: "notifications")
 
     private let directory: URL
+    /// The rendered PNG per event, for the life of the process.
+    private var rendered: [NotificationEvent: Data] = [:]
 
     init(directory: URL) {
         self.directory = directory
     }
 
-    /// A file URL for the event's art, rendering it if the last one was
-    /// consumed.
+    /// A file URL for the event's art, written fresh from the cached bytes.
     ///
     /// Returns `nil` on any failure, which is a supported outcome rather than an
     /// error: the notification then names the provider in its title instead.
     func attachmentURL(for event: NotificationEvent) -> URL? {
+        guard let png = art(for: event) else { return nil }
         let url = directory.appending(path: "event-\(event.rawValue).png")
-        if FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) { return url }
-        guard let png = EventAttachmentImage.png(for: NotificationSettingsBridge.verb(for: event))
-        else {
-            Self.logger.error(
-                "event art could not be rendered: \(event.rawValue, privacy: .public)")
-            return nil
-        }
         do {
             try FileManager.default.createDirectory(
                 at: directory, withIntermediateDirectories: true)
@@ -348,5 +350,17 @@ final class EventAttachments: NotificationAttachmentProviding {
             Self.logger.error("event art could not be written: \(error, privacy: .public)")
             return nil
         }
+    }
+
+    private func art(for event: NotificationEvent) -> Data? {
+        if let cached = rendered[event] { return cached }
+        guard let png = EventAttachmentImage.png(for: NotificationSettingsBridge.verb(for: event))
+        else {
+            Self.logger.error(
+                "event art could not be rendered: \(event.rawValue, privacy: .public)")
+            return nil
+        }
+        rendered[event] = png
+        return png
     }
 }

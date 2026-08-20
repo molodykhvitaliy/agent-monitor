@@ -81,6 +81,12 @@ public final class PanelModel {
     /// Set when the footer status is pressed: the card in place of the list,
     /// reachable at any time and not only on first run.
     public var showsIntegrationCard = false
+    /// Whether the panel is actually on screen.
+    ///
+    /// Owned by whoever shows and hides the window, and read by the two
+    /// repeating indicators in the panel so neither runs behind a dismissal.
+    /// A `Bool` that changes twice per open — nothing here is on a clock.
+    public var isOnScreen = false
 
     @ObservationIgnored private let services: any PanelServices
 

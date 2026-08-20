@@ -1,5 +1,7 @@
 import AgentBarCore
+import AppKit
 import Foundation
+import SwiftUI
 import Testing
 
 @testable import AgentBarUI
@@ -291,5 +293,55 @@ struct OnboardingTests {
             #expect(step.facts.contains { $0.contains("~/") }, "\(step) names no file")
             #expect(step.subtitle != nil, "\(step) does not say it is reversible")
         }
+    }
+}
+
+/// What a click on the status item means, which is the one rule the first-run
+/// flow adds to a surface that already had three.
+@MainActor
+@Suite("Status item activation")
+struct ActivationTests {
+
+    /// Without this the click falls through to the panel and opens it **on top
+    /// of** the flow: a click on the status item is exempt from the panel's
+    /// dismissal monitor, and that exemption is what makes the item a toggle.
+    @Test("A click while the first-run flow is up dismisses the flow")
+    func onboardingSwallowsTheClick() {
+        #expect(
+            MenuBarController.activation(
+                isOpening: false, onboardingIsVisible: true, panelIsVisible: false)
+                == .dismissOnboarding)
+        // And it does not matter what the panel believes it is doing.
+        #expect(
+            MenuBarController.activation(
+                isOpening: false, onboardingIsVisible: true, panelIsVisible: true)
+                == .dismissOnboarding)
+    }
+
+    /// An open in flight outranks everything: the app is LSUIElement and Quit
+    /// lives only in the panel's footer, so a click that is silently dropped is
+    /// an app that can be neither opened nor closed.
+    @Test("An open in flight is cancelled rather than queued or dropped")
+    func openInFlightWins() {
+        for onboarding in [true, false] {
+            for panel in [true, false] {
+                #expect(
+                    MenuBarController.activation(
+                        isOpening: true, onboardingIsVisible: onboarding,
+                        panelIsVisible: panel) == .cancelOpen)
+            }
+        }
+    }
+
+    @Test("Otherwise the item is a plain toggle")
+    func plainToggle() {
+        #expect(
+            MenuBarController.activation(
+                isOpening: false, onboardingIsVisible: false, panelIsVisible: true)
+                == .closePanel)
+        #expect(
+            MenuBarController.activation(
+                isOpening: false, onboardingIsVisible: false, panelIsVisible: false)
+                == .openPanel)
     }
 }
