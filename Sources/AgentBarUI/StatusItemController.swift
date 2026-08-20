@@ -112,6 +112,14 @@ public final class StatusItemController {
             if isHighlighted { button.highlight(true) }
         }
 
+        // Unconditional, and cheap: `refreshAnimation` returns immediately when
+        // the timer is already in the state it wants. This is what re-arms the
+        // pulse after `isOnScreen` has gone false and come back — the item
+        // returning to the bar posts no notification this class observes, and
+        // the alternative is a waiting glyph that never pulses again until the
+        // aggregate state happens to move.
+        refreshAnimation()
+
         // Checked separately: the sentence names a project, so it moves when the
         // glyph does not.
         let description = StatusItemLabel.describe(snapshot)
