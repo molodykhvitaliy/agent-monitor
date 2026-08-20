@@ -63,7 +63,11 @@ final class StubSettingsServices: SettingsServices {
     func addSoundFile() async -> SoundImportResult? { importResult }
     func revealSoundsFolder() {}
     func permission() async -> NotificationPermission { permissionState }
+    /// Counted, because "never re-prompt after a refusal" is a rule about how
+    /// many times this is called and not about what it returns.
+    private(set) var permissionRequests = 0
     func requestPermission() async -> NotificationPermission {
+        permissionRequests += 1
         permissionState = .granted
         return permissionState
     }

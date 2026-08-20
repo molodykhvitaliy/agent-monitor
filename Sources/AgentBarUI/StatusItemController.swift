@@ -55,6 +55,16 @@ public final class StatusItemController {
     /// The anchor a panel positions itself against.
     public var button: NSStatusBarButton? { statusItem.button }
 
+    /// Draws the item as if a menu were open under it.
+    ///
+    /// Held for the whole of the first-run flow, and for nothing else. It is the
+    /// entire pedagogy of that flow: a Dock-less app's first job is teaching
+    /// where it lives, and a lit item with a panel hanging off it says that
+    /// before any copy is read.
+    public func setHighlighted(_ isHighlighted: Bool) {
+        statusItem.button?.highlight(isHighlighted)
+    }
+
     /// Removes the item from the menu bar. Present so teardown is explicit
     /// rather than a side effect of deallocation.
     public func remove() {

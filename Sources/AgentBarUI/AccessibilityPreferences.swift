@@ -87,6 +87,15 @@ public final class AccessibilityPreferences {
             : DesignTokens.Motion.animation(DesignTokens.Motion.rise, .easeOut)
     }
 
+    /// The delay before the nth item of a staggered entrance, in seconds.
+    ///
+    /// Zero under Reduce Motion, which turns a stagger into a single
+    /// cross-fade — the rule lives here so a view never multiplies an index by
+    /// a duration and forgets the exception.
+    public func stagger(_ index: Int, by step: Duration = .milliseconds(70)) -> Double {
+        reduceMotion ? 0 : Double(index) * step.seconds
+    }
+
     /// Whether a repeating indicator should run **at all**.
     ///
     /// Not "should it be slower": a cyclical animation under Reduce Motion is

@@ -12,7 +12,7 @@ import SwiftUI
 /// | Signal | Carries | Latency |
 /// |---|---|---|
 /// | Push, from the ingest boundary | every state move an event caused | immediate |
-/// | Timer, panel open, 1 s | the durations ticking | 1 s |
+/// | Timer, panel open, 1 s | `sweep()`, then the durations ticking | 1 s |
 /// | Timer, panel closed, 45 s | `sweep()`, then a reading | up to a minute |
 ///
 /// Push is not an optimisation: without it a waiting agent — the one signal the
@@ -81,10 +81,29 @@ public final class MenuBarController {
         return .watch
     }
 
+    /// How often the first-run flow re-reads the install reports while an
+    /// install step is on screen.
+    ///
+    /// A user who runs the installer in a terminal, or answers Codex's own trust
+    /// prompt, has to see the step flip without pressing anything here — and
+    /// nothing pushes an install report, because it is a file on disk. Three
+    /// seconds is fast enough to feel live on a surface measured in a minute,
+    /// and it runs **only** while that surface is up.
+    static let onboardingWatchInterval: Duration = .seconds(3)
+
     private let model: PanelModel
+    /// Reached by `MenuBarController+Onboarding`.
+    private(set) var onboarding: OnboardingModel
     private let settingsWindow: SettingsWindowController
-    private var statusItem: StatusItemController?
+    /// Reached by `MenuBarController+Onboarding`.
+    private(set) var statusItem: StatusItemController?
     private var panel: PanelController?
+    /// The first-run flow's own panel, built only if the flow is going to run.
+    /// Reached by `MenuBarController+Onboarding`.
+    var onboardingPanel: PanelController?
+    /// Polls the install reports while the flow is showing, and only then.
+    /// Reached by `MenuBarController+Onboarding`.
+    var onboardingWatch: Task<Void, Never>?
     private var timer: Timer?
     private var pushPending = false
     private var screenObserver: NSObjectProtocol?
@@ -112,12 +131,21 @@ public final class MenuBarController {
     private var openedAt: ContinuousClock.Instant?
 
     /// Two seams rather than one: the panel and the settings window need
-    /// different things from the assembly, and a single protocol carrying both
-    /// would make every panel test declare a sound matrix it does not use.
-    public init(services: any PanelServices, settings: any SettingsServices) {
+    /// different things from the assembly.
+    public init(
+        services: any PanelServices,
+        settings: any SettingsServices,
+        onboardingState: OnboardingState = OnboardingState()
+    ) {
         model = PanelModel(services: services)
+        onboarding = OnboardingModel(
+            panel: services, settings: settings, state: onboardingState)
+        self.onboardingState = onboardingState
         settingsWindow = SettingsWindowController(model: SettingsModel(services: settings))
     }
+
+    /// Reached by `MenuBarController+Onboarding`.
+    private(set) var onboardingState: OnboardingState
 
     public func start() {
         let statusItem = StatusItemController { [weak self] button, takingKeyFocus in
@@ -151,6 +179,10 @@ public final class MenuBarController {
 
         scheduleTimer(open: false)
         Task { await refresh(includingIntegrations: true) }
+        // Last, and deliberately: the flow anchors to the status item, so the
+        // item has to exist, and it reads install reports, so the panel's own
+        // first read is already in flight beside it.
+        if OnboardingModel.shouldRun(onboardingState) { showOnboarding() }
     }
 
     public func stop() {
@@ -159,6 +191,10 @@ public final class MenuBarController {
         // the timer it just invalidated.
         openTask?.cancel()
         openTask = nil
+        onboardingWatch?.cancel()
+        onboardingWatch = nil
+        onboardingPanel?.hide()
+        onboardingPanel = nil
         openedAt = nil
         timer?.invalidate()
         timer = nil
@@ -211,7 +247,7 @@ public final class MenuBarController {
 
     // MARK: - Opening
 
-    private func toggle(from button: NSStatusBarButton, takingKeyFocus: Bool) {
+    func toggle(from button: NSStatusBarButton, takingKeyFocus: Bool) {
         guard let panel else { return }
         if let openTask {
             // An open is already in flight. Abandon it rather than queue a
@@ -296,7 +332,17 @@ public final class MenuBarController {
             case .watch, .show:
                 break
             }
-            await model.refreshSnapshot()
+            // **Sweeping, not only reading.** The open clock used to re-read the
+            // store and leave the retiring to the closed clock, which does not
+            // run while the panel is up — so a session the watchdog had given up
+            // on stayed on the list, reading `Unknown`, for as long as somebody
+            // left the panel open. `unknown` is derived on every read, so the
+            // row was always *labelled* correctly; what never happened was it
+            // leaving. A sweep is a walk over the live records and an actor hop,
+            // which is affordable at this cadence precisely because
+            // [ADR-0012](../../docs/adr/ADR-0012-a-finished-session-is-retired-not-doubted.md)
+            // keeps that list short.
+            await model.sweepAndRefresh()
             // Cheap enough for this clock — an actor hop, no disk — and the only
             // thing that shows a limits refresh landing while the panel is open.
             // Inside the watching window it also *asks* for the next reading;
@@ -321,7 +367,7 @@ public final class MenuBarController {
         statusItem?.update(from: model.snapshot)
     }
 
-    private func refresh(includingIntegrations: Bool) async {
+    func refresh(includingIntegrations: Bool) async {
         if includingIntegrations { await model.refreshIntegrations() }
         await model.refreshSnapshot()
         statusItem?.update(from: model.snapshot)
@@ -343,11 +389,10 @@ public final class MenuBarController {
     /// Opens the panel because the user clicked a notification.
     ///
     /// Taking key focus, and activating: clicking a banner is an explicit
-    /// request to look at AgentBar, the same kind of request as pressing the
-    /// gear. Without `NSApp.activate` a `.nonactivatingPanel` opened from an
-    /// inactive accessory app can fail to become key — and `windowDidResignKey`
-    /// would then close it again immediately, which reads as the click having
-    /// done nothing.
+    /// request to look at AgentBar. Without `NSApp.activate` a
+    /// `.nonactivatingPanel` opened from an inactive accessory app can fail to
+    /// become key — and `windowDidResignKey` would then close it again
+    /// immediately, which reads as the click having done nothing.
     public func revealPanel() {
         NSApp.activate()
         openTakingKeyFocus()

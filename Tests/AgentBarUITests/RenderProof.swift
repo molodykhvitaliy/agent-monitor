@@ -129,6 +129,46 @@ struct RenderProof {
         return strip
     }
 
+    /// Every step of the first run, in both appearances. The one surface with
+    /// no other way to be looked at: it shows once, on a machine that has never
+    /// run the app.
+    @Test("The five onboarding steps")
+    func renderOnboarding() async throws {
+        for step in OnboardingStep.allCases {
+            let model = await Self.onboardingModel(at: step)
+            for dark in [false, true] {
+                guard
+                    let image = RenderOutput.snapshot(
+                        OnboardingView(model: model, onOpenSettings: {})
+                            .environment(
+                                \.accessibilityPreferences, AccessibilityPreferences.shared),
+                        dark: dark)
+                else { continue }
+                try RenderOutput.write(
+                    image,
+                    to: "onboarding-\(step.number)-\(step.rawValue)"
+                        + (dark ? "-dark" : "-light"))
+            }
+        }
+    }
+
+    /// A flow parked on one step, with a half-finished install behind it —
+    /// Claude Code connected and Codex installed but not trusted, which is the
+    /// state that exercises every branch of the two install steps at once.
+    private static func onboardingModel(at step: OnboardingStep) async -> OnboardingModel {
+        let panel = StubServices()
+        panel.storedStatuses = [
+            UIFixture.status(.claudeCode, .connected),
+            UIFixture.status(.codex, .notTrusted),
+        ]
+        let model = OnboardingModel(
+            panel: panel, settings: StubSettingsServices(),
+            state: OnboardingState(defaults: UserDefaults(suiteName: "render") ?? .standard))
+        await model.refresh()
+        while model.step != step, model.step != .done { await model.next() }
+        return model
+    }
+
     /// The four squares a banner can carry, at the size they are generated and
     /// again with the colour taken out — because the rule they have to obey is
     /// "silhouette first", and a colour render cannot show whether they do.
