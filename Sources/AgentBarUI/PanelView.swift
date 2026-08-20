@@ -228,7 +228,12 @@ public struct EmptyStateView: View {
             // rather than broken, and the one thing that separates "nothing is
             // running" from "the app has stopped" is a sign that something is
             // still watching.
-            .opacity(breathing ? 1 : 0.55)
+            //
+            // The cycle dips *from* the full value rather than rising to it, so
+            // the un-animated appearance — Reduce Motion, an offscreen render,
+            // a frame before `onAppear` — is the rings as they were designed
+            // rather than a dimmed version of them.
+            .opacity(breathing ? 0.55 : 1)
             .animation(
                 accessibility.runsCyclicalMotion
                     ? DesignTokens.Motion.animation(

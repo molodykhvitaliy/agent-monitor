@@ -96,8 +96,11 @@ struct PointerToTheMenuBar: View {
                     Circle()
                         .fill(ColorToken.stateWorking.color.opacity(0.14))
                         .frame(width: Self.markSize, height: Self.markSize)
-                        .scaleEffect(breathing ? 1 : 0.86)
-                        .opacity(breathing ? 1 : 0.55)
+                        // Dips from the full value rather than rising to it, so
+                        // the un-animated halo is the designed one and not a
+                        // shrunken, faded version of it.
+                        .scaleEffect(breathing ? 0.86 : 1)
+                        .opacity(breathing ? 0.55 : 1)
                     AgentGlyphView(state: .working, size: 22)
                 }
                 .animation(
