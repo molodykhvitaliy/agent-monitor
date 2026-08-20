@@ -404,8 +404,25 @@ the same units with a preposition: `resets in 2h 10m`, `resets in 3d`.
 
 ### Limits
 
-Section label `Limits`, then Codex's windows, then the Claude Code row. Section
-padding 0 top / 16 sides / 10 bottom, label margin 8 below.
+Section label `Limits`, then one **group per provider**: Codex's windows, then
+the Claude Code note. Section padding 0 top / 16 sides / 10 bottom, label margin
+8 below, 12 between one provider's group and the next.
+
+**Every group is headed by its provider.** A 16 pt provider badge, a 6 pt gap,
+then the provider's `displayName` in Row title / `ink900`; what sits under the
+heading is indented 22 to line up with the heading's text rather than its badge.
+Header to first row, 6.
+
+> **Why the heading exists.** Step 11. The section rendered a bare `Weekly` with
+> a bar under it and nothing saying whose week it was — a question the panel
+> simply refused to answer once both providers were installed, and the one that
+> matters most in the case the section exists for: a bar close to full tells you
+> nothing until you know which subscription is nearly spent.
+
+Order is fixed at **Codex, then Claude Code** — the half with numbers first, and
+the note about the other half last, where a note belongs. It is a presentation
+order and deliberately not `Provider.allCases`, which is alphabetical by
+accident.
 
 **Codex** — a **repeating** component. Render one row per window the App Server
 returned: one, two, or more. Never a fixed two-slot layout.
@@ -424,14 +441,26 @@ Every field is optional and degrades by **omission**, never by a placeholder:
   `Resets in 2h 10m`;
 - reset missing → meta is a bare `34%`, with the separator dropped too;
 - name missing → `Usage`;
-- no windows at all → the Codex part of the section is absent. It is not an
-  error and gets no error styling.
+- no windows at all → the Codex group is absent, **heading included**. It is not
+  an error and gets no error styling, and a heading over nothing would be a
+  fault report the section is not making.
 
-**Claude Code** — one quiet row, the lowest-emphasis element in the panel. Whole
-row at 70 % opacity, a 13 pt `ⓘ` outline glyph, an 8 pt gap, then Caption in
-`ink400`:
+Readings are taken at launch, when a turn finishes, on a ten-minute interval, and
+**while the panel is open** — the last spaced to a minute and stopping after
+five, because a window left up is not the same thing as a person watching it.
+Every read is the user's own `codex` making a request against their own account,
+so the cadence is a decision rather than a setting:
+[ADR-0011](../adr/ADR-0011-limits-are-read-when-someone-is-looking.md) holds it,
+and none of it tightens without going back through
+[tos-boundary.md](tos-boundary.md).
 
-> Claude Code doesn't report remaining quota
+**Claude Code** — the heading, then one quiet row. The whole group, heading
+included, at 70 % opacity: it is the lowest-emphasis thing in the panel, and a
+full-emphasis heading over a permanent "nothing here" would give the half with
+no numbers more weight than the half with them. A 13 pt `ⓘ` outline glyph, an
+8 pt gap, then Caption in `ink400`:
+
+> Not supported — remaining quota isn't reported
 
 The `ⓘ` reveals one sentence:
 
@@ -440,10 +469,39 @@ The `ⓘ` reveals one sentence:
 
 Accessibility label on the glyph: `About Claude Code limits`.
 
+The Claude Code group is the one that never disappears — it has no windows and
+never will, and the note is part of the section rather than a fault — which is
+why *All quiet* still has a Limits section.
+
 No bar, no zero, no error colour, no retry, and **no log line** — this is
 permanent correct behaviour, not a fault (ADR-0002). Present tense throughout;
-nothing in the copy may read as a transient outage. `Unknown` in particular is
-reserved for session state and must not be reused here.
+nothing in the copy may read as a transient outage. **`Not supported`, never
+`not supported yet`**: there is no version of Claude Code this is waiting for.
+`Unknown` in particular is reserved for session state and must not be reused
+here. The provider's name is carried by the heading and not repeated in the
+sentence under it.
+
+### Opening and closing
+
+The status item is a **toggle**: the first click opens the panel, the second
+closes it. That needs saying because it is not what falls out of the obvious
+implementation. Two handlers see a click on the status item — the global mouse
+monitor that dismisses the panel when the user clicks away, and the button's own
+action — and the monitor runs first, on mouse-down. Left alone it closes the
+panel, the action then finds it closed, and opens it again: a toggle that only
+ever opens. The rule is that **a click on the status item belongs to the status
+item**, and the monitor ignores it.
+
+Everything else closes the panel: a click anywhere outside it and, **on the
+keyboard path only**, Escape or losing key status. Both of those reach the panel
+through the key window's responder chain, and a panel opened by a click is
+deliberately never key — so on the mouse path a click away is the whole of it.
+
+One exception on the keyboard path, for the same reason as above: a resignation
+that happens while the pointer is over the status item is ignored, or clicking
+the icon to close a panel opened from a notification would hide it and let the
+button reopen it. The cost is that ⌘-Tab with the pointer parked on the icon
+leaves the panel up, which one more click closes.
 
 ### Footer
 
@@ -822,6 +880,75 @@ may break when they appear.
 delivery, failure to render — may ever resolve into granting a permission. This
 applies pre-emptively to those reserved buttons.
 
+### The sound set
+
+Four files in the bundle root, one per verb, and they are the defaults the matrix
+ships with. They are a designed set rather than four unrelated chimes: one voice,
+one register, and an interval that carries the meaning.
+
+| File | Interval | Length | Verb |
+|---|---|---|---|
+| `AgentBar Question.aiff` | D4 → G4, a fourth **up** | 560 ms | Question — a question rises |
+| `AgentBar Waiting.aiff` | G4 → E4, a minor third down | 509 ms | Waiting |
+| `AgentBar Finished.aiff` | G4 → C4 with a sub C3 | 718 ms | Finished — a resolution, and the only one with weight under it |
+| `AgentBar Failed.aiff` | C4 → A♭3 | 450 ms | Failed |
+
+48 kHz, 24-bit, mono, Linear PCM, peak −3 dBFS, and the four sit within 0.4 dB
+of each other in RMS so no one event is louder than the rest by accident. Under
+1.1 % of each one's energy lives in the 2–5 kHz band the ear is sharpest in,
+which is what keeps a notification that fires twenty times a day from becoming
+the reason the feature gets turned off.
+
+**AIFF rather than the authored WAV**, converted losslessly — the PCM is
+bit-identical, byte order and container aside. `/System/Library/Sounds/Glass.aiff`
+is 48 kHz 24-bit AIFF, so this is the format macOS itself ships notification
+sounds in; and keeping the file *names* unchanged means a stored selection from
+an earlier build still resolves, which a change of extension would have broken
+silently — a missing sound plays as the system default with no diagnostic
+([ADR-0006](../adr/ADR-0006-notification-sounds-are-files-agentbar-can-resolve.md)).
+
+**Per-event volume offsets are not implementable and are not applied.**
+`UNNotificationSound` takes a file name and nothing else — no volume — so the
+files ship at the level they were authored at. Applying an offset in
+`SoundPreview` alone would be worse than not applying one: the audition would
+stop matching the notification, which is the one thing the play button exists to
+prove.
+
+---
+
+## The app icon
+
+A network of three agent nodes: two calm ones at the base, one at the apex inside
+a soft pulse ring — the one that needs you. It reads as *connected agents* and as
+*monitoring* at once, which is the product in one glyph. Original work; no
+third-party brand asset is used or referenced.
+
+Geometry, in a 200 × 200 box, mirror-symmetric about `x = 100` and to be kept
+that way in any redraw:
+
+| Element | Value |
+|---|---|
+| Base nodes | circles at (55, 130) and (145, 130), r 17 |
+| Apex node | circle at (100, 55), r 21, `stateWorking` blue `#407CC5` — the same token as the Working state, reused on purpose |
+| Pulse ring | circle at (100, 55), r 30, stroke 3, `#6AA7F4` at 50 % |
+| Edges | (55,130)→(100,55), (145,130)→(100,55), (55,130)→(145,130), stroke 9, round caps |
+| Tile | dark, `#22272C` → `#05080B` |
+
+**It is a layered Icon Composer document, not a bitmap.** macOS 26 renders an
+icon in light, dark, tinted and clear appearances and applies its own depth and
+specular pass; a flat `.icns` is pasted into all four unchanged. `AgentBar.icon`
+gives the system the tile fill and two layers — the accent apex in front, the
+white network behind — and lets it do the rest. Everything about the document's
+layout, including the two ways it fails silently, is in
+[platform-integration.md §8](platform-integration.md).
+
+The colour lives only in the apex node, so the mark survives the tinted and mono
+appearances as a shape rather than as a picture of one.
+
+The **menu-bar status glyph is a separate asset** and is not derived from this
+mark. It was drawn standalone for legibility at 16 pt monochrome, and it carries
+state, which the app icon never does.
+
 ---
 
 ## Settings window
@@ -849,7 +976,32 @@ in would be worse than the focus rule it would be honouring. Closing it calls
 `NSApp.hide` — otherwise an accessory app is left active with nothing on screen
 and every keystroke going nowhere.
 
-Minimum 560 × 520, opening at 620 × 620, resizable.
+Opens at 720 × 640, resizable, and **never larger than the screen it opens on**.
+The resize minimum is 638 × 420, and it is **derived** — from what the matrix
+needs at every provider the domain has, plus the grouped form's own insets —
+rather than chosen beside it. It scrolls vertically; it never scrolls horizontally.
+
+> **Step 11: it opened 620 wide around a form that could not be drawn narrower
+> than 710.** SwiftUI does not refuse that. It lays the form out at 710 anyway,
+> centred, and the 45 pt hanging off each side is clipped — no horizontal
+> scroller, no diagnostic. What the user saw was a settings window with the verb
+> labels cut off the left edge. The 620 × 620 in the line above used to read
+> "minimum 560 × 520, opening at 620 × 620", and it was right when it was
+> written: the matrix had **one** column. Step 09 added the second and nothing
+> re-measured the window it had to fit in.
+>
+> Two changes close it and they are independent. The opening width and the
+> resize minimum are computed from `NotificationMatrixView.minimumWidth(_:)`, so
+> the window cannot be smaller than the form it holds; and the matrix's provider
+> columns compress, so a narrower window would squeeze rather than clip.
+> `SettingsWindowSizingTests` pins the relationship by asking SwiftUI what the
+> form's minimum actually is — the only way to observe it, since an overflow
+> reports nothing.
+>
+> Sizing is also **clamped to `NSScreen.visibleFrame`** and re-measured on every
+> showing rather than only the first. Nothing forced this window off the display
+> before, but nothing stopped it either, and a Mac undocked from an external
+> monitor would otherwise reopen a window larger than the screen it is now on.
 
 ### Sections, in order
 
@@ -876,6 +1028,14 @@ for notifications that cannot arrive, which is the footer's hardcoded `1 of 2`
 mistake in another place. Since step 09 the app registers both providers, so
 there are two columns; before it there was one, and the rule is what made that
 correct rather than accidental.
+
+**The provider columns are elastic; the verb column is not.** The verb column
+holds a fixed amount of text at a fixed 168 pt; the provider columns share what
+is left, with a 16 pt gutter and a floor of 172 pt below which the sound picker
+stops being readable. Fixed widths for all three made the matrix the widest thing
+in the window with no way to give — and a form wider than its window is clipped
+rather than shrunk. The window's minimum width is derived from these three
+numbers rather than chosen beside them.
 
 The row label is the verb's state shape, the verb, and one line saying what the
 event actually is — the settings window is the one surface with room for it:

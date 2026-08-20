@@ -6,7 +6,7 @@ AgentBar is distributed to other people. A mistake here does not earn a warning 
 it gets the accounts of people who trusted us banned. When in doubt, do not ship
 it.
 
-Verification date: 2026-08-18.
+Verification date: 2026-08-19.
 
 ---
 
@@ -161,3 +161,23 @@ networking, and at minimum every release:
 - OpenAI / Codex terms for the App Server surface
 
 Record the verification date here and in `platform-integration.md`.
+
+**2026-08-19** — re-verified because step 11 changed how often Codex limits are
+read. `code.claude.com/docs/en/legal-and-compliance` and the Usage Policy
+(effective 2025-09-15) are unchanged in every respect this project depends on:
+OAuth remains "intended exclusively for purchasers … and native Anthropic
+applications", third-party developers are still told to use API keys and may not
+"route requests through Free, Pro, or Max plan credentials", and the Usage Policy
+still says nothing about polling frequency because it does not need to — nothing
+here talks to Anthropic at all.
+
+One sentence is worth quoting for the cadence question, even though it is about
+Anthropic and the cadence is Codex's:
+
+> Advertised usage limits for Pro and Max plans assume ordinary, individual
+> usage of Claude Code and the Agent SDK.
+
+*Ordinary, individual* is the standard the reading cadence is held to. It is why
+the tightest gap belongs to a panel somebody has open, why that gap is a minute
+rather than a second, and why it is **bounded** — an open panel stops asking
+after five minutes, because a window left up is not a person watching it.

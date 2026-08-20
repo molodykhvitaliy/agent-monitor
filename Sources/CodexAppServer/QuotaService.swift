@@ -11,11 +11,17 @@ import os
 /// AgentBar's connection never starts a thread. It would cost a permanent child
 /// process for updates that would never arrive.
 ///
-/// Three things ask for a reading, and they cover different failures: the
-/// launch, because AgentBar is usually started while agents are already at work;
-/// a turn finishing, because that is when the number has just moved; and the
-/// interval, because a Codex session in another editor spends quota this process
-/// never hears about.
+/// Four things ask for a reading, and they cover different failures: the launch,
+/// because AgentBar is usually started while agents are already at work; a turn
+/// finishing, because that is when the number has just moved; the interval,
+/// because a Codex session in another editor spends quota this process never
+/// hears about; and **the panel being open**, because that is the only moment
+/// anybody is actually looking at the answer.
+///
+/// The last one is not a fifth poll. It runs only while the panel is on screen,
+/// it stops when it closes, and it is spaced by `watchingSpacing` rather than by
+/// the interval — a person watching a bar is asking a question, and answering it
+/// with a number from twenty minutes ago is the complaint this exists to close.
 public actor QuotaService {
     private static let logger = Logger(
         subsystem: "com.molodykhvitalii.AgentBar", category: "quota")
@@ -93,15 +99,48 @@ public actor QuotaService {
     /// does not have to know that. `nonisolated` so the push leg can call it and
     /// carry on — that leg runs on the main actor and must never wait on I/O.
     nonisolated public func turnFinished() {
-        Task { [weak self] in await self?.refresh(reason: "turn finished") }
+        Task { [weak self] in await self?.refreshAfterTurn() }
+    }
+
+    /// The reading a finished turn asks for.
+    ///
+    /// Split from the `nonisolated` wrapper above so the suite can drive the
+    /// same call the app makes. A test that called `refresh(reason:spacing:)`
+    /// directly would pin the throttle's arithmetic and leave the decision that
+    /// *chooses* a spacing — the one with a cost attached — unguarded.
+    func refreshAfterTurn() async {
+        await refresh(reason: "turn finished")
+    }
+
+    /// The panel is open and the user can see the bars.
+    ///
+    /// Called on the open panel's own clock, so it arrives roughly once a second
+    /// and is spaced down to `watchingSpacing` here rather than at the call
+    /// site — the caller's job is to say *that* somebody is looking, not to
+    /// decide how often that is worth a child process.
+    nonisolated public func userIsWatching() {
+        Task { [weak self] in await self?.refreshForWatcher() }
+    }
+
+    /// The reading an open panel asks for, and the one place the tighter
+    /// spacing is chosen. Split from the wrapper for the reason
+    /// `refreshAfterTurn` is: this is the decision worth a test.
+    func refreshForWatcher() async {
+        await refresh(reason: "panel open", spacing: QuotaSettings.watchingSpacing)
     }
 
     // MARK: - Reading
 
     /// Takes one reading, unless something else already did recently.
-    func refresh(reason: String) async {
+    ///
+    /// `spacing` is how stale the last attempt has to be before this one is
+    /// worth a child process. It is a parameter because the two callers are
+    /// asking different questions: a background clock is filling in for a
+    /// session in another editor and can wait, while an open panel is a person
+    /// watching for the number to move.
+    func refresh(reason: String, spacing: Duration = QuotaSettings.minimumSpacing) async {
         guard !refreshing else { return }
-        if let lastAttempt, clock.now - lastAttempt < QuotaSettings.minimumSpacing { return }
+        if let lastAttempt, clock.now - lastAttempt < spacing { return }
         guard let executable = locate() else {
             // Not a fault and not worth a log line on a timer: a machine that
             // only runs Claude Code has no codex to find, for ever.

@@ -82,6 +82,18 @@ nonisolated public enum DesignTokens {
         public static let infoGlyphGap: CGFloat = 8
         /// The Claude Code caveat row is the quietest thing in the panel.
         public static let caveatOpacity: Double = 0.7
+        /// The provider heading each group of windows sits under. Smaller than
+        /// the row badge — this names a section, it does not label a session.
+        public static let providerBadgeSize: CGFloat = 16
+        /// Provider badge to the provider's name.
+        public static let providerGap: CGFloat = 6
+        /// Provider heading to the first thing under it.
+        public static let providerHeaderMargin: CGFloat = 6
+        /// Between one provider's group and the next.
+        public static let providerSpacing: CGFloat = 12
+        /// What sits under a provider heading is indented to line up with the
+        /// heading's text rather than with its badge.
+        public static let providerIndent: CGFloat = providerBadgeSize + providerGap
     }
 
     public enum Footer {

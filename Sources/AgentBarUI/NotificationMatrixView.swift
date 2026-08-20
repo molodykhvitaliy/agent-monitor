@@ -8,13 +8,20 @@ import SwiftUI
 /// assembly registered. Today that is Claude Code alone, and a Codex column
 /// before step 09 lands would offer settings for notifications that cannot
 /// arrive — the same mistake as a hardcoded `1 of 2` in the footer.
+///
+/// > **The provider columns are elastic, the verb column is not.** Fixed widths
+/// > for all three made the matrix the widest thing in the window, and a matrix
+/// > wider than the window it sits in does not shrink — it is clipped, and what
+/// > gets clipped is the verb labels on the left. The verb column holds a fixed
+/// > amount of text and keeps a fixed width; the provider columns share what is
+/// > left, down to a floor below which the sound picker stops being readable.
 struct NotificationMatrixView: View {
     let model: SettingsModel
 
     @Environment(\.accessibilityPreferences) private var accessibility
 
     var body: some View {
-        Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 14) {
+        Grid(alignment: .leading, horizontalSpacing: Self.columnSpacing, verticalSpacing: 14) {
             GridRow {
                 Color.clear.frame(width: 1, height: 1)
                 ForEach(model.providers, id: \.self) { provider in
@@ -30,7 +37,25 @@ struct NotificationMatrixView: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .disabled(!model.preferences.isEnabled)
+    }
+
+    /// The verb column. Wide enough for `An agent is blocked and needs you` on
+    /// two lines, and no wider — every point here is one the provider columns
+    /// do not get.
+    static let labelWidth: CGFloat = 168
+    /// The floor for a provider column: a checkbox, and a sound picker still
+    /// wide enough to read a name in.
+    static let cellMinimumWidth: CGFloat = 172
+    static let columnSpacing: CGFloat = 16
+
+    /// The narrowest the matrix can be drawn without clipping, at `providers`
+    /// columns. `SettingsWindowLayout` sizes the window against this, because a
+    /// matrix wider than its window is not shrunk — it is cut off, and what
+    /// gets cut off is the verb labels on the left.
+    static func minimumWidth(providers: Int) -> CGFloat {
+        labelWidth + CGFloat(providers) * (cellMinimumWidth + columnSpacing)
     }
 
     private func header(for provider: Provider) -> some View {
@@ -58,7 +83,7 @@ struct NotificationMatrixView: View {
                 .foregroundStyle(accessibility.secondaryInk.color)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(width: 190, alignment: .leading)
+        .frame(width: Self.labelWidth, alignment: .leading)
         .accessibilityElement(children: .combine)
     }
 
@@ -96,7 +121,7 @@ struct NotificationMatrixView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .frame(width: 210, alignment: .leading)
+            .frame(minWidth: Self.cellMinimumWidth, maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -120,7 +145,7 @@ struct NotificationMatrixView: View {
             Text("Sound", comment: "Matrix cell sound picker")
         }
         .labelsHidden()
-        .frame(width: 170)
+        .frame(maxWidth: .infinity)
         .accessibilityLabel(
             String(
                 localized: "Sound for \(cell.verb.title) from \(cell.provider.displayName)",

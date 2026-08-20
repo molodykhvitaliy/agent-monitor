@@ -1,4 +1,6 @@
+import AVFoundation
 import AgentBarCore
+import AppKit
 import Foundation
 import Testing
 
@@ -18,22 +20,75 @@ struct SoundValidationTests {
         #expect(SoundValidator.problem(with: url) == nil)
     }
 
-    @Test("The bundled sounds are all valid")
-    func bundledSoundsAreValid() throws {
-        // The authored files, read from the repository rather than from a
-        // bundle: `swift test` has no app bundle, and these are the same bytes
-        // the app ships.
-        let sounds = URL(filePath: #filePath)
+    /// The authored files, read from the repository rather than from a bundle:
+    /// `swift test` has no app bundle, and these are the same bytes the app
+    /// ships.
+    static var shippedSoundsDirectory: URL {
+        URL(filePath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .appending(path: "Apps/AgentBar/Sounds", directoryHint: .isDirectory)
+    }
+
+    @Test("The bundled sounds are all valid")
+    func bundledSoundsAreValid() throws {
         for sound in BundledSound.allCases {
-            let url = sounds.appending(path: sound.fileName)
+            let url = Self.shippedSoundsDirectory.appending(path: sound.fileName)
             #expect(
                 SoundValidator.problem(with: url) == nil,
                 "\(sound.fileName): \(SoundValidator.problem(with: url)?.description ?? "")")
         }
+    }
+
+    /// A second reader, because the two disagree about what they accept and
+    /// both are on a path the user takes. `SoundValidator` answers for the
+    /// notification centre; `NSSound` is what the settings window's play button
+    /// auditions with, and a sound that validates but will not load would give
+    /// a dead button under a working notification.
+    @Test("Every bundled sound loads in the reader the preview button uses")
+    func bundledSoundsLoadForPreview() throws {
+        for sound in BundledSound.allCases {
+            let url = Self.shippedSoundsDirectory.appending(path: sound.fileName)
+            #expect(NSSound(contentsOf: url, byReference: true) != nil, "\(sound.fileName)")
+        }
+    }
+
+    /// The set is authored as one voice at one level, and
+    /// `design-spec.md` § *The sound set* states that as a requirement rather
+    /// than as trivia: peak headroom below full scale, and four files within
+    /// half a decibel of each other in RMS. A notification that clips, or one
+    /// that is twice as loud as its neighbours, is the reason a person turns
+    /// the feature off.
+    ///
+    /// Bounds are loose around the measured values — peak −3.0 dBFS at the
+    /// loudest, 0.49 dB of RMS spread — because this is a guard against a file
+    /// arriving from somewhere else, not a mastering check.
+    @Test("The set is levelled as one set")
+    func bundledSoundsAreOneSet() throws {
+        var levels: [String: AIFFSamples] = [:]
+        for sound in BundledSound.allCases {
+            let url = Self.shippedSoundsDirectory.appending(path: sound.fileName)
+            let samples = try #require(
+                AIFFSamples(contentsOf: url), "\(sound.fileName) could not be read as AIFF")
+            levels[sound.fileName] = samples
+            #expect(
+                samples.seconds > 0.2 && samples.seconds < 2,
+                "\(sound.fileName) is \(samples.seconds)s")
+            // Headroom, so nothing in the set clips.
+            #expect(
+                samples.peakDecibels <= -2.5,
+                "\(sound.fileName) peaks at \(samples.peakDecibels) dBFS")
+            // And nothing is so quiet it would be missed — which is what a
+            // truncated or wrongly converted file looks like.
+            #expect(
+                samples.peakDecibels >= -12,
+                "\(sound.fileName) peaks at \(samples.peakDecibels) dBFS")
+        }
+
+        let loudness = levels.values.map(\.rootMeanSquareDecibels)
+        let spread = try #require(loudness.max()) - #require(loudness.min())
+        #expect(spread <= 1.5, "RMS spread across the set is \(spread) dB")
     }
 
     @Test("A file that is not there is reported as missing")

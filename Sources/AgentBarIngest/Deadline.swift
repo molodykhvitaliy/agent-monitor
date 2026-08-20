@@ -51,7 +51,12 @@ public enum Deadline {
 /// with nothing in it silently turned those into "the deadline came first",
 /// which for the reserved Approve/Deny path would mean discarding a decision a
 /// human had already given and reporting a timeout instead.
-private final class Mailbox<Value: Sendable>: Sendable {
+///
+/// Internal rather than private so the discard rule can be asserted on the slot
+/// itself. Through `Deadline.run` that rule is only reachable by winning a race
+/// against the scheduler, and a test that has to win a race is a test that
+/// eventually loses one.
+final class Mailbox<Value: Sendable>: Sendable {
     private enum Slot {
         case empty
         case waiting(CheckedContinuation<Value?, Never>)

@@ -58,11 +58,21 @@ targets:
           - Info.plist
           - AgentBar.entitlements
           - Sounds
+          - AgentBar.icon
       # UNNotificationSound resolves a bare file name against the app bundle and
       # against ~/Library/Sounds, and nowhere else — so AgentBar's own sounds
       # have to sit at the top of Contents/Resources, not in a subfolder of it.
       # A `resources` phase copies them flat, which is exactly what is wanted.
       - path: Apps/AgentBar/Sounds
+        buildPhase: resources
+      # The app icon is a layered Icon Composer document, not a flat PNG, so
+      # macOS can render it in every appearance it now has — light, dark, the
+      # tinted menu bar, and the clear treatment — instead of pasting one
+      # bitmap into all of them. `type: file` because a `.icon` is a package:
+      # left as a folder, XcodeGen would add its parts one by one and actool
+      # would never see the document.
+      - path: Apps/AgentBar/AgentBar.icon
+        type: file
         buildPhase: resources
     settings:
       base:
@@ -72,6 +82,9 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         CODE_SIGN_ENTITLEMENTS: Apps/AgentBar/AgentBar.entitlements
         COMBINE_HIDPI_IMAGES: YES
+        # Names the icon actool compiles from `AgentBar.icon`, and the value
+        # `CFBundleIconName` resolves against.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AgentBar
         # The app is AppKit- and SwiftUI-facing throughout, so main-actor by
         # default costs nothing and removes annotation noise. Library modules
         # stay nonisolated by default; only AgentBarUI opts in, in Package.swift.

@@ -8,6 +8,15 @@
 	<string>AgentBar</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
+	<!-- The icon actool compiles from Apps/AgentBar/AgentBar.icon. Declared by
+	     name rather than as a CFBundleIconFile: a layered icon has no single
+	     .icns to point at, and the name is what Launch Services resolves
+	     against the compiled Assets.car. LSUIElement means there is no Dock
+	     icon, but the icon is far from unused — Finder, Spotlight, the login
+	     items list, System Settings › Notifications and the leading slot of
+	     every banner all show it. -->
+	<key>CFBundleIconName</key>
+	<string>AgentBar</string>
 	<key>CFBundleIdentifier</key>
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>

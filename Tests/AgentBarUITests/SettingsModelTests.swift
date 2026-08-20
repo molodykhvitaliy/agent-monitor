@@ -43,6 +43,10 @@ final class StubSettingsServices: SettingsServices {
         writes.append(preferences)
     }
 
+    /// Whatever the user has dropped into `~/Library/Sounds`, which is the one
+    /// input to this window that AgentBar does not control the length of.
+    var userSoundChoices: [SoundChoice] = []
+
     func soundChoices() -> [SoundChoice] {
         [
             SoundChoice(
@@ -52,7 +56,7 @@ final class StubSettingsServices: SettingsServices {
                 SoundChoice(
                     id: "AgentBar \($0.title).aiff", name: "AgentBar \($0.title)",
                     group: .bundled, isPlayable: true)
-            }
+            } + userSoundChoices
     }
 
     func previewSound(id: String) { previewed.append(id) }

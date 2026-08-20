@@ -13,9 +13,16 @@ public struct QuotaSettings: Sendable, Hashable {
     /// `defaults write com.molodykhvitalii.AgentBar codex.limitsRefreshMinutes -int 60`
     public static let intervalDefaultsKey = "codex.limitsRefreshMinutes"
 
-    /// Half-hourly. A weekly window moves slowly enough that a shorter interval
-    /// would spend a child process to redraw the same bar.
-    public static let defaultInterval: Duration = .seconds(30 * 60)
+    /// Ten-minutely.
+    ///
+    /// Half-hourly at first, on the reasoning that a weekly window moves slowly
+    /// enough that a shorter interval would spend a child process to redraw the
+    /// same bar. True of the bar, wrong about the person: at half an hour the
+    /// only refresh anyone ever saw was a turn finishing, so the number read as
+    /// something that only moved when *this* Mac spent quota — and watching the
+    /// figure move is most of why the section exists. Ten minutes is four
+    /// spawns an hour of a local binary.
+    public static let defaultInterval: Duration = .seconds(10 * 60)
 
     /// The shortest interval the key can select.
     ///
@@ -42,6 +49,17 @@ public struct QuotaSettings: Sendable, Hashable {
     /// its own child. The interval bounds the idle case; this bounds the busy
     /// one.
     public static let minimumSpacing: Duration = .seconds(2 * 60)
+
+    /// The shortest gap between two reads **while the user is looking at the
+    /// panel**.
+    ///
+    /// Shorter than `minimumSpacing` and deliberately so. The reads it governs
+    /// are the ones a person asked for by opening the panel and leaving it open,
+    /// which is the opposite of a background poll: they stop the moment the
+    /// panel closes, and an open panel is a surface measured in seconds. A
+    /// minute is short enough to watch a number move and long enough that
+    /// nothing here resembles automation.
+    public static let watchingSpacing: Duration = .seconds(60)
 
     public let interval: Duration
 
