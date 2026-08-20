@@ -45,6 +45,62 @@ nonisolated public enum DesignTokens {
     /// glass there is no colour to fade to.
     public static let listFadeHeight: CGFloat = 36
 
+    /// The panel's header: the mark, the name, and the one question a glance is
+    /// asking.
+    ///
+    /// The height is stated rather than derived. A header whose height follows
+    /// its content is a header that changes height when the pill appears, which
+    /// moves every row under the pointer at the moment something started
+    /// waiting — the worst possible moment for the list to jump.
+    public enum Header {
+        public static let contentHeight: CGFloat = 20
+        public static let topPadding: CGFloat = 11
+        public static let bottomPadding: CGFloat = 10
+        public static let sidePadding: CGFloat = 15
+        /// Including the hairline beneath it.
+        public static let height: CGFloat = contentHeight + topPadding + bottomPadding
+        public static let glyphSize: CGFloat = 16
+        public static let glyphGap: CGFloat = 8
+        /// The urgency pill.
+        public static let pillVerticalPadding: CGFloat = 3
+        public static let pillHorizontalPadding: CGFloat = 9
+        public static let pillShapeGap: CGFloat = 5
+        /// The pill's fill and its inset hairline, as opacities on the accent.
+        public static let pillFillLight: Double = 0.16
+        public static let pillFillDark: Double = 0.24
+        public static let pillStroke: Double = 0.30
+    }
+
+    /// The warm wash across the panel's top edge while anything is waiting.
+    ///
+    /// State, not decoration: it appears for `waiting` and for nothing else, and
+    /// it leaves on its own. `failed` deliberately gets none — a failure is
+    /// already carried by a row tint and a footer line, and two washes at once
+    /// would say nothing.
+    public enum Wash {
+        public static let height: CGFloat = 72
+        public static let lightOpacity: Double = 0.20
+        public static let darkOpacity: Double = 0.18
+    }
+
+    /// The working row's progress hairline.
+    ///
+    /// The app's **only** progress indicator, and deliberately not a spinner: a
+    /// spinner claims a duration AgentBar does not know, and a sweep claims only
+    /// "something is happening", which is all it does know. There is no
+    /// percentage available and none should be implied.
+    public enum Progress {
+        public static let height: CGFloat = 2
+        public static let radius: CGFloat = 2
+        public static let topMargin: CGFloat = 7
+        /// The sweep's width as a fraction of the track.
+        public static let sweepWidth: CGFloat = 0.40
+        /// What the sweep becomes under Reduce Motion — a fill at the left,
+        /// never a hidden element: a working row must still look different from
+        /// an idle one when nothing is allowed to move.
+        public static let staticFill: CGFloat = 0.40
+    }
+
     public enum Row {
         public static let verticalPadding: CGFloat = 9
         public static let horizontalPadding: CGFloat = 4

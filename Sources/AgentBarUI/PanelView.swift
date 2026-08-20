@@ -15,10 +15,23 @@ public struct PanelView: View {
 
     @Environment(\.accessibilityPreferences) private var accessibility
     @FocusState private var focused: SessionID?
-    /// The rows' natural height, measured. What decides whether the list
-    /// actually overflows, which is the only condition under which a fade at
-    /// the bottom edge tells the truth.
-    @State private var contentHeight: CGFloat = 0
+    /// Whether the rows are taller than the list's cap — the **decision**, not
+    /// the measurement it came from.
+    ///
+    /// > This used to hold the measured height, and holding the height is what
+    /// > pegged a CPU core. `onGeometryChange` writes into SwiftUI state from
+    /// > inside layout; the hosting view carries `.intrinsicContentSize` and so
+    /// > propagates its size into the window's layout; and the window's layout
+    /// > re-measures the list. A height that settles at a sub-pixel wobble —
+    /// > 341.0 one pass, 340.99998 the next — closes that circle and the display
+    /// > cycle never reaches a fixed point. Verified from the system's own
+    /// > report: 98 % of one core for 92 seconds, every sample inside
+    /// > `NSHostingView.layout()`.
+    /// >
+    /// > A `Bool` cannot wobble. `onGeometryChange` publishes only when the
+    /// > value it computes changes, so the feedback edge exists for the one
+    /// > frame the list actually crosses the cap and never again.
+    @State private var listOverflows = false
 
     public init(
         model: PanelModel,
@@ -32,6 +45,7 @@ public struct PanelView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
+            PanelHeaderView(summary: model.headerSummary, state: model.snapshot.mostUrgentState)
             content
             Rectangle()
                 .fill(ColorToken.divider.color)
@@ -49,6 +63,12 @@ public struct PanelView: View {
                 onQuit: onQuit)
         }
         .frame(width: DesignTokens.panelWidth)
+        // Above the material and below the content, so the header and the first
+        // rows read *through* it. Applied before the material because a
+        // `.background` stacks behind whatever it is applied to.
+        .background(alignment: .top) {
+            if model.isAnyoneWaiting { WaitingWash() }
+        }
         .background(background)
         .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.panel, style: .continuous))
         .overlay {
@@ -60,6 +80,10 @@ public struct PanelView: View {
         // a ticking number is noise. Rows appearing and leaving is the only
         // change worth a transition.
         .animation(accessibility.rowAnimation, value: model.snapshot.sessions.map(\.id))
+        // The wash arrives and leaves with the state rather than snapping. Keyed
+        // on the decision, never on a measurement — this panel has already paid
+        // once for publishing a wobbling `CGFloat` out of layout.
+        .animation(accessibility.rowAnimation, value: model.isAnyoneWaiting)
     }
 
     /// Reduce Transparency replaces the material with a flat `surface` fill at
@@ -109,10 +133,10 @@ public struct PanelView: View {
                         move: moveFocus)
                 }
             }
-            .onGeometryChange(for: CGFloat.self) {
-                $0.size.height
+            .onGeometryChange(for: Bool.self) {
+                $0.size.height > DesignTokens.listMaximumHeight
             } action: {
-                contentHeight = $0
+                listOverflows = $0
             }
         }
         .frame(maxHeight: DesignTokens.listMaximumHeight)
@@ -125,11 +149,9 @@ public struct PanelView: View {
             // A plain rectangle is a no-op mask. Passing `nil` would not be:
             // `Optional` renders as `EmptyView`, and masking with nothing hides
             // everything.
-            if overflows { listFade } else { Rectangle() }
+            if listOverflows { listFade } else { Rectangle() }
         }
     }
-
-    private var overflows: Bool { contentHeight > DesignTokens.listMaximumHeight }
 
     /// A real mask, never an overlay: an overlay would need a colour to fade
     /// *to*, and on glass there is none — fading to an opaque neutral would band
@@ -180,6 +202,9 @@ public struct PanelView: View {
 /// The resting state, and it must feel calm rather than broken.
 public struct EmptyStateView: View {
     @Environment(\.accessibilityPreferences) private var accessibility
+    /// Static at mid-coverage under Reduce Motion, which is why this starts
+    /// `false` and is only raised on appearance if motion is allowed.
+    @State private var breathing = false
 
     public init() {}
 
@@ -199,6 +224,20 @@ public struct EmptyStateView: View {
                     .frame(
                         width: DesignTokens.Empty.innerRing, height: DesignTokens.Empty.innerRing)
             }
+            // A slow breathe, and only that. The resting state has to feel calm
+            // rather than broken, and the one thing that separates "nothing is
+            // running" from "the app has stopped" is a sign that something is
+            // still watching.
+            .opacity(breathing ? 1 : 0.55)
+            .animation(
+                accessibility.runsCyclicalMotion
+                    ? DesignTokens.Motion.animation(
+                        DesignTokens.Motion.breathe, DesignTokens.Motion.cycle
+                    ).repeatForever(autoreverses: true)
+                    : nil,
+                value: breathing
+            )
+            .onAppear { breathing = accessibility.runsCyclicalMotion }
             .accessibilityHidden(true)
             .padding(.bottom, DesignTokens.Empty.ringsToText)
 
