@@ -46,8 +46,7 @@ extension MenuBarController {
         // window is borderless and does not resize itself to its content, and a
         // height fed back from layout is what pegged a core in the panel once.
         onboarding.onContentChange = { [weak self] in
-            guard let self, let button = self.statusItem?.button else { return }
-            self.onboardingPanel?.reposition(under: button)
+            self?.repositionOnboarding()
         }
         // The flow ending on its own hands the user the panel it spent five
         // steps pointing at. Dismissing it by clicking away does not — that is
@@ -113,9 +112,49 @@ extension MenuBarController {
 
     /// Tears the flow down, whichever way it ended, and hands the user the panel
     /// the flow spent five steps pointing at.
+    /// How long after a step change the window is measured a second time.
+    ///
+    /// The step's own transition plus a frame, so the sample lands after it has
+    /// settled rather than during it.
+    static let onboardingRemeasureDelay: Duration =
+        DesignTokens.Motion.rise + .milliseconds(60)
+
+    /// Re-measures the flow's window, twice.
+    ///
+    /// > **Once is not enough, and the reason is the transition.** The window is
+    /// > borderless, so nothing resizes it to its content but this; the only
+    /// > caller is a discrete change — a step, an action, a refresh — which is
+    /// > deliberate, because a height fed back out of layout is what pegged a
+    /// > core in the sibling panel. But a step change also starts a cross-fade
+    /// > during which both steps are present, and a `fittingSize` sampled then
+    /// > is the taller of the two. Without a second look that figure sticks for
+    /// > the whole step. The session panel is immune only because its
+    /// > one-second clock re-measures; the flow has no clock, so it takes the
+    /// > second measurement deliberately.
+    ///
+    /// `PanelController.position` skips a frame that has not moved, so the
+    /// second call costs nothing whenever the first was already right.
+    func repositionOnboarding() {
+        guard let button = statusItem?.button else { return }
+        onboardingPanel?.reposition(under: button)
+        // Replaced rather than stacked: a burst of changes — a step, then the
+        // refresh that follows it — must leave exactly one pending measurement.
+        onboardingRemeasure?.cancel()
+        onboardingRemeasure = Task { [weak self] in
+            try? await Task.sleep(for: Self.onboardingRemeasureDelay)
+            guard let self, !Task.isCancelled, let button = self.statusItem?.button,
+                self.onboardingPanel?.isVisible == true
+            else { return }
+            self.onboardingPanel?.reposition(under: button)
+            self.onboardingRemeasure = nil
+        }
+    }
+
     func endOnboarding() {
         onboardingWatch?.cancel()
         onboardingWatch = nil
+        onboardingRemeasure?.cancel()
+        onboardingRemeasure = nil
         onboarding.onContentChange = nil
         // Cleared before `finish()` below, which would otherwise call straight
         // back into here.

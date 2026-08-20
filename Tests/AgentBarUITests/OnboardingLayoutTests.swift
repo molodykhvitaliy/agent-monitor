@@ -81,6 +81,62 @@ struct OnboardingLayoutTests {
         #expect(heights.count > 1, "every step measures the same; the re-measure is untested")
     }
 
+    /// The window is borderless and does not resize itself, so **every** change
+    /// that can move a step's height has to announce itself. This is the model's
+    /// half of that contract; the controller's half is compile-enforced, because
+    /// `onContentChange` names `repositionOnboarding` directly.
+    ///
+    /// > Worth pinning because it already failed silently once: the property and
+    /// > the doc comment for the second measurement existed while the function
+    /// > they described did not, and nothing — not the compiler, not the suite,
+    /// > not lint — had anything to say about it.
+    @Test("Every content change announces itself")
+    func everyChangeAnnouncesItself() async {
+        let panel = StubServices()
+        panel.storedStatuses = [UIFixture.status(.claudeCode, .notConnected)]
+        let suite = "com.molodykhvitalii.AgentBar.tests.announce"
+        let defaults = UserDefaults(suiteName: suite) ?? .standard
+        defaults.removePersistentDomain(forName: suite)
+        let settings = StubSettingsServices()
+        // Unasked, so the permission step has something to do. An already-granted
+        // permission makes `requestPermission` a correct no-op, which announces
+        // nothing — rightly, since it changed nothing.
+        settings.permissionState = .notAsked
+        let model = OnboardingModel(
+            panel: panel, settings: settings,
+            state: OnboardingState(defaults: defaults))
+
+        var announcements = 0
+        model.onContentChange = { announcements += 1 }
+
+        await model.refresh()
+        #expect(announcements == 1, "a refresh did not announce")
+
+        await model.next()
+        #expect(announcements == 2, "a step change did not announce")
+
+        await model.perform(.connect, for: .claudeCode)
+        #expect(announcements == 3, "an action did not announce")
+
+        await model.back()
+        #expect(announcements == 4, "going back did not announce")
+
+        await model.skip()
+        #expect(announcements == 5, "a skip did not announce")
+
+        await model.requestPermission()
+        #expect(announcements == 6, "asking for permission did not announce")
+    }
+
+    /// The second measurement has to land *after* the step's own transition, or
+    /// it samples the same in-flight height the first one did.
+    @Test("The re-measure waits out the step transition")
+    func remeasureOutlastsTheTransition() {
+        #expect(
+            MenuBarController.onboardingRemeasureDelay > DesignTokens.Motion.rise,
+            "the second measurement lands inside the cross-fade it exists to outlast")
+    }
+
     /// The watch exists so a change made outside the app appears without a
     /// keystroke. Leaving the notification step out of it was a defect: its
     /// `.denied` branch sends the user to System Settings and the flow's panel

@@ -217,6 +217,21 @@ struct StatusItemGlyphTests {
         }
     }
 
+    /// The third condition, and the one with a default — which is exactly why it
+    /// needs saying out loud. `isOnScreen: true` is what lets every other caller
+    /// of this decision stay unchanged, and it is also what would let the whole
+    /// power gate be deleted with a green suite.
+    ///
+    /// `waiting` is the state that persists unattended: an agent blocked
+    /// overnight with the display asleep is eight wake-ups a second, all night.
+    @Test("Nobody watching means no timer, whatever the state")
+    func timerSleepsWhenUnseen() {
+        #expect(
+            !StatusItemController.animates(.waiting, reduceMotion: false, isOnScreen: false),
+            "the pulse runs where nobody can see it")
+        #expect(StatusItemController.animates(.waiting, reduceMotion: false, isOnScreen: true))
+    }
+
     /// Nothing running takes the resting glyph rather than no glyph: a status
     /// item with no image is an invisible, unclickable one.
     @Test("No sessions still draws something")

@@ -83,10 +83,16 @@ public final class PanelModel {
     public var showsIntegrationCard = false
     /// Whether the panel is actually on screen.
     ///
-    /// Owned by whoever shows and hides the window, and read by the two
-    /// repeating indicators in the panel so neither runs behind a dismissal.
-    /// A `Bool` that changes twice per open — nothing here is on a clock.
-    public var isOnScreen = false
+    /// Read by the two repeating indicators in the panel so neither runs behind
+    /// a dismissal. A `Bool` that changes twice per open — nothing here is on a
+    /// clock.
+    ///
+    /// **The setter is internal, deliberately.** The only thing that may set it
+    /// is the thing that shows and hides the window, and that lives in this
+    /// module. A public setter would be a settable mirror of window state, and a
+    /// client that desynchronised it would leave both cycles running behind a
+    /// dismissed panel — precisely what the property exists to prevent.
+    public internal(set) var isOnScreen = false
 
     @ObservationIgnored private let services: any PanelServices
 

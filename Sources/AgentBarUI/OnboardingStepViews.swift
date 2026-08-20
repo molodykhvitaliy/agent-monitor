@@ -81,6 +81,14 @@ struct PointerToTheMenuBar: View {
 
     static let markSize: CGFloat = 34
 
+    /// The value the cycle is keyed on, and it includes the motion setting.
+    ///
+    /// The same idiom as `WorkingHairline` and `EmptyStateView`, and for the
+    /// same reason: latching on `runsCyclicalMotion` at appearance means a user
+    /// who turns Reduce Motion *off* while the step is up gets no value change,
+    /// and so no animation, for the life of the view.
+    private var breathes: Bool { accessibility.runsCyclicalMotion && breathing }
+
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Space.tiny) {
             // A hairline rising out of the top of the mark and off the panel's
@@ -99,8 +107,8 @@ struct PointerToTheMenuBar: View {
                         // Dips from the full value rather than rising to it, so
                         // the un-animated halo is the designed one and not a
                         // shrunken, faded version of it.
-                        .scaleEffect(breathing ? 0.86 : 1)
-                        .opacity(breathing ? 0.55 : 1)
+                        .scaleEffect(breathes ? 0.86 : 1)
+                        .opacity(breathes ? 0.55 : 1)
                     AgentGlyphView(state: .working, size: 22)
                 }
                 .animation(
@@ -109,9 +117,9 @@ struct PointerToTheMenuBar: View {
                             DesignTokens.Motion.breathe, DesignTokens.Motion.cycle
                         ).repeatForever(autoreverses: true)
                         : nil,
-                    value: breathing
+                    value: breathes
                 )
-                .onAppear { breathing = accessibility.runsCyclicalMotion }
+                .onAppear { breathing = true }
 
                 Text(
                     "AgentBar lives here, in the menu bar",

@@ -108,7 +108,8 @@ public final class StatusItemController {
             button.imagePosition = waiting > 1 ? .imageLeading : .imageOnly
             button.font = .monospacedDigitSystemFont(
                 ofSize: NSFont.smallSystemFontSize, weight: .medium)
-            // Last, and after every other property this branch touches.
+            // Last, and after every other property this branch touches. The
+            // image went up through `showFrames`, which asserts it too.
             if isHighlighted { button.highlight(true) }
         }
 
@@ -185,8 +186,24 @@ public final class StatusItemController {
         frameIndex = 0
         // The resting frame goes up immediately rather than on the first tick,
         // so a state change is visible at once even at 8 fps.
-        statusItem.button?.image = frames[0]
+        show(frames[0])
         refreshAnimation()
+    }
+
+    /// Puts a frame on the button, and re-asserts the highlight with it.
+    ///
+    /// > **Every image assignment, not only the reconfiguring one.** The
+    /// > highlight's whole job is the first-run flow, and that flow can be
+    /// > running while the glyph pulses — AgentBar relaunched beside an agent
+    /// > already at a permission prompt is the ordinary way a first run happens
+    /// > on a working machine. If AppKit drops the cell highlight when the image
+    /// > changes, a defence applied only in `update(from:)` would be cleared by
+    /// > the first animation tick 125 ms later. One funnel removes the question
+    /// > and costs a boolean per frame.
+    private func show(_ image: NSImage) {
+        guard let button = statusItem.button else { return }
+        button.image = image
+        if isHighlighted { button.highlight(true) }
     }
 
     /// Starts the timer, or invalidates it, from what is true now.
@@ -201,7 +218,7 @@ public final class StatusItemController {
             stopAnimating()
             // Back to the resting frame: a stopped cycle must not leave the
             // glyph frozen mid-pulse, which reads as a rendering fault.
-            if let first = frames.first { statusItem.button?.image = first }
+            if let first = frames.first { show(first) }
             return
         }
         guard animation == nil else { return }
@@ -222,16 +239,17 @@ public final class StatusItemController {
     }
 
     private func advance() {
-        // Self-healing: the item can be hidden by a ⌘-drag with no notification
-        // this class observes, so the tick that finds it gone is what stops the
-        // clock. Cheaper than watching `isVisible` for a case that is rare and
-        // costs nothing to notice late.
+        // Self-healing in the stopping direction: the item can be hidden by a
+        // ⌘-drag with no notification this class observes, so the tick that
+        // finds it gone is what stops the clock. The *starting* direction
+        // belongs to `update(from:)`, which asks on every reading — this tick
+        // cannot notice the item coming back, because by then it is not running.
         guard frames.count > 1, isOnScreen else {
             refreshAnimation()
             return
         }
         frameIndex = (frameIndex + 1) % frames.count
-        statusItem.button?.image = frames[frameIndex]
+        show(frames[frameIndex])
     }
 
     /// Screen sleep, observed rather than polled, because it is the case that
