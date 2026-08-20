@@ -25,21 +25,62 @@ import os
 /// and the tail is worth keeping, because the first thing a broken `config.toml`
 /// produces is a line there and nothing at all on stdout.
 public final class CodexProcessTransport: AppServerTransport {
+    static let logger = Logger(
+        subsystem: "com.molodykhvitalii.AgentBar", category: "quota")
+
     /// How much of stderr is remembered for a diagnostic. Enough for a few lines
     /// of the child's own log output, bounded so a chatty one cannot grow the
     /// heap.
     static let diagnosticLimit = 4096
 
+    /// How long a child gets to honour `SIGTERM` before it is killed outright.
+    ///
+    /// `terminate()` is a request, and a request is not a guarantee. The
+    /// measured Codex exits inside 10 ms, so this number is never reached in
+    /// practice — it exists for the build that blocks the signal, or wedges
+    /// while handling it. Without it "the child is always killed" is a claim
+    /// about the child's cooperation rather than about this transport, and a
+    /// menu-bar app that leaves a Rust runtime behind on every reading is the
+    /// process leak this project cannot ship.
+    ///
+    /// > **It cannot fire on the quit path, and that is a deliberate trade.** The
+    /// > escalation is a task in this process, so an `end()` reached from
+    /// > `applicationWillTerminate` is followed by the process exiting long
+    /// > before the grace elapses — and waiting for it would mean a Quit that
+    /// > sits for two seconds, which for an `LSUIElement` app whose only Quit
+    /// > lives in a panel footer is the worse failure. That path is covered by
+    /// > the mechanism ADR-0009 already relies on: the stdin pipe's write end
+    /// > closes when this process goes and the child exits on the EOF within
+    /// > 2.74 s. The escalation covers every path where AgentBar is still alive.
+    static let terminationGrace: Duration = .seconds(2)
+
+    /// How much unterminated stdout is buffered before the stream is treated as
+    /// broken rather than as slow.
+    ///
+    /// The App Server's replies are newline-delimited and small — the largest
+    /// AgentBar asks for is a rate-limit reading. A child writing megabytes with
+    /// no newline in them is not sending a reply this transport is going to be
+    /// able to parse, and buffering it to the end of a twenty-second budget
+    /// would trade a parse failure for heap growth. One megabyte is far above
+    /// anything real and far below anything that matters.
+    static let pendingLimit = 1024 * 1024
+
     private let executable: URL
     /// Every mutable thing this transport owns, behind one lock. The readability
     /// handlers run on Foundation's own queue while `end()` may be called from
     /// anywhere, so there is no single actor to put this on.
-    private let state: OSAllocatedUnfairLock<State>
+    let state: OSAllocatedUnfairLock<State>
 
-    /// What one read produced: the whole lines in it, and where to send them.
-    private typealias Drained = ([Data], AsyncStream<Data>.Continuation?)
+    /// What one read produced: the whole lines in it, where to send them, and
+    /// how much unterminated output had to be discarded on the way — see
+    /// `pendingLimit`.
+    struct Drained {
+        var lines: [Data] = []
+        var continuation: AsyncStream<Data>.Continuation?
+        var overflowed: Int?
+    }
 
-    private struct State {
+    struct State {
         var process: Process?
         var input: FileHandle?
         var output: FileHandle?
@@ -56,6 +97,8 @@ public final class CodexProcessTransport: AppServerTransport {
         /// `SIGPIPE`, and a signal is not something a `catch` can answer — see
         /// `send`.
         var writable = true
+        /// The pending `SIGKILL`, cancelled the moment the child exits.
+        var escalation: Task<Void, Never>?
         /// How many times `Process.run()` was actually reached.
         ///
         /// For the suite. The two guards in `start()` fail in the same visible
@@ -65,8 +108,20 @@ public final class CodexProcessTransport: AppServerTransport {
         var spawns = 0
     }
 
-    public init(executable: URL) {
+    /// The grace this transport gives, injectable so the suite can prove the
+    /// escalation without sitting out the production number.
+    private let terminationGrace: Duration
+
+    public convenience init(executable: URL) {
+        self.init(executable: executable, terminationGrace: Self.terminationGrace)
+    }
+
+    /// Internal, and the suite is the only caller: proving the escalation
+    /// against the production grace would mean a test that sits still for two
+    /// seconds, and the number is not what is under test.
+    init(executable: URL, terminationGrace: Duration) {
         self.executable = executable
+        self.terminationGrace = terminationGrace
         state = OSAllocatedUnfairLock(initialState: State())
     }
 
@@ -117,7 +172,13 @@ public final class CodexProcessTransport: AppServerTransport {
         // A child that dies on its own must finish the stream, or a caller
         // waiting for a reply that will never come waits out its whole deadline
         // instead of the milliseconds the exit took.
-        process.terminationHandler = { [weak self] _ in self?.closeStream() }
+        process.terminationHandler = { [weak self] _ in
+            // The child has gone, so there is nothing left to escalate against
+            // and a pending kill would be aimed at a process identifier the
+            // kernel is free to hand to somebody else.
+            self?.cancelEscalation()
+            self?.closeStream()
+        }
 
         do {
             state.withLock { $0.spawns += 1 }
@@ -137,7 +198,10 @@ public final class CodexProcessTransport: AppServerTransport {
             // that was not yet running, sent no signal, and marked the transport
             // ended — so this is the last place that can notice, and nothing
             // else will.
-            if process.isRunning { process.terminate() }
+            if process.isRunning {
+                process.terminate()
+                escalate(process)
+            }
             continuation.finish()
             throw AppServerError.disconnected
         }
@@ -196,7 +260,46 @@ public final class CodexProcessTransport: AppServerTransport {
         try? input?.close()
         continuation?.finish()
 
-        if let process, process.isRunning { process.terminate() }
+        if let process, process.isRunning {
+            process.terminate()
+            escalate(process)
+        }
+    }
+
+    /// Arms the `SIGKILL` that follows a `SIGTERM` nobody answered.
+    ///
+    /// Never blocks and never waits: `end()` runs on the quit path, and a quit
+    /// that sits on a thread for two seconds is a quit the user notices. The
+    /// child's own `terminationHandler` cancels this the instant it exits, so
+    /// the ordinary path arms a task that is cancelled milliseconds later and
+    /// signals nothing.
+    private func escalate(_ process: Process) {
+        let child = ChildProcess(process)
+        let task = Task.detached { [grace = terminationGrace] in
+            do {
+                try await Task.sleep(for: grace)
+            } catch {
+                return  // Cancelled: the child exited on the signal it was sent.
+            }
+            child.killIfStillRunning()
+        }
+        // Replacing rather than adding: `end()` is idempotent and returns early
+        // on its second call, so there is never more than one of these.
+        let previous = state.withLock { current -> Task<Void, Never>? in
+            let previous = current.escalation
+            current.escalation = task
+            return previous
+        }
+        previous?.cancel()
+    }
+
+    private func cancelEscalation() {
+        let pending = state.withLock { current -> Task<Void, Never>? in
+            let pending = current.escalation
+            current.escalation = nil
+            return pending
+        }
+        pending?.cancel()
     }
 
     /// Whether the child is still alive.
@@ -220,77 +323,4 @@ public final class CodexProcessTransport: AppServerTransport {
     /// be produced from outside — so the suite is given the one moment it needs
     /// rather than the guard going untested.
     nonisolated(unsafe) var willSpawn: (@Sendable () -> Void)?
-
-    // MARK: - Reading
-
-    /// Splits stdout into lines, holding a partial line until its newline
-    /// arrives.
-    ///
-    /// A JSON object is never split across reads in practice, but "in practice"
-    /// is not a framing rule, and the failure it would cause — one dropped
-    /// reply, once, under load — is exactly the kind nobody reproduces.
-    private func absorb(_ data: Data) {
-        guard !data.isEmpty else {
-            // Zero bytes from a readability handler is end of file.
-            closeStream()
-            return
-        }
-        let (complete, continuation) = state.withLock { state -> Drained in
-            guard !state.ended else { return ([], nil) }
-            state.pending.append(data)
-            var lines: [Data] = []
-            while let newline = state.pending.firstIndex(of: 0x0A) {
-                let line = state.pending[state.pending.startIndex..<newline]
-                state.pending = state.pending[state.pending.index(after: newline)...]
-                if !line.isEmpty { lines.append(Data(line)) }
-            }
-            return (lines, state.continuation)
-        }
-        guard let continuation else { return }
-        // Yielded outside the lock: a consumer resumed by `yield` must never
-        // run while this thread still holds it.
-        for line in complete { continuation.yield(line) }
-    }
-
-    private func absorbDiagnostics(_ data: Data) {
-        guard !data.isEmpty else { return }
-        state.withLock {
-            $0.diagnostics.append(data)
-            if $0.diagnostics.count > Self.diagnosticLimit {
-                $0.diagnostics.removeFirst($0.diagnostics.count - Self.diagnosticLimit)
-            }
-        }
-    }
-
-    /// Ends the stream without touching the process — the child has already
-    /// gone, or its output has.
-    ///
-    /// Marks stdin unwritable rather than closing it. Closing races a `send`
-    /// that has already taken the handle and would turn a `SIGPIPE` into an
-    /// `EBADF`; the flag stops the write before it starts, and `end()` still
-    /// owns the close.
-    private func closeStream() {
-        let continuation = state.withLock {
-            $0.writable = false
-            let value = $0.continuation
-            $0.continuation = nil
-            return value
-        }
-        continuation?.finish()
-    }
-
-    /// The tail of what the child wrote to stderr, for a log line.
-    ///
-    /// Bounded and stripped of control characters, because it reaches the log as
-    /// `.public` and every byte of it came from outside this process.
-    public func diagnostics() -> String? {
-        let data = state.withLock { $0.diagnostics }
-        guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return nil }
-        let scalars = text.unicodeScalars.filter {
-            $0 == "\n" || !CharacterSet.controlCharacters.contains($0)
-        }
-        let cleaned = String(String.UnicodeScalarView(scalars))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return cleaned.isEmpty ? nil : cleaned
-    }
 }

@@ -26,8 +26,30 @@ struct RouterLifecycleTests {
         router.record([Fixture.change()])
         #expect(presenter.posted.isEmpty)
 
-        try await Task.sleep(for: .milliseconds(200))
+        // Waited *for*, not slept through. The claim is that the flush happens
+        // with nobody driving it, and a fixed sleep tests that claim against the
+        // scheduler as well: the window is 40 ms, but under a saturated
+        // cooperative pool — this suite runs alongside every other — the task
+        // that closes it can be minutes of CPU-seconds away from its turn. That
+        // is what made this the one test in the repository that failed under
+        // parallel load, roughly one run in three, while the code was correct
+        // every time.
+        try await untilPosted(presenter, within: .seconds(5))
         #expect(presenter.posted.count == 1)
+    }
+
+    /// Polls until the presenter has something, or gives up.
+    ///
+    /// Generous, because the deadline is not what is being measured — the
+    /// alternative to waiting long enough is a suite that fails for reasons that
+    /// have nothing to do with the code.
+    private func untilPosted(
+        _ presenter: RecordingPresenter, within limit: Duration
+    ) async throws {
+        let deadline = ContinuousClock.now + limit
+        while presenter.posted.isEmpty, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
     }
 
     /// `try? await Task.sleep` swallows the cancellation, so a cancelled task

@@ -531,6 +531,22 @@ everywhere, 1 second on `SessionEnd`. Measured for the compiled helper on
 **p50 6.5 ms on an idle machine and 11 ms under load**, against a `/bin/cat`
 baseline of 1.0 ms and 1.8 ms through the same harness.
 
+> **A hook's timeout is Codex's business, not the helper's.** Codex may or may
+> not kill a command that overruns, and the helper is a grandchild of Codex
+> behind the shell that runs it — so a helper that can wait indefinitely is a
+> process that outlives the agent, is reparented to `launchd`, and keeps the
+> session's working directory as its own. Verified on 2026-08-20: a writer that
+> held the payload pipe open held the shipped helper open for exactly as long,
+> with no upper bound. Every wait inside the helper is therefore bounded by the
+> helper itself. The drain gives up after **150 ms of silence** and never runs
+> longer than **400 ms** whatever the writer does; the relay carries its own
+> 500 ms. Nine hundred milliseconds in the worst case, inside the one second
+> Codex gives a `SessionEnd` hook. The drain's bounds are the ones that had to be
+> added, and they measure silence rather than elapsed time because the worst
+> legitimate payload — 4 MB through a 64 KB pipe — takes 93–105 ms on a loaded
+> machine and would have sat too close to a total budget
+> ([ADR-0013](../adr/ADR-0013-the-codex-helper-waits-on-a-deadline.md)).
+
 ### 2.7 notify — unavailable in practice
 
 `notify` passes JSON as **argv[1]**, not stdin. It is a single-slot config key.

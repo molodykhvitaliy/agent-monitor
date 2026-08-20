@@ -146,7 +146,7 @@ away. There is nothing to subscribe to.
 | Signal | Carries | Latency |
 |---|---|---|
 | **Push** — the ingest boundary forwards `apply()`'s `.changed(StateChange)` outcomes to an app-level observer | every state move an event caused, including a session becoming `waiting` | immediate |
-| Timer, panel open, 1 s | `snapshot()`, republish — the durations tick | 1 s |
+| Timer, panel open, 1 s | `sweep()`, `snapshot()`, republish — the durations tick | 1 s |
 | Timer, panel closed, 30–60 s | `sweep()`, then `snapshot()`; the status item is redrawn **only when `mostUrgentState` or `waitingSessionCount` actually changed** | up to a minute |
 
 Push is not an optimisation. Without it a waiting agent — the one signal the
@@ -304,10 +304,11 @@ what makes the *notification* worth reading. Landed in step 06 (ADR-0005); see
 [Obligations](#step-06-or-07--the-question-line).
 
 **Idle and Failed rows are ordinary rows.** They persist for as long as the store
-holds them — eight hours of silence before the watchdog even considers them
-`unknown` — and the panel never hides a session the store still has, nor offers a
-per-row dismiss. An ordinary working day is mostly Idle rows, and the design has
-to be calm at that, not just at the hero case: an Idle row is badge, hollow ring,
+holds them — ten minutes of silence, after which the session is retired outright
+rather than turning `Unknown` ([ADR-0012](../adr/ADR-0012-a-finished-session-is-retired-not-doubted.md))
+— and the panel never hides a session the store still has, nor offers a per-row
+dismiss. An ordinary working day is mostly Idle rows, and the design has to be
+calm at that, not just at the hero case: an Idle row is badge, hollow ring,
 `Idle`, duration, no tint, no second line. A Failed row keeps its wash for as long
 as it is listed.
 

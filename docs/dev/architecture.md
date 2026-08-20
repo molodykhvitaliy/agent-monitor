@@ -164,8 +164,15 @@ silence means something different in each state:
 | working, no tool open | 15 min | a model can think and stream for minutes without touching a tool |
 | working, tool open | 60 min | one `Bash` running a test suite or a full `xcodebuild` emits nothing for tens of minutes; calling that dead would drop the power assertion mid-build |
 | waiting | 2 h | a human may be away, and the state stays true meanwhile |
-| idle or failed | 8 h | nothing more is expected; this only decides when to stop claiming the session is there |
+| idle or failed | 10 min | nothing more is expected, so the session is **retired outright** rather than passing through `unknown` — see [ADR-0012](../adr/ADR-0012-a-finished-session-is-retired-not-doubted.md) |
 | unknown | 1 h | then the session is retired, or every agent that died without a farewell accumulates forever |
+
+`unknown` is a question about liveness, and a session that has already finished
+has no such question to answer. Sending one through `unknown` used to add the
+eviction timeout to the resting one, which is how a working day's finished
+sessions — a terminal closed, an editor quit, no `SessionEnd` from either — filled
+the panel for nine hours and turned the open panel's one-second clock into
+sustained CPU.
 
 The two-tier treatment of `working` is the answer to "no events at all" versus
 "no events but a long-running call is known to be open". Getting it wrong in the
@@ -608,7 +615,7 @@ reading and `SessionStore` owns no timer, so nothing re-reads it by itself.
 | Signal | Carries | Latency |
 |---|---|---|
 | `StateChangeSink`, from `EventIngestHandler` | every move an applied event caused | immediate, coalesced over 150 ms |
-| Timer, panel open, 1 s | `snapshot()` — the durations ticking | 1 s |
+| Timer, panel open, 1 s | `sweep()`, then `snapshot()` — the durations ticking | 1 s |
 | Timer, panel closed, 45 s | `sweep()` then `snapshot()` | up to a minute |
 
 Push is not an optimisation. Without it a waiting agent — the one signal the
