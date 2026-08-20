@@ -113,18 +113,64 @@ struct DeadlineTests {
         #expect(median < .milliseconds(500), "expiry is drifting well past its deadline")
     }
 
-    @Test("A late answer cannot overwrite the expiry that was already reported")
+    /// Asserted as an *ordering*, like the abandonment test above and for the
+    /// same reason. The earlier version raced a 10 ms deadline against an answer
+    /// 50 ms out and read `nil` as proof the late answer had been dropped. A
+    /// 40 ms margin is no margin on a runner executing the whole suite in
+    /// parallel: CI scheduled the timer task late three times over, the answer
+    /// arrived first and won honestly, and the test failed for the machine's
+    /// reasons rather than the code's.
+    ///
+    /// Here the answer cannot exist until the test releases it, and the test
+    /// releases it only after `run` has already returned — so nothing but the
+    /// deadline can have answered, whatever the load. The delivery that follows
+    /// is the one under test: it lands in a slot the timer has already filled,
+    /// and a mailbox that let it through would resume a continuation that was
+    /// resumed once already, which traps rather than passing quietly.
+    @Test(
+        "A late answer cannot overwrite the expiry that was already reported",
+        .timeLimit(.minutes(1)))
     func ignoresLateAnswers() async {
         for _ in 0..<50 {
+            let release = DispatchSemaphore(value: 0)
+            let answered = CompletionFlag()
             let result: String? = await Deadline.run(within: .milliseconds(10)) {
                 await withCheckedContinuation { (continuation: StringContinuation) in
-                    DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) {
+                    // Off the cooperative pool deliberately: the answer has to
+                    // outlive the cancellation `run` issues on its way out, the
+                    // way a handler that ignores cancellation would.
+                    DispatchQueue.global().async {
+                        release.wait()
+                        answered.set()
                         continuation.resume(returning: "late")
                     }
                 }
             }
+
             #expect(result == nil)
+            release.signal()
+            #expect(
+                await answered.waitUntilSet(),
+                "the work never answered, so nothing was dropped")
         }
+    }
+
+    /// The discard rule on its own, with no scheduler in the way: whichever
+    /// racer reaches the slot first owns the answer, and the loser's is dropped
+    /// rather than written over the winner's. Both directions matter — the
+    /// deadline must survive a late answer, and an answer must survive the
+    /// deadline that expires just behind it.
+    @Test("A filled slot keeps what the winner put in it")
+    func mailboxDropsTheLoser() async {
+        let expired = Mailbox<String>()
+        expired.deliver(nil)
+        expired.deliver("late")
+        #expect(await expired.take() == nil)
+
+        let answered = Mailbox<String>()
+        answered.deliver("answer")
+        answered.deliver(nil)
+        #expect(await answered.take() == "answer")
     }
 }
 
