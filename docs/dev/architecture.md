@@ -855,17 +855,35 @@ the handshake reported, and forgets it the moment the user updates.
 
 ### When a reading is taken
 
-Launch, a Codex turn ending, and a conservative interval — 30 minutes by default,
-configurable through the `codex.limitsRefreshMinutes` defaults key and floored at
-five. A defaults key rather than a settings control: the brief makes restraint an
-explicit product requirement and enumerates what the settings window contains,
-and a polling interval is not on that list.
+Four things ask for one, and they cover different failures:
 
-Two throttles, because they bound different things. The interval bounds the idle
-case; a two-minute minimum between reads bounds the busy one, where several
-agents finishing inside a minute would otherwise each start their own `codex`.
+| Asks | Because | Spacing |
+|---|---|---|
+| Launch | AgentBar is usually started while agents are already at work | — |
+| A Codex turn ending | that is when the number has just moved | 2 min |
+| The interval | a Codex session in another editor spends quota this process never hears about | 10 min |
+| **The panel being open** | it is the only moment anybody is looking at the answer | 1 min, for 5 min |
+
+The interval is configurable through the `codex.limitsRefreshMinutes` defaults
+key and floored at five minutes. A defaults key rather than a settings control:
+the brief makes restraint an explicit product requirement and enumerates what the
+settings window contains, and a polling interval is not on that list.
+
+Three throttles, because they bound different things. The interval bounds the
+idle case; a two-minute minimum between reads bounds the busy one, where several
+agents finishing inside a minute would otherwise each start their own `codex`;
+and a one-minute minimum bounds the panel, whose own clock ticks once a second.
 The throttle counts **attempts**, not successes, so a Codex that fails every time
 is not re-spawned on every turn completion.
+
+**The panel's leg is bounded in time as well as in spacing.** Nothing closes the
+panel by itself — `hidesOnDeactivate` is false and it is never key on the mouse
+path, so switching apps or Spaces leaves it up — so after five minutes it stops
+asking and goes back to showing whatever the interval brings in. Without that,
+"ask while the user is watching" would be a one-a-minute poll for as long as a
+forgotten window stays on screen, which is a different thing wearing the same
+justification. See
+[ADR-0011](../adr/ADR-0011-limits-are-read-when-someone-is-looking.md).
 
 **A failed refresh leaves the previous reading alone.** A read that failed says
 nothing about the numbers it failed to fetch, and replacing a ten-minute-old

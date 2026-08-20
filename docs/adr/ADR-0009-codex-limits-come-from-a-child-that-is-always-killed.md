@@ -5,6 +5,7 @@ status: accepted
 date: 2026-08-19
 supersedes: null
 superseded_by: null
+amended_by: [ADR-0011]
 tags: [codex, quota, process, architecture]
 ---
 
@@ -71,6 +72,16 @@ because AgentBar is usually started while agents are already at work; a **Codex
 turn ending**, because that is when the number has just moved; and a
 **conservative interval**, default 30 minutes, because a Codex session in another
 editor spends quota this process never hears about.
+
+> **Amended on this point by
+> [ADR-0011](ADR-0011-limits-are-read-when-someone-is-looking.md), step 11.**
+> A fourth trigger was added — the panel being open — and three numbers in this
+> record moved with it. The interval is **ten minutes**, not thirty, so "up to
+> half an hour stale" below is now up to ten. The tightest gap between two
+> readings is **one minute**, not two, and belongs to the new trigger; two
+> minutes still bounds everything else. The decision this record is *about* —
+> one child per reading, killed on every path — is unchanged and governs the new
+> trigger too.
 
 ## Consequences
 

@@ -32,6 +32,15 @@ public protocol PanelServices: AnyObject {
     /// error styling.
     func usageWindows() async -> [UsageWindow]
 
+    /// Says that the user is looking at the panel, so whoever owns the reading
+    /// can decide whether to take a fresh one.
+    ///
+    /// A *request*, not a fetch: it returns immediately and never waits for a
+    /// reading, because the panel's clock runs once a second and a reading costs
+    /// a child process. Throttling is the implementer's to do — the panel knows
+    /// that somebody is watching and nothing about what that is worth.
+    func requestUsageRefresh()
+
     /// The Caffeine indicator's state.
     ///
     /// Synchronous and cheap — a property read on the main actor, never I/O —
@@ -48,6 +57,8 @@ public protocol PanelServices: AnyObject {
 
 extension PanelServices {
     public func usageWindows() async -> [UsageWindow] { [] }
+    /// A panel with no quota behind it has nothing to ask for.
+    public func requestUsageRefresh() {}
 }
 
 /// The panel's state, refreshed from the store and from disk on different
@@ -139,6 +150,17 @@ public final class PanelModel {
     /// until it was closed and opened again.
     public func refreshUsage() async {
         usage = await services.usageWindows()
+    }
+
+    /// Asks for a fresh reading and then shows whatever is there now.
+    ///
+    /// The two halves are deliberately not the same reading: the request is for
+    /// the *next* one and lands seconds later, while the display is of the last
+    /// one to have landed. Anything else would make the open panel wait on a
+    /// child process once a second.
+    public func watchUsage() async {
+        services.requestUsageRefresh()
+        await refreshUsage()
     }
 
     /// Runs a card action and folds its result back into the row.

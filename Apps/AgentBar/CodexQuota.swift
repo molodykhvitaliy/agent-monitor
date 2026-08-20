@@ -1,3 +1,4 @@
+import AgentBarCore
 import AgentBarUI
 import CodexAppServer
 import Foundation
@@ -17,6 +18,7 @@ enum CodexQuota {
     static func usageWindows(from windows: [QuotaWindow]) -> [UsageWindow] {
         windows.map { window in
             UsageWindow(
+                provider: .codex,
                 name: UsageWindow.label(
                     name: window.limitName,
                     windowDuration: window.windowDuration,

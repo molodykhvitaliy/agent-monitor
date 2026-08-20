@@ -934,3 +934,76 @@ by `kill -9` against a running AgentBar holding one. That property is the whole
 argument against shelling out to `/usr/bin/caffeinate`, whose subprocess can be
 orphaned instead — see
 [ADR-0007](../adr/ADR-0007-caffeine-is-a-leased-process-owned-assertion.md).
+
+---
+
+## 8. The app icon — Icon Composer documents
+
+Verified 2026-08-19 against Xcode 26.6 / macOS 27.0, by rendering with
+`ictool` and by compiling with `actool` through `make build`.
+
+macOS 26 draws an app icon in more appearances than a bitmap can answer for:
+light, dark, a tinted menu bar and a clear treatment, each with the system's own
+depth, shadow and specular pass. A flat `.icns` gets pasted into all of them. The
+format that answers is a **layered Icon Composer document** — `AgentBar.icon`,
+committed at `Apps/AgentBar/AgentBar.icon` and compiled by `actool` into
+`Assets.car` alongside a generated `AgentBar.icns` for anything that still wants
+one.
+
+### 8.1 The document is a package with a fixed layout
+
+```
+AgentBar.icon/
+├── icon.json        the document
+└── Assets/          the layer artwork, SVG
+```
+
+**`Assets` is case-sensitive, on a case-insensitive filesystem.** Renaming it to
+`assets` makes `ictool` render the tile with no mark on it at all — background,
+shadow and specular, and nothing else — and `actool` throw
+`attempt to insert nil object from objects[0]` rather than say what is wrong.
+This is the trap the layout has: everything else about the document is still
+valid, so nothing points at the folder. `make verify-bundle` asserts every layer
+by name in the compiled `Assets.car` for that reason.
+
+### 8.2 `icon.json`
+
+```json
+{
+  "fill" : { "linear-gradient" : [ "extended-srgb:R,G,B,A", "extended-srgb:R,G,B,A" ] },
+  "groups" : [ { "layers" : [ { "image-name" : "apex.svg", "name" : "apex" } ] } ]
+}
+```
+
+- `image-name` carries the **extension**. Without it the layer is silently absent.
+- **Layers are front to back.** The first entry in `layers` is the topmost one —
+  the opposite of how a painter's algorithm reads, and the difference between the
+  design's accent node sitting on the edges and hiding behind them.
+- A linear gradient takes **exactly two** colours; the framework says so.
+- `supported-platforms` is `{"circles": [], "squares": ["macOS"]}` here. AgentBar
+  is macOS-only and the document should not claim otherwise.
+
+### 8.3 Rendering it without opening the app
+
+`ictool` ships inside Icon Composer and exports any rendition to a PNG, which is
+the whole verification loop for a document authored by hand:
+
+```bash
+ictool Apps/AgentBar/AgentBar.icon --export-image \
+  --output-file /tmp/icon.png --platform macOS \
+  --rendition Default --width 512 --height 512 --scale 1
+```
+
+Valid renditions, from the tool's own error text: `Default`, `Dark`, `Light`,
+`TintedLight`, `TintedDark`, `ClearLight`, `ClearDark`, `Mono`. `Tinted` and
+`Clear` on their own are not names. The binary is at
+`/Applications/Xcode.app/Contents/Applications/Icon Composer.app/Contents/Executables/ictool`.
+
+### 8.4 `LSUIElement` does not mean the icon is unused
+
+AgentBar has no Dock icon, and the icon still appears in Finder and Get Info, in
+Spotlight, in the login-items list, in System Settings › Notifications, and in
+the leading slot of every banner AgentBar posts — which is also why step 07 could
+drop the notification attachment's corner badge: the system was already showing
+this icon three centimetres away.
+

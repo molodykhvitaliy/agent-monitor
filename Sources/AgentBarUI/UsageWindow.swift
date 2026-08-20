@@ -1,3 +1,4 @@
+import AgentBarCore
 import Foundation
 
 /// One subscription usage window, as the Limits section renders it.
@@ -13,15 +14,21 @@ import Foundation
 /// Declared here rather than in a provider module for the same reason
 /// `IntegrationStatus` is: `AgentBarUI` may import only `AgentBarCore`. Step 10
 /// maps the App Server's own shape onto this in the app target.
-nonisolated
+///
+/// Deliberately **not** `Identifiable`. Its only candidate identity is the
+/// server's own name, which is optional and need not be unique — two unnamed
+/// windows, or two the App Server labels the same, would collide and SwiftUI
+/// would render one row where two were reported. The list is ordered and short,
+/// so position is the honest identity and `LimitsSectionView` keys on it.
+nonisolated public struct UsageWindow: Sendable, Hashable {
+    /// Whose window this is.
     ///
-    /// Deliberately **not** `Identifiable`. Its only candidate identity is the
-    /// server's own name, which is optional and need not be unique — two unnamed
-    /// windows, or two the App Server labels the same, would collide and SwiftUI
-    /// would render one row where two were reported. The list is ordered and
-    /// short, so position is the honest identity and `LimitsSectionView` keys on it.
-    public struct UsageWindow: Sendable, Hashable
-{
+    /// Carried on the window rather than inferred by the view, because the
+    /// Limits section names the service each bar belongs to and "the windows
+    /// are Codex's" is true only until a second provider reports quota. A view
+    /// that assumed it would be wrong silently, and would be wrong about which
+    /// subscription a bar at 94 % is describing.
+    public let provider: Provider
     /// The provider's own name for the window, verbatim. `nil` renders as
     /// `Usage`.
     public let name: String?
@@ -29,7 +36,8 @@ nonisolated
     public let fractionUsed: Double?
     public let resetsAt: Date?
 
-    public init(name: String?, fractionUsed: Double?, resetsAt: Date?) {
+    public init(provider: Provider, name: String?, fractionUsed: Double?, resetsAt: Date?) {
+        self.provider = provider
         self.name = name
         self.fractionUsed = fractionUsed
         self.resetsAt = resetsAt

@@ -36,7 +36,15 @@ public struct SettingsView: View {
             generalSection
         }
         .formStyle(.grouped)
-        .frame(minWidth: 560, minHeight: 520)
+        // Only a floor and a ceiling of infinity: the form fills whatever size
+        // the window has and scrolls when its content is taller. The floor is
+        // the window's own minimum rather than a number chosen next to it —
+        // when the two disagreed, SwiftUI laid the form out at *its* width and
+        // let the overhang be clipped. See `SettingsWindowLayout`.
+        .frame(
+            minWidth: SettingsWindowLayout.minimum.width, maxWidth: .infinity,
+            minHeight: SettingsWindowLayout.minimum.height, maxHeight: .infinity
+        )
         .task { await model.refresh() }
     }
 

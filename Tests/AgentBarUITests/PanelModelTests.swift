@@ -1,4 +1,5 @@
 import AgentBarCore
+import Foundation
 import Testing
 
 @testable import AgentBarUI
@@ -176,5 +177,103 @@ struct PanelModelTests {
         let labels = model.labels
         let names = model.snapshot.projects.map { labels.label(for: $0.project) }
         #expect(Set(names) == ["app · code", "app · feature-x"])
+    }
+
+    /// The request and the reading are deliberately not the same reading: the
+    /// request is for the *next* one and lands seconds later, while the display
+    /// is of the last one to have landed. Anything else would make the open
+    /// panel wait on a child process once a second.
+    @Test("Watching asks for a fresh reading and shows the one already there")
+    func watchUsageAsksAndShows() async {
+        let services = StubServices()
+        services.storedWindows = [
+            UsageWindow(provider: .codex, name: "Weekly", fractionUsed: 0.5, resetsAt: nil)
+        ]
+        let model = PanelModel(services: services)
+
+        await model.watchUsage()
+
+        #expect(services.usageRefreshRequests == 1)
+        #expect(model.usage.map(\.displayName) == ["Weekly"])
+    }
+
+    /// Reading alone must not ask. Every install action and every integration
+    /// refresh go through `refreshUsage`, and a request from there would be a
+    /// child process taken because somebody pressed Install — while the panel's
+    /// closed-panel clock, which sweeps and re-reads the store, asks for
+    /// neither.
+    @Test("Reading the windows without watching asks for nothing")
+    func refreshUsageDoesNotAsk() async {
+        let services = StubServices()
+        let model = PanelModel(services: services)
+
+        await model.refreshUsage()
+        await model.refreshIntegrations()
+
+        #expect(services.usageRefreshRequests == 0)
+    }
+}
+
+/// What the open panel's one-second clock decides.
+///
+/// The panel does not close by itself — `hidesOnDeactivate` is false and it is
+/// never key on the mouse path, so switching apps or Spaces leaves it up, which
+/// was verified against the running app. Without a bound, "ask while the user
+/// is watching" is a child process a minute for as long as a forgotten panel
+/// stays on screen.
+@MainActor
+@Suite("Open-panel tick")
+struct OpenPanelTickTests {
+
+    @Test("A panel just opened is being watched")
+    func watchesAtFirst() {
+        #expect(MenuBarController.tick(isVisible: true, openFor: .zero) == .watch)
+        #expect(MenuBarController.tick(isVisible: true, openFor: .seconds(60)) == .watch)
+    }
+
+    @Test("A panel left open stops asking, and goes on showing")
+    func stopsEventually() {
+        #expect(
+            MenuBarController.tick(isVisible: true, openFor: MenuBarController.watchingWindow)
+                == .show)
+        #expect(MenuBarController.tick(isVisible: true, openFor: .seconds(60 * 60)) == .show)
+        #expect(MenuBarController.tick(isVisible: true, openFor: .seconds(24 * 60 * 60)) == .show)
+    }
+
+    /// The one the previous version could not answer: a panel taken off screen
+    /// by something that did not go through a dismissal path — `NSApp.hide` is
+    /// the one this app itself reaches for. Controller state would still say
+    /// "open", and the watching leg would go on spawning a child a minute with
+    /// nothing on screen.
+    @Test("A panel that is not on screen is not being watched, whatever the clock says")
+    func retiresWhenNotVisible() {
+        #expect(MenuBarController.tick(isVisible: false, openFor: .zero) == .retire)
+        #expect(MenuBarController.tick(isVisible: false, openFor: .seconds(60)) == .retire)
+        // And with no opening time recorded at all, which is what every
+        // dismissal path leaves behind.
+        #expect(MenuBarController.tick(isVisible: true, openFor: nil) == .retire)
+    }
+
+    /// A clock that ran backwards must not mean "watch for ever". It cannot
+    /// come from `ContinuousClock`, which is exactly why the guard is here
+    /// rather than trusted to be unreachable.
+    @Test("Negative elapsed time stops the watching rather than restarting it")
+    func negativeElapsed() {
+        #expect(MenuBarController.tick(isVisible: true, openFor: .seconds(-1)) == .show)
+        #expect(MenuBarController.tick(isVisible: true, openFor: .seconds(-60 * 60)) == .show)
+    }
+
+    /// The bound only means something if it is comfortably longer than the gap
+    /// it governs — a window shorter than a few gaps would ask once or twice and
+    /// read as broken — and short enough that a forgotten panel costs nothing.
+    ///
+    /// The gap is `QuotaSettings.watchingSpacing`, 60 seconds, which
+    /// `AgentBarUI` cannot name: it may import only `AgentBarCore`, and that
+    /// constant lives in `CodexAppServer`. `QuotaCadenceTests.spacingIsAMinute`
+    /// pins the other end of this sentence.
+    @Test("The window is worth several readings and far shorter than a day")
+    func windowIsSane() {
+        #expect(MenuBarController.watchingWindow >= .seconds(3 * 60))
+        #expect(MenuBarController.watchingWindow <= .seconds(15 * 60))
     }
 }

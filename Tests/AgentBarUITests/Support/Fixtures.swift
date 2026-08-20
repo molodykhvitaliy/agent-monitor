@@ -100,6 +100,14 @@ final class StubServices: PanelServices {
 
     func usageWindows() async -> [UsageWindow] { storedWindows }
 
+    /// Counted rather than ignored: this is the whole of the "limits refresh
+    /// while you are looking" feature at the seam, and the default
+    /// implementation on `PanelServices` is a no-op — so a stub that did not
+    /// override it would let the feature be deleted with a green suite.
+    private(set) var usageRefreshRequests = 0
+
+    func requestUsageRefresh() { usageRefreshRequests += 1 }
+
     var caffeineIndicator = CaffeineIndicator()
     private(set) var caffeineToggles = 0
 

@@ -66,6 +66,14 @@ final class AppServices: PanelServices {
         return await integration.perform(action)
     }
 
+    /// The panel is open and somebody is looking at the bars.
+    ///
+    /// `QuotaService` decides whether that is worth a reading; this only carries
+    /// the fact across the seam, and returns without waiting for one.
+    func requestUsageRefresh() {
+        quota?.userIsWatching()
+    }
+
     /// The last reading Codex gave, named for the panel.
     ///
     /// A property read behind an actor hop, never a fetch: the service refreshes

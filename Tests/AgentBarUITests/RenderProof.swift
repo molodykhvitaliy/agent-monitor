@@ -128,6 +128,13 @@ struct RenderProof {
     ///
     /// Rendered in the state that is easiest to get wrong: Caffeine holding, so
     /// the live status line and the picker are both showing something.
+    ///
+    /// > **At the size the window actually opens at, not at its natural size.**
+    /// > Rendering the form unconstrained was what hid the sizing defect this
+    /// > step fixed: the natural size is 744 × 1226, the render was happy with
+    /// > it, and the window adopted it and ran off the bottom of the screen.
+    /// > Constrained to `SettingsWindowLayout.ideal`, the PNG is what the user
+    /// > sees — including whether the matrix still fits across.
     @Test("The settings window, in both appearances")
     func renderSettings() throws {
         let services = StubSettingsServices()
@@ -150,6 +157,9 @@ struct RenderProof {
             setting: .whileWorking, isHolding: true, workingSessionCount: 2)
         let view = SettingsView(model: SettingsModel(services: services))
             .environment(\.accessibilityPreferences, AccessibilityPreferences.shared)
+            .frame(
+                width: SettingsWindowLayout.ideal.width,
+                height: SettingsWindowLayout.ideal.height)
         for dark in [false, true] {
             guard let image = RenderOutput.snapshot(view, dark: dark) else { continue }
             try RenderOutput.write(image, to: "settings-\(dark ? "dark" : "light")")
@@ -208,10 +218,10 @@ struct RenderProof {
             // Relative to now, because `LimitsSectionView` renders against the
             // clock and a fixed epoch would draw a nonsense reset time.
             UsageWindow(
-                name: "Weekly", fractionUsed: 0.34,
+                provider: .codex, name: "Weekly", fractionUsed: 0.34,
                 resetsAt: Date().addingTimeInterval(7800)),
             UsageWindow(
-                name: "Extra", fractionUsed: nil,
+                provider: .codex, name: "Extra", fractionUsed: nil,
                 resetsAt: Date().addingTimeInterval(3 * 86400)),
         ]
         return services

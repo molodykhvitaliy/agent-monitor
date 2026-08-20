@@ -83,7 +83,26 @@ verify-bundle: build ## Assert the built app bundle has the layout later steps d
 	    exit 1; \
 	  fi; \
 	done; \
-	echo "bundle ok: helper at Contents/MacOS/agentbar-helper, LSUIElement = true, 4 sounds"
+	if ! /usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$$app/Contents/Info.plist" \
+	     >/dev/null 2>&1; then \
+	  echo "error: CFBundleIconName is absent — the app would show a generic icon" >&2; \
+	  exit 1; \
+	fi; \
+	if [ ! -f "$$app/Contents/Resources/Assets.car" ]; then \
+	  echo "error: no Assets.car — the layered app icon was not compiled" >&2; \
+	  echo "  AgentBar.icon has to reach actool; check the resources phase in project.yml." >&2; \
+	  exit 1; \
+	fi; \
+	layers=$$(xcrun assetutil --info "$$app/Contents/Resources/Assets.car" 2>/dev/null); \
+	for layer in network apex; do \
+	  if ! printf '%s\n' "$$layers" | grep -q "AgentBar_Assets..$$layer"; then \
+	    echo "error: the '$$layer' icon layer is not in Assets.car" >&2; \
+	    echo "  A layered icon can compile to a tile with no mark on it — see" >&2; \
+	    echo "  docs/dev/platform-integration.md 8.1 — and only the layers say so." >&2; \
+	    exit 1; \
+	  fi; \
+	done; \
+	echo "bundle ok: helper at Contents/MacOS/agentbar-helper, LSUIElement = true, 4 sounds, layered icon"
 
 .PHONY: test
 test: ## Run SPM module tests (no Xcode required)
