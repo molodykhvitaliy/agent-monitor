@@ -145,7 +145,93 @@ nonisolated public enum DesignTokens {
         public static let sectionLabelTracking: CGFloat = 11 * 0.06
     }
 
+    /// Every duration and every curve the app animates with.
+    ///
+    /// Animation here exists to communicate three things and nothing else: that
+    /// a state changed, where a surface came from, and that a process is alive.
+    /// Anything else is decoration and does not ship — which is why this is a
+    /// closed list rather than a convenience: a view that needs a timing not in
+    /// it is proposing a fourth reason, and that is a design decision rather
+    /// than a layout one.
+    ///
+    /// Four prohibitions come with it, each one a thing that gets reached for:
+    /// no rotating spinner (it claims a duration the app does not know), no
+    /// flashing above 2 Hz, nothing decorative longer than 400 ms, and nothing
+    /// animating while its surface is closed.
+    public enum Motion {
+
+        // MARK: Curves
+
+        /// Entrances. A slight overshoot, so a surface reads as *arriving*
+        /// rather than as being switched on.
+        public static let entrance = UnitCurve.bezier(
+            startControlPoint: UnitPoint(x: 0.16, y: 0.9),
+            endControlPoint: UnitPoint(x: 0.24, y: 1))
+        /// Micro-movement and state settles.
+        public static let settle = UnitCurve.bezier(
+            startControlPoint: UnitPoint(x: 0.2, y: 0.8),
+            endControlPoint: UnitPoint(x: 0.2, y: 1))
+        /// Cyclical motion. Symmetric, so there is no jolt at the loop point.
+        public static let cycle = UnitCurve.easeInOut
+        /// The menu-bar Waiting pulse's own ease. Fast out, slow in — the ring
+        /// leaves the apex quickly and spends the rest of the cycle fading.
+        public static let pulse = UnitCurve.bezier(
+            startControlPoint: UnitPoint(x: 0.2, y: 0.6),
+            endControlPoint: UnitPoint(x: 0.3, y: 1))
+
+        // MARK: Durations
+
+        /// A surface arriving from the top: the panel, the onboarding.
+        public static let drop: Duration = .milliseconds(600)
+        /// A step change, or a result line appearing.
+        public static let rise: Duration = .milliseconds(400)
+        /// Any glyph state gaining fill.
+        public static let stateInto: Duration = .milliseconds(280)
+        /// Back to idle. Fade only, no movement.
+        public static let stateBack: Duration = .milliseconds(320)
+        /// Button press feedback, and the collapse into Failed.
+        public static let micro: Duration = .milliseconds(180)
+        /// The Reduce Motion substitute for every entrance and step change.
+        /// Deliberately the same 150 ms as `AccessibilityPreferences.rowAnimation`.
+        public static let crossFade: Duration = .milliseconds(150)
+
+        // MARK: Cycles
+
+        public static let waitingPulse: Duration = .milliseconds(2200)
+        public static let workingChase: Duration = .milliseconds(1500)
+        public static let hairlineSweep: Duration = .milliseconds(2400)
+        public static let meterSweep: Duration = .milliseconds(3400)
+        public static let dashCrawl: Duration = .milliseconds(4000)
+        public static let breathe: Duration = .milliseconds(3000)
+
+        /// Status-item frame sampling. 8 fps is enough for a 2.2 s ease and
+        /// halves the wake-ups against 12 — the perf probe notices the
+        /// difference and the eye does not.
+        public static let glyphFrameRate: Double = 8
+
+        /// A SwiftUI animation from a token pair, so no view spells either half.
+        public static func animation(_ duration: Duration, _ curve: UnitCurve) -> Animation {
+            .timingCurve(curve, duration: duration.seconds)
+        }
+
+        /// A repeating animation from a cycle token.
+        public static func repeating(_ duration: Duration, _ curve: UnitCurve) -> Animation {
+            animation(duration, curve).repeatForever(autoreverses: false)
+        }
+    }
+
     /// The separator between a state and its context, from one constant so it
     /// cannot drift into a hyphen somewhere.
     public static let separator = " · "
+}
+
+extension Duration {
+    /// Seconds, for the SwiftUI and AppKit APIs that take a `TimeInterval`.
+    ///
+    /// The tokens are declared as `Duration` because that is what a duration
+    /// is; this is the one conversion, so no view does the arithmetic.
+    nonisolated public var seconds: TimeInterval {
+        let (whole, attoseconds) = components
+        return TimeInterval(whole) + TimeInterval(attoseconds) / 1_000_000_000_000_000_000
+    }
 }

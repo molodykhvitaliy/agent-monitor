@@ -67,6 +67,33 @@ public final class AccessibilityPreferences {
     public var rowAnimation: Animation? {
         reduceMotion ? nil : .easeOut(duration: 0.15)
     }
+
+    /// How a surface arrives: its own entrance, or a cross-fade of the same
+    /// 150 ms `rowAnimation` already uses.
+    ///
+    /// Here rather than in each view, so no view reads `reduceMotion` to pick
+    /// an animation — the rule is one place, and a surface that forgets it is a
+    /// surface that slides for a user who asked for no sliding.
+    public func entranceAnimation(_ duration: Duration = DesignTokens.Motion.drop) -> Animation {
+        reduceMotion
+            ? DesignTokens.Motion.animation(DesignTokens.Motion.crossFade, .linear)
+            : DesignTokens.Motion.animation(duration, DesignTokens.Motion.entrance)
+    }
+
+    /// A step or content change inside a surface that is already on screen.
+    public var stepAnimation: Animation {
+        reduceMotion
+            ? DesignTokens.Motion.animation(DesignTokens.Motion.crossFade, .linear)
+            : DesignTokens.Motion.animation(DesignTokens.Motion.rise, .easeOut)
+    }
+
+    /// Whether a repeating indicator should run **at all**.
+    ///
+    /// Not "should it be slower": a cyclical animation under Reduce Motion is
+    /// stopped, not softened, and every indicator that reads this owes a static
+    /// appearance that is still visibly different from its resting state. A
+    /// working row must not look idle merely because nothing is moving.
+    public var runsCyclicalMotion: Bool { !reduceMotion }
 }
 
 extension EnvironmentValues {

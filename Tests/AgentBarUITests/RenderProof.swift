@@ -90,27 +90,42 @@ struct RenderProof {
 
     @Test("The five status glyphs, at eight times size")
     func renderGlyphs() throws {
-        let scale: CGFloat = 8
-        let kinds = SessionStateKind.allCases
-        let size = NSSize(
-            width: StatusItemGlyph.canvas * CGFloat(kinds.count) * scale,
-            height: StatusItemGlyph.canvas * scale)
+        let plans = SessionStateKind.allCases.map { GlyphFigure.plan(for: $0) }
+        try RenderOutput.write(Self.strip(of: plans, scale: 8), to: "glyphs")
+    }
+
+    /// The Waiting pulse, frame by frame, which is the one thing a still cannot
+    /// show and the one animation that ships.
+    @Test("Every frame of the Waiting pulse")
+    func renderPulseFrames() throws {
+        let count = GlyphFigure.frameCount(for: DesignTokens.Motion.waitingPulse)
+        let plans = (0..<count).map { index in
+            GlyphFigure.plan(
+                for: .waiting,
+                phase: GlyphFigure.waitingRestingPhase + Double(index) / Double(count))
+        }
+        try RenderOutput.write(Self.strip(of: plans, scale: 4), to: "glyph-pulse")
+    }
+
+    /// One row of figures on white, so a person can judge them side by side at a
+    /// size the menu bar never draws.
+    private static func strip(of plans: [GlyphPlan], scale: CGFloat) -> NSImage {
+        let cell = GlyphFigure.canvas * scale
+        let size = NSSize(width: cell * CGFloat(plans.count), height: cell)
         let strip = NSImage(size: size)
         strip.lockFocus()
         NSColor.white.setFill()
         NSRect(origin: .zero, size: size).fill()
-        for (index, kind) in kinds.enumerated() {
+        for (index, plan) in plans.enumerated() {
             NSGraphicsContext.saveGraphicsState()
             let transform = NSAffineTransform()
-            transform.translateX(
-                by: CGFloat(index) * StatusItemGlyph.canvas * scale, yBy: 0)
-            transform.scale(by: scale)
+            transform.translateX(by: CGFloat(index) * cell, yBy: 0)
             transform.concat()
-            StatusItemGlyph.draw(kind)
+            GlyphRenderer.draw(plan, size: cell)
             NSGraphicsContext.restoreGraphicsState()
         }
         strip.unlockFocus()
-        try RenderOutput.write(strip, to: "glyphs")
+        return strip
     }
 
     @Test("Both provider badges, large enough to judge")

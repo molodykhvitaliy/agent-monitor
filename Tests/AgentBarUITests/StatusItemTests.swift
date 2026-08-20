@@ -4,36 +4,12 @@ import Testing
 
 @testable import AgentBarUI
 
-/// The status item answers "does anything need me?" before the panel is opened,
-/// so its glyph and its sentence are the most important two things in the
-/// product.
+/// The status item answers "does anything need me?" before the panel is opened.
+/// The glyph itself is covered by `StatusItemGlyphTests`; this suite is the
+/// sentence VoiceOver reads instead of it.
 @MainActor
 @Suite("Status item")
 struct StatusItemTests {
-
-    @Test("Every state draws a distinct template glyph")
-    func glyphsAreDistinct() throws {
-        var seen: [Data] = []
-        for kind in SessionStateKind.allCases {
-            let image = StatusItemGlyph.image(for: kind)
-            #expect(image.isTemplate, "\(kind) is not a template image")
-            #expect(image.size == NSSize(width: 18, height: 18))
-            let data = try #require(
-                image.representations.first.flatMap {
-                    ($0 as? NSBitmapImageRep)?.representation(using: .png, properties: [:])
-                        ?? bitmapData(of: image)
-                })
-            #expect(!seen.contains(data), "\(kind) draws the same glyph as another state")
-            seen.append(data)
-        }
-    }
-
-    /// Nothing running takes the resting glyph rather than no glyph: a status
-    /// item with no image is an invisible, unclickable one.
-    @Test("No sessions still draws something")
-    func emptyStateDrawsIdle() {
-        #expect(StatusItemGlyph.image(for: nil).size.width == 18)
-    }
 
     /// The project is named only when exactly one session is in the leading
     /// state; otherwise the count carries it.
@@ -101,10 +77,4 @@ struct StatusItemTests {
                 == "AgentBar: 1 session failed in app · feature-x")
     }
 
-    private func bitmapData(of image: NSImage) -> Data? {
-        guard let tiff = image.tiffRepresentation,
-            let rep = NSBitmapImageRep(data: tiff)
-        else { return nil }
-        return rep.representation(using: .png, properties: [:])
-    }
 }

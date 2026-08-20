@@ -4,8 +4,19 @@ import SwiftUI
 /// The state-shape language: a distinct silhouette per state, so colour is
 /// never the only carrier.
 ///
-/// The same five shapes appear in the session row, the footer indicator and the
+/// The same shapes appear in the session row, the footer indicator and the
 /// menu-bar glyph. Their sizes differ per surface and their meaning does not.
+///
+/// > **One divergence, and it is deliberate rather than an oversight.** The
+/// > v2 menu-bar glyph draws Waiting as a filled apex with a ring leaving it
+/// > (`GlyphFigure`), and this view keeps the up-triangle. At 6–8 pt a ring
+/// > around a disc is mud, the triangle is the most legible small silhouette in
+/// > the set, and a row always carries a text label beside it. The two
+/// > alternatives are worse: a filled disc would make Waiting and Working the
+/// > same shape at row size, distinguished by colour alone, which breaks the
+/// > rule this type exists for; and a triangle at the glyph's apex would be a
+/// > triangle inside a triangle of nodes at 18 pt. Failed, Unknown, Idle and
+/// > Working still match the glyph exactly.
 public struct StateShapeView: View {
     private let kind: SessionStateKind
     private let size: CGSize

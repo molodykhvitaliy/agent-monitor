@@ -1,111 +1,171 @@
 import AgentBarCore
 import AppKit
 
-/// The five menu-bar glyphs, drawn rather than shipped.
+/// The menu-bar glyph: the three-node figure from `GlyphFigure`, drawn rather
+/// than shipped.
 ///
-/// Drawing settles two things by construction. A template image has one channel
-/// of alpha, so the canvas's coloured badge and background-coloured ring cannot
-/// survive — the badge is *punched out* of the glyph instead, and the shape
-/// alone is what the state-shape language relies on anyway. And a path cannot be
+/// Drawing settles two things by construction. **A template image has one
+/// channel of alpha**, so the canvas's coloured badge and coloured pulse ring
+/// cannot survive — everything here is shape and coverage, and the ring is an
+/// even-odd annulus rather than a stroke in an accent. And a path cannot be
 /// withdrawn between macOS releases the way an SF Symbol name can, which is what
 /// the old `"AB"` text fallback existed to survive.
 ///
-/// Geometry is `docs/dev/design-spec.md` § Status item: an 18 pt canvas with the
-/// glyph occupying the central 67 %.
+/// > **Why the figure changed.** The previous glyph was a filled 12 pt disc with
+/// > the badge punched out. It was clean and it was invisible: at 18 pt among a
+/// > dozen system items a plain disc has no identity, reads as a generic
+/// > indicator, and tells a first-time user nothing. Three nodes joined by
+/// > hairlines are not confusable with Wi-Fi, battery, Bluetooth or Control
+/// > Center, and they read as "several things, connected" — which is what the
+/// > app monitors.
+///
+/// Colour lives in the notification attachment, the panel row and the footer
+/// indicator. Never here.
 public enum StatusItemGlyph {
-    /// The menu-bar canvas.
-    static let canvas: CGFloat = 18
-    /// The glyph's outer diameter — 67 % of the canvas.
-    static let diameter: CGFloat = 12
-    /// Badge centres sit on the glyph's circumference at 45° upper-right. The
-    /// canvas draws them bottom-right in one strip and top-right in its zoomed
-    /// specimens; top-right is what its prose states and where macOS puts
-    /// badges.
-    static let badgeAngle = CGFloat.pi / 4
-    /// Cleared space around a badge, punched out of the glyph rather than
-    /// stroked.
-    static let badgeGap: CGFloat = 1
-    /// 40 % of the glyph.
-    static let waitingBadgeDiameter: CGFloat = 4.8
-    /// 33 % of the glyph.
-    static let failedBadgeSide: CGFloat = 4.0
-    static let failedBadgeCorner: CGFloat = 0.8
-    /// Nearly invisible on purpose: the resting state must not draw the eye.
-    static let idleOpacity: CGFloat = 0.4
+    /// The menu-bar canvas, from the figure it draws.
+    static let canvas = GlyphFigure.canvas
 
-    /// A template image for the given state, or for "nothing running" when
-    /// there is none.
+    /// The resting image for a state, or for "nothing running" when there is
+    /// none.
     ///
-    /// Cached, because the status item is redrawn whenever the aggregate state
-    /// moves and five images that never vary are not worth reallocating.
+    /// Always the first frame of that state's array, so the static image and the
+    /// animation cannot disagree about what the state looks like — including
+    /// under Reduce Motion, which shows exactly this.
     public static func image(for state: SessionStateKind?) -> NSImage {
-        let key = state ?? .idle
-        if let cached = cache[key] { return cached }
+        frames(for: state ?? .idle)[0]
+    }
+
+    /// Every frame of a state's cycle, or the single resting frame for a state
+    /// that does not animate.
+    ///
+    /// Cached, exactly as the static images were: the arrays are built once, are
+    /// small — eighteen 18 × 18 pt vector images at the largest — and the status
+    /// item redraws whenever the aggregate state moves.
+    public static func frames(for state: SessionStateKind) -> [NSImage] {
+        if let cached = cache[state] { return cached }
+        let built = build(state)
+        cache[state] = built
+        return built
+    }
+
+    /// How long the array covers, or `nil` when it is a single resting frame.
+    public static func cycle(for state: SessionStateKind?) -> Duration? {
+        guard let state else { return nil }
+        return GlyphFigure.cycle(for: state)
+    }
+
+    /// The interval between frames of an animating state.
+    static let frameInterval: TimeInterval = 1 / DesignTokens.Motion.glyphFrameRate
+
+    private static var cache: [SessionStateKind: [NSImage]] = [:]
+
+    private static func build(_ state: SessionStateKind) -> [NSImage] {
+        guard let cycle = GlyphFigure.cycle(for: state) else {
+            return [image(GlyphFigure.plan(for: state))]
+        }
+        let count = GlyphFigure.frameCount(for: cycle)
+        // Phase-shifted so the first frame is the resting one — the frame every
+        // static surface draws and the frame Reduce Motion leaves on screen.
+        let start = state == .waiting ? GlyphFigure.waitingRestingPhase : 0
+        return (0..<count).map { index in
+            image(GlyphFigure.plan(for: state, phase: start + Double(index) / Double(count)))
+        }
+    }
+
+    private static func image(_ plan: GlyphPlan) -> NSImage {
         let image = NSImage(size: NSSize(width: canvas, height: canvas), flipped: false) { _ in
-            draw(key)
+            GlyphRenderer.draw(plan, size: canvas)
             return true
         }
         // AppKit tints a template image for light, dark and a tinted menu bar,
-        // so everything drawn below is shape and coverage, never colour.
+        // so everything drawn is shape and coverage, never colour.
         image.isTemplate = true
-        cache[key] = image
         return image
     }
+}
 
-    private static var cache: [SessionStateKind: NSImage] = [:]
+/// Draws a `GlyphPlan` with AppKit, on a canvas whose y runs up.
+///
+/// Everything is filled in black at the plan's own coverage. A template image
+/// keeps only the alpha, and the surfaces that may use colour say so by drawing
+/// this into a tinted context rather than by asking for a colour here.
+enum GlyphRenderer {
+    static func draw(_ plan: GlyphPlan, size: CGFloat) {
+        let scale = size / GlyphFigure.canvas
+        let transform = NSAffineTransform()
+        transform.scale(by: scale)
 
-    static func draw(_ state: SessionStateKind) {
-        let centre = CGPoint(x: canvas / 2, y: canvas / 2)
-        let radius = diameter / 2
-        NSColor.black.setFill()
-        NSColor.black.setStroke()
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        transform.concat()
 
-        switch state {
-        case .working:
-            disc(at: centre, radius: radius).fill()
+        drawLinks(plan)
+        for node in plan.nodes { drawNode(node) }
+        if let pulse = plan.pulse { drawPulse(pulse) }
+    }
 
-        case .idle:
-            NSColor.black.withAlphaComponent(idleOpacity).setFill()
-            ring(at: centre, radius: radius, stroke: 1.3).fill()
+    private static func drawLinks(_ plan: GlyphPlan) {
+        guard plan.linkCoverage > 0 else { return }
+        let path = NSBezierPath()
+        for link in plan.links {
+            path.move(to: link.from)
+            path.line(to: link.to)
+        }
+        path.lineWidth = GlyphFigure.linkWidth
+        path.lineCapStyle = .round
+        if plan.linkIsDashed {
+            let dash = GlyphFigure.linkDash
+            path.setLineDash(dash, count: dash.count, phase: 0)
+        }
+        NSColor.black.withAlphaComponent(plan.linkCoverage).setStroke()
+        path.stroke()
+    }
 
-        case .unknown:
-            // Stroked rather than filled: a dashed outline is the one glyph
-            // that must never read as a solid disc.
-            let stroke: CGFloat = 1.4
-            let circle = NSBezierPath()
-            circle.appendArc(
-                withCenter: centre, radius: radius - stroke / 2, startAngle: 0, endAngle: 360)
-            circle.lineWidth = stroke
-            circle.setLineDash([2, 2], count: 2, phase: 0)
-            circle.stroke()
-
-        case .waiting:
-            let badgeRadius = waitingBadgeDiameter / 2
-            let origin = badgeCentre(centre, radius)
-            let glyph = disc(at: centre, radius: radius)
-            glyph.append(disc(at: origin, radius: badgeRadius + badgeGap))
-            glyph.windingRule = .evenOdd
-            glyph.fill()
-            disc(at: origin, radius: badgeRadius).fill()
-
-        case .failed:
-            let origin = badgeCentre(centre, radius)
-            let glyph = disc(at: centre, radius: radius)
-            glyph.append(
-                roundedSquare(
-                    at: origin,
-                    side: failedBadgeSide + badgeGap * 2,
-                    corner: failedBadgeCorner + badgeGap))
-            glyph.windingRule = .evenOdd
-            glyph.fill()
-            roundedSquare(at: origin, side: failedBadgeSide, corner: failedBadgeCorner).fill()
+    private static func drawNode(_ node: GlyphPlan.Node) {
+        guard node.coverage > 0, node.radius > 0 else { return }
+        let ink = NSColor.black.withAlphaComponent(node.coverage)
+        switch node.shape {
+        case .disc:
+            ink.setFill()
+            disc(at: node.centre, radius: node.radius).fill()
+        case .ring:
+            ink.setFill()
+            // Filled as an annulus rather than stroked: a stroke centred on the
+            // radius would put half its width outside the figure's stated
+            // bounding box, and the box is what the optical weight was checked
+            // against.
+            ring(at: node.centre, radius: node.radius, stroke: GlyphFigure.nodeStroke).fill()
+        case .dashedRing:
+            ink.setStroke()
+            let stroke = GlyphFigure.nodeStroke
+            let path = NSBezierPath()
+            path.appendArc(
+                withCenter: node.centre, radius: node.radius - stroke / 2,
+                startAngle: 0, endAngle: 360)
+            path.lineWidth = stroke
+            let dash = GlyphFigure.nodeDash
+            path.setLineDash(dash, count: dash.count, phase: 0)
+            path.stroke()
+        case .roundedSquare:
+            ink.setFill()
+            NSBezierPath(
+                roundedRect: CGRect(
+                    x: node.centre.x - node.radius, y: node.centre.y - node.radius,
+                    width: node.radius * 2, height: node.radius * 2),
+                xRadius: GlyphFigure.failedCorner, yRadius: GlyphFigure.failedCorner
+            ).fill()
         }
     }
 
-    static func badgeCentre(_ centre: CGPoint, _ radius: CGFloat) -> CGPoint {
-        CGPoint(
-            x: centre.x + radius * cos(badgeAngle),
-            y: centre.y + radius * sin(badgeAngle))
+    /// The pulse, as a **punched** annulus rather than a stroke.
+    ///
+    /// Outer circle, inner circle, even-odd — the same construction the old
+    /// badge gap used, and the only one available: a template image cannot carry
+    /// the coloured ring the prototype draws, so the ring has to be a shape.
+    private static func drawPulse(_ pulse: GlyphPlan.Pulse) {
+        guard pulse.coverage > 0, pulse.radius > pulse.stroke else { return }
+        NSColor.black.withAlphaComponent(pulse.coverage).setFill()
+        ring(at: pulse.centre, radius: pulse.radius, stroke: pulse.stroke).fill()
     }
 
     private static func disc(at centre: CGPoint, radius: CGFloat) -> NSBezierPath {
@@ -115,21 +175,12 @@ public enum StatusItemGlyph {
                 width: radius * 2, height: radius * 2))
     }
 
-    private static func roundedSquare(
-        at centre: CGPoint, side: CGFloat, corner: CGFloat
-    ) -> NSBezierPath {
-        NSBezierPath(
-            roundedRect: CGRect(
-                x: centre.x - side / 2, y: centre.y - side / 2, width: side, height: side),
-            xRadius: corner, yRadius: corner)
-    }
-
     /// An annulus as a fillable path: outer circle, inner circle, even-odd.
     private static func ring(
         at centre: CGPoint, radius: CGFloat, stroke: CGFloat
     ) -> NSBezierPath {
         let path = disc(at: centre, radius: radius)
-        path.append(disc(at: centre, radius: radius - stroke))
+        path.append(disc(at: centre, radius: max(0, radius - stroke)))
         path.windingRule = .evenOdd
         return path
     }

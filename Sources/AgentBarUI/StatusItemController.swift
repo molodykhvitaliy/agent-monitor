@@ -1,5 +1,6 @@
 import AgentBarCore
 import AppKit
+import Observation
 
 /// Owns the menu-bar presence for the whole app lifetime.
 ///
@@ -27,12 +28,28 @@ public final class StatusItemController {
     /// alone and makes the sentence wrong.
     private var shownDescription: String?
 
+    /// The frames of the state currently shown. One entry for a state that does
+    /// not animate, which is most of them.
+    private var frames: [NSImage] = []
+    private var frameIndex = 0
+    /// **One timer for the whole status item**, and only while the aggregate
+    /// state has something to animate. Idle, Failed and Unknown are static, and
+    /// leaving a timer running with an unchanging frame is a menu-bar app
+    /// costing a laptop battery for nothing.
+    private var animation: Timer?
+    private let accessibility: AccessibilityPreferences
+
     /// `onActivate` receives the button to anchor against and whether the click
     /// asked for keyboard focus.
-    public init(onActivate: @escaping (NSStatusBarButton, Bool) -> Void) {
+    public init(
+        accessibility: AccessibilityPreferences = .shared,
+        onActivate: @escaping (NSStatusBarButton, Bool) -> Void
+    ) {
+        self.accessibility = accessibility
         self.onActivate = onActivate
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         configureButton()
+        observeReduceMotion()
     }
 
     /// The anchor a panel positions itself against.
@@ -41,6 +58,7 @@ public final class StatusItemController {
     /// Removes the item from the menu bar. Present so teardown is explicit
     /// rather than a side effect of deallocation.
     public func remove() {
+        stopAnimating()
         NSStatusBar.system.removeStatusItem(statusItem)
     }
 
@@ -55,7 +73,7 @@ public final class StatusItemController {
         if shownState != .some(state) || shownWaitingCount != waiting {
             shownState = .some(state)
             shownWaitingCount = waiting
-            button.image = StatusItemGlyph.image(for: state)
+            showFrames(for: state)
             // Only above one. The common case is a single waiting session, and
             // a permanent "1" is noise; status items have no native badge, so
             // this is a title beside the glyph.
@@ -81,7 +99,8 @@ public final class StatusItemController {
             // worse than an unlabelled item.
             return
         }
-        button.image = StatusItemGlyph.image(for: nil)
+        frames = [StatusItemGlyph.image(for: nil)]
+        button.image = frames[0]
         button.imagePosition = .imageOnly
         button.setAccessibilityLabel(
             String(
@@ -92,6 +111,85 @@ public final class StatusItemController {
         // Both buttons, so a right-click reaches the same panel rather than
         // doing nothing at all.
         button.sendAction(on: [.leftMouseDown, .rightMouseDown])
+    }
+
+    // MARK: - Animation
+
+    /// Whether a state should be animated **right now**, which is not the same
+    /// question as whether it has a cycle: Reduce Motion turns every cycle in
+    /// the app off, and this is the one place the status item asks.
+    ///
+    /// A pure decision so it can be tested — `StatusItemController` itself needs
+    /// a real status bar, and no test builds one.
+    static func animates(_ state: SessionStateKind?, reduceMotion: Bool) -> Bool {
+        guard let state, !reduceMotion else { return false }
+        return GlyphFigure.animates(state)
+    }
+
+    /// Swaps in a state's frames and starts or stops the timer accordingly.
+    private func showFrames(for state: SessionStateKind?) {
+        frames =
+            state.map { StatusItemGlyph.frames(for: $0) } ?? [
+                StatusItemGlyph.image(for: nil)
+            ]
+        frameIndex = 0
+        // The resting frame goes up immediately rather than on the first tick,
+        // so a state change is visible at once even at 8 fps.
+        statusItem.button?.image = frames[0]
+        refreshAnimation()
+    }
+
+    /// Starts the timer, or invalidates it, from what is true now.
+    private func refreshAnimation() {
+        guard Self.animates(shownState.flatMap { $0 }, reduceMotion: accessibility.reduceMotion),
+            frames.count > 1
+        else {
+            stopAnimating()
+            // Back to the resting frame: a stopped cycle must not leave the
+            // glyph frozen mid-pulse, which reads as a rendering fault.
+            if let first = frames.first { statusItem.button?.image = first }
+            return
+        }
+        guard animation == nil else { return }
+        // `.common`, like the panel's clock: the menu bar's own tracking loop
+        // must not stop the glyph while the user drags across another item.
+        let timer = Timer(
+            timeInterval: StatusItemGlyph.frameInterval, repeats: true
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.advance() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        animation = timer
+    }
+
+    private func stopAnimating() {
+        animation?.invalidate()
+        animation = nil
+    }
+
+    private func advance() {
+        guard frames.count > 1 else { return }
+        frameIndex = (frameIndex + 1) % frames.count
+        statusItem.button?.image = frames[frameIndex]
+    }
+
+    /// Re-arms itself on every change, which is how `@Observable` is read from
+    /// outside a SwiftUI view.
+    ///
+    /// `AccessibilityPreferences` is already the app's one observer of the
+    /// system's accessibility settings, and the handoff's rule is to extend it
+    /// rather than add a second mechanism. Registering for the workspace
+    /// notification again here would be that second mechanism.
+    private func observeReduceMotion() {
+        withObservationTracking {
+            _ = accessibility.reduceMotion
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                self.observeReduceMotion()
+                self.refreshAnimation()
+            }
+        }
     }
 
     /// A click never asks for keyboard focus. That is the rule the product
