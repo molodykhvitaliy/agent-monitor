@@ -628,6 +628,25 @@ boundary that applied the event.
 The status item is redrawn only when `mostUrgentState` or `waitingSessionCount`
 actually moved. Everything else a snapshot changes is the panel's business.
 
+**One timer for the glyph, and it sleeps at rest.** Waiting pulses at 8 fps from
+a cached frame array; Idle, Failed, Unknown and Working are single cached images.
+`StatusItemController` invalidates the timer whenever the aggregate state has
+nothing to animate, and never starts one under Reduce Motion — which it learns
+through `AccessibilityPreferences`, the app's single observer of the system's
+accessibility settings, rather than by registering for the workspace notification
+a second time. The figure itself is `GlyphFigure`, shared by three renderers so
+the menu bar, the panel header and the notification art cannot drift apart.
+
+**The first-run flow is a second `PanelController`, not a `PanelContent` case.**
+It is presented once, anchored under a highlighted status item, and it sits
+*before* `PanelContent.decide` rather than inside it: that function chooses what
+an opened panel shows, and this is the surface a user meets before they know the
+panel exists. It reaches the same `PanelServices` and `SettingsServices` the
+panel and the settings window use, so the app has exactly one install path. The
+only thing it persists is one boolean. A three-second poll while an install step
+is showing is what makes a connection made in a terminal appear without a
+keystroke, and it runs only while that surface is up.
+
 **Install status is a UI-owned value type.** `IntegrationStatus` is declared in
 `AgentBarUI` and populated by the app target, which is the only place that links
 both a provider's installer and the views. The switch over
