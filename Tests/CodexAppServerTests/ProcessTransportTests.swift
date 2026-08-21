@@ -77,12 +77,25 @@ struct ProcessTransportTests {
     /// Waits for the child to go, or gives up. Polled rather than slept through:
     /// `SIGTERM` lands in single-digit milliseconds and the reaping is
     /// Foundation's, so the answer is usually immediate.
+    ///
+    /// > **Bounded by the clock rather than by a count of sleeps, and
+    /// > generously.** `Process.isRunning` turns false when *Foundation* reaps
+    /// > the child, on a queue this test does not own; on a machine saturated
+    /// > enough — a CI runner, or this repository's own suite running beside a
+    /// > build — that reaping is simply late. Two hundred ten-millisecond sleeps
+    /// > looks like two seconds and is not: it is two hundred sleeps that each
+    /// > take as long as the scheduler feels like, and it still ran out. A
+    /// > passing test pays none of the ceiling below, because it returns the
+    /// > moment the child is gone; only a real regression waits for it.
+    static let exitAllowance: Duration = .seconds(10)
+
     static func waitForExit(_ transport: CodexProcessTransport) async -> Bool {
-        for _ in 0..<200 {
+        let deadline = ContinuousClock.now + exitAllowance
+        while ContinuousClock.now < deadline {
             if !transport.isChildRunning { return true }
             try? await Task.sleep(for: .milliseconds(10))
         }
-        return false
+        return !transport.isChildRunning
     }
 
     /// Ignores `SIGTERM` outright. `trap "" TERM` is the shell saying "this

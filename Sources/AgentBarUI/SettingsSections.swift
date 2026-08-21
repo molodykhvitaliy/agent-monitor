@@ -32,7 +32,7 @@ extension SettingsView {
             }
             .disabled(!model.preferences.quietHoursEnabled)
         } header: {
-            sectionHeader(String(localized: "Quiet Hours", comment: "Settings section"))
+            sectionHeader(SettingsSection.quietHours.title, anchor: .quietHours)
         } footer: {
             footnote(
                 String(
@@ -89,7 +89,7 @@ extension SettingsView {
             }
             focusList
         } header: {
-            sectionHeader(String(localized: "While You're Working", comment: "Settings section"))
+            sectionHeader(SettingsSection.focus.title, anchor: .focus)
         } footer: {
             footnote(
                 String(
@@ -162,7 +162,7 @@ extension SettingsView {
                 }
             }
         } header: {
-            sectionHeader(String(localized: "Sounds", comment: "Settings section"))
+            sectionHeader(SettingsSection.sounds.title, anchor: .sounds)
         } footer: {
             footnote(
                 String(
@@ -192,7 +192,7 @@ extension SettingsView {
                     .foregroundStyle(ColorToken.stateFailed.color)
             }
         } header: {
-            sectionHeader(String(localized: "General", comment: "Settings section"))
+            sectionHeader(SettingsSection.general.title, anchor: .general)
         } footer: {
             footnote(
                 String(
@@ -235,10 +235,59 @@ extension SettingsView {
 
             caffeineStatus
         } header: {
-            sectionHeader(String(localized: "Caffeine", comment: "Settings section"))
+            sectionHeader(SettingsSection.caffeine.title, anchor: .caffeine)
         } footer: {
             footnote(CaffeineIndicator.limitation)
         }
+    }
+
+    // MARK: - About
+
+    /// The last section, and the only one that is not a setting.
+    ///
+    /// It exists because the sidebar's last row has to lead somewhere, and
+    /// because there is exactly one thing about this app worth stating in the
+    /// interface rather than in a README: **it never talks to Anthropic or
+    /// OpenAI.** That is a non-negotiable of the project rather than a feature,
+    /// and a user who is about to let a menu-bar app watch their coding sessions
+    /// is entitled to read it without leaving the window.
+    var aboutSection: some View {
+        Section {
+            HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Space.medium) {
+                Text(verbatim: "AgentBar")
+                    .font(DesignTokens.Text.rowTitle)
+                Text(Self.versionSummary)
+                    .font(DesignTokens.Text.caption.monospacedDigit())
+                    .foregroundStyle(accessibility.secondaryInk.color)
+                Spacer(minLength: DesignTokens.Space.small)
+            }
+        } header: {
+            sectionHeader(SettingsSection.about.title, anchor: .about)
+        } footer: {
+            footnote(
+                String(
+                    localized: """
+                        AgentBar reads what Claude Code and Codex already tell it through their \
+                        own hooks, on this Mac only. It makes no network request to Anthropic or \
+                        OpenAI, and it never answers a permission prompt for you.
+                        """,
+                    comment: "The one claim about the app worth making in the interface"))
+        }
+    }
+
+    /// The running version, or a plain sentence when there is no bundle to ask —
+    /// which is every `swift test` run, and is not a reason to show a lie like
+    /// `0.0`.
+    static var versionSummary: String {
+        let info = Bundle.main.infoDictionary
+        guard let short = info?["CFBundleShortVersionString"] as? String, !short.isEmpty else {
+            return String(
+                localized: "version unavailable", comment: "Shown when the bundle has no version")
+        }
+        if let build = info?["CFBundleVersion"] as? String, !build.isEmpty, build != short {
+            return "\(short) (\(build))"
+        }
+        return short
     }
 
     /// One line, carrying the state shape as well as the sentence — the same

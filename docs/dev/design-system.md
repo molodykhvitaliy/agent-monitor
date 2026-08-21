@@ -458,6 +458,21 @@ Every duration and curve lives in `DesignTokens.Motion`; no view spells either.
 `AccessibilityPreferences.rowAnimation`, so a cross-fade is one duration in the
 app rather than two that nearly agree.
 
+**Two curves for two kinds of loop, and picking the wrong one is visible.**
+`cycle` (ease-in-out) is for a loop that **returns** — a pulse, a breathe, a
+glow — and is always paired with `autoreverses: true`, so the value comes back
+the way it went and the loop point is not a seam. `traverse` (linear) is for a
+loop that **wraps**: the working hairline leaves one edge and re-enters from the
+other, and a wrapping loop restarts at its beginning rather than reversing.
+Ease-in-out puts the slowest part of the motion on both sides of that restart and
+the fastest in the middle, so the sweep crawls out of the left edge, races
+across, crawls to a halt at the right and reappears — a stutter, not a loop.
+Constant velocity is the only thing with no seam, and the travel has to start and
+end **off** the track, or the element pops into existence wherever the cycle
+begins. Both halves were wrong in the first build of the hairline and both had to
+change; `MotionTokenTests` pins the curve by its property — `value(at: t) == t` —
+rather than by its name.
+
 **Two rules that are easy to lose.** Every cyclical indicator owes a *static*
 appearance that carries the same fact its motion does — a working row under
 Reduce Motion still has to look different from an idle one, which is why the

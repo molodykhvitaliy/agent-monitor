@@ -21,7 +21,9 @@ import Testing
 /// linking, the socket round trip and exit — because that is the number the
 /// one-second cap applies to. It does not measure the shell Codex wraps the
 /// command in, which adds a millisecond or two of its own.
-@Suite("Helper timing proof", .serialized)
+/// `.timeLimit`: `drainsALargePayload` joins a writer thread through a
+/// semaphore with no deadline of its own, same reasoning as `RelayTests`.
+@Suite("Helper timing proof", .serialized, .timeLimit(.minutes(1)))
 struct HelperTimingProof {
     static var binary: URL? {
         guard let path = ProcessInfo.processInfo.environment["AGENTBAR_HELPER_BINARY"],
@@ -118,8 +120,11 @@ struct HelperTimingProof {
             binary, payload: payload, discovery: "/nonexistent/endpoint.json")
         // The write completing at all is the assertion: a helper that exited
         // without draining would have handed the writer EPIPE somewhere around
-        // the first 64 KB.
+        // the first 64 KB. The failure is asserted alongside the count, because
+        // a count that was assigned regardless of the outcome would make this a
+        // tautology — which is what it briefly was.
         #expect(result.status == 0)
+        #expect(result.writeFailure == nil, "the writer was cut off: \(result.writeFailure as Any)")
         #expect(result.wrote == payload.count)
     }
 
@@ -136,6 +141,11 @@ struct HelperTimingProof {
         let output: Data
         let errorOutput: Data
         let wrote: Int
+        /// Why the write stopped short, when it did. Carried rather than
+        /// discarded so a short write says *what went wrong* — `EPIPE` from a
+        /// helper that stopped draining reads very differently from a
+        /// descriptor that was never writable.
+        let writeFailure: (any Error)?
     }
 
     static func execute(_ binary: URL, payload: Data, discovery: String? = nil) throws -> Result {
@@ -154,12 +164,35 @@ struct HelperTimingProof {
         process.standardError = errorOutput
         try process.run()
 
+        // The helper's own read is bounded (ADR-0013), so it can exit while this
+        // payload is still going in — and writing into a child that has gone
+        // raises SIGPIPE, which no `catch` can answer. The same guard the relay
+        // socket carries, on the descriptor `Process` handed us. Asserted, not
+        // discarded: this is the one syscall here whose failure is fatal to the
+        // whole test process rather than to one expectation.
+        try #require(fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1) == 0)
+
         // Written from another thread: a payload larger than the pipe buffer
         // blocks until the helper reads it, which is the behaviour under test.
-        nonisolated(unsafe) var wrote = 0
+        //
+        // > **The failure is recorded, never swallowed.** `drainsALargePayload`
+        // > asserts that the write completed, and that assertion is the only
+        // > thing standing between a helper that stops draining and a green
+        // > suite: it would hand this writer `EPIPE` around the first 64 KB. A
+        // > `try?` here would eat that and report a whole write — the assertion
+        // > would still pass and the helper would be doing exactly what the
+        // > safe-superset rule forbids.
+        let outcome = WriteOutcome()
         let writer = Thread {
-            input.fileHandleForWriting.write(payload)
-            wrote = payload.count
+            // `write(contentsOf:)` rather than the legacy `write(_:)`: the
+            // legacy one reports EPIPE as an Objective-C exception, which Swift
+            // cannot catch at all.
+            do {
+                try input.fileHandleForWriting.write(contentsOf: payload)
+                outcome.finish(written: payload.count)
+            } catch {
+                outcome.finish(written: 0, failure: error)
+            }
             try? input.fileHandleForWriting.close()
         }
         writer.start()
@@ -167,8 +200,13 @@ struct HelperTimingProof {
         let collected = output.fileHandleForReading.readDataToEndOfFile()
         let collectedErrors = errorOutput.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
+        // Joined through the semaphore rather than read across threads. The
+        // child having exited orders nothing with respect to the writer, so
+        // reading the count here without the wait would be a race — and one
+        // whose answer is the test's whole verdict.
+        let (wrote, failure) = outcome.wait()
         return Result(
             status: process.terminationStatus, output: collected, errorOutput: collectedErrors,
-            wrote: wrote)
+            wrote: wrote, writeFailure: failure)
     }
 }

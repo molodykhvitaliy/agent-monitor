@@ -101,6 +101,44 @@ nonisolated public enum DesignTokens {
         public static let staticFill: CGFloat = 0.40
     }
 
+    /// The settings window's navigation column.
+    ///
+    /// Its width is not only a taste decision: it is added to
+    /// `SettingsWindowLayout.minimum`, because the matrix in the content pane
+    /// still has to be drawable whole beside it. A sidebar that took its width
+    /// out of the content's is the clipped-verb-labels defect again, one surface
+    /// over.
+    public enum SettingsSidebar {
+        /// 200 in the mock, and 212 here. At the system's own sidebar text size
+        /// the longest section name — *While You're Working* — does not fit in
+        /// 200, and the two ways to make it fit were shrinking the text below
+        /// what macOS uses for a sidebar or truncating a navigation label. Both
+        /// are worse than twelve points of width.
+        public static let width: CGFloat = 212
+        public static let sidePadding: CGFloat = 10
+        /// The gap between the traffic lights and the app's mark below them.
+        ///
+        /// Only the gap. The **room** for the buttons themselves is not spelled
+        /// here and must not be: a `fullSizeContentView` window publishes a
+        /// 32 pt top safe-area inset, SwiftUI lays the whole view out inside it,
+        /// and a second hardcoded 32 here would push everything down twice.
+        /// What the surface owes the safe area is the opposite — its glass has
+        /// to ignore it, or the buttons sit on a bare strip above the sidebar.
+        public static let markTopPadding: CGFloat = 6
+        public static let markSize: CGFloat = 16
+        public static let itemInset: CGFloat = 10
+        public static let itemVerticalPadding: CGFloat = 7
+        public static let itemSpacing: CGFloat = 2
+        public static let itemRadius: CGFloat = 9
+        public static let symbolBox: CGFloat = 16
+        public static let symbolPointSize: CGFloat = 12
+        public static let symbolGap: CGFloat = 9
+        /// The selected row's fill, as an opacity on the accent. No hairline —
+        /// the fill is the whole of the treatment.
+        public static let selectionFillLight: Double = 0.14
+        public static let selectionFillDark: Double = 0.18
+    }
+
     public enum Row {
         public static let verticalPadding: CGFloat = 9
         public static let horizontalPadding: CGFloat = 4
@@ -227,8 +265,24 @@ nonisolated public enum DesignTokens {
         public static let settle = UnitCurve.bezier(
             startControlPoint: UnitPoint(x: 0.2, y: 0.8),
             endControlPoint: UnitPoint(x: 0.2, y: 1))
-        /// Cyclical motion. Symmetric, so there is no jolt at the loop point.
+        /// Cyclical motion that **returns** — a pulse, a breathe, a glow.
+        /// Symmetric, and paired with `autoreverses: true`, so the value comes
+        /// back the way it went and there is no jolt at the loop point.
         public static let cycle = UnitCurve.easeInOut
+        /// Cyclical motion that **wraps** — the working hairline's sweep, and
+        /// anything else that leaves one edge and re-enters from the other.
+        ///
+        /// > **Not `cycle`, and the difference is the whole of a bug.** A
+        /// > wrapping loop restarts at its beginning rather than reversing, so
+        /// > the eye sees the seam. An ease-in-out puts the slowest part of the
+        /// > motion on both sides of that seam and the fastest in the middle:
+        /// > the sweep crawls out of the left edge, races across, crawls to a
+        /// > halt at the right, and reappears at the left — which reads as a
+        /// > stutter, not as a loop. Linear is the only curve with no seam,
+        /// > because it has the same velocity everywhere, including across the
+        /// > wrap. The travel must also start and end **off** the track, or the
+        /// > element pops into existence wherever the cycle begins.
+        public static let traverse = UnitCurve.linear
         /// The menu-bar Waiting pulse's own ease. Fast out, slow in — the ring
         /// leaves the apex quickly and spends the rest of the cycle fading.
         public static let pulse = UnitCurve.bezier(

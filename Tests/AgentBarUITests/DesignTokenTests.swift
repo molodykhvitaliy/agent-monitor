@@ -111,6 +111,29 @@ struct MotionTokenTests {
         }
     }
 
+    /// The curve a **wrapping** loop takes, pinned as the property that makes it
+    /// the right one rather than as a name.
+    ///
+    /// The working hairline restarts at its beginning instead of reversing, so
+    /// the eye sees the seam between one cycle and the next. Only a curve with
+    /// the same velocity everywhere has no seam — and constant velocity is
+    /// exactly `value(at: t) == t`. `cycle` is the opposite by design: it is
+    /// slowest at both ends, which is what puts a near-stop on each side of the
+    /// wrap and reads as a stutter. The two must not be the same token.
+    @Test("A wrapping cycle moves at one speed the whole way")
+    func traverseIsSeamless() {
+        for step in 0...10 {
+            let time = Double(step) / 10
+            #expect(
+                abs(DesignTokens.Motion.traverse.value(at: time) - time) < 0.0001,
+                "traverse is not constant-velocity at \(time)")
+        }
+        // The stutter this closed: an ease-in-out crawls out of one edge and
+        // crawls to a halt at the other.
+        #expect(DesignTokens.Motion.cycle.value(at: 0.1) < 0.1)
+        #expect(DesignTokens.Motion.cycle.value(at: 0.9) > 0.9)
+    }
+
     /// The Reduce Motion substitute is deliberately the same 150 ms the row
     /// animation already uses, so a cross-fade is one duration in the app rather
     /// than two that nearly agree.

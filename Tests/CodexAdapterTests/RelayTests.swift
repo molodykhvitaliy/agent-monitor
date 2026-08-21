@@ -12,7 +12,13 @@ import Testing
 /// helper is the one piece of AgentBar that runs inside somebody else's process
 /// tree with a millisecond budget, and a test that mocked the socket would prove
 /// nothing about the part that can actually fail.
-@Suite("Codex helper relay")
+/// `.timeLimit`: `drainsStandardInput` joins a writer thread through a
+/// semaphore with no deadline of its own, on the strength of
+/// `ProcessTransportTests.survivesWritingToADeadChild` proving a closed pipe's
+/// blocked `write` takes `EPIPE` rather than hanging. If that ever stops
+/// holding, the failure this suite should produce is a diagnosable timeout, not
+/// a wedged CI job.
+@Suite("Codex helper relay", .timeLimit(.minutes(1)))
 struct RelayTests {
 
     /// An endpoint with a real store behind it and the Codex decoder registered.
@@ -184,17 +190,41 @@ struct RelayTests {
 
     // MARK: - Standard input
 
+    /// > **This test killed the whole suite on CI, with signal 13.** Three
+    /// > separate things had to be true and all three were. The writer was a
+    /// > `Task.detached`, so it shared the cooperative pool with the
+    /// > `.serialized` standard-input suite, whose every test blocks a pool
+    /// > thread inside `poll` — on a loaded runner the writer simply did not get
+    /// > scheduled between two chunks. The drain therefore hit the **production**
+    /// > 400 ms ceiling, returned a fragment, and `close(readEnd)` ran while the
+    /// > writer was still blocked in `write`. And a pipe with no reader raises
+    /// > SIGPIPE, which is not something an `#expect` can answer: 796 passing
+    /// > tests died with the process. Each of the three is closed below.
     @Test("Standard input is drained to the end even past the size that will be relayed")
-    func drainsStandardInput() async throws {
+    func drainsStandardInput() throws {
         var descriptors: [Int32] = [0, 0]
-        #expect(pipe(&descriptors) == 0)
+        // `#expect` records and continues; a failed `pipe` would leave the
+        // descriptors at `[0, 0]` and the lines below would then mark the
+        // process's own stdin unsignalled, write half a megabyte into it and
+        // close it. Stop here instead.
+        try #require(pipe(&descriptors) == 0)
         let (readEnd, writeEnd) = (descriptors[0], descriptors[1])
+        // A write into a pipe whose reader has gone must be an error the loop
+        // below can see, never a signal that kills the test process. Per
+        // descriptor rather than a process-wide `signal(SIGPIPE, SIG_IGN)`,
+        // which would change how every other suite behaves.
+        try #require(fcntl(writeEnd, F_SETNOSIGPIPE, 1) == 0)
 
         // Far more than a pipe buffer holds, so the writer blocks and can only
         // finish if the reader keeps reading. A helper that stopped at its own
         // limit would leave this write incomplete — and hand Codex an EPIPE.
         let payload = [UInt8](repeating: 0x61, count: 512 * 1024)
-        let writer = Task.detached {
+        // A **thread**, not a `Task`, for the reason `StandardInputTests`
+        // already gives: the real writer is a separate process that this one's
+        // cooperative pool cannot starve, so a harness that can be starved is
+        // not faithful about which side is slow.
+        let counted = WriteOutcome()
+        let thread = Thread {
             var written = 0
             payload.withUnsafeBytes { buffer in
                 guard let base = buffer.baseAddress else { return }
@@ -208,15 +238,29 @@ struct RelayTests {
                 }
             }
             close(writeEnd)
-            return written
+            counted.finish(written: written)
         }
+        thread.start()
 
-        let drained = StandardInput.drain(limit: 1024, from: readEnd)
+        // A ceiling far above the production one, deliberately. The claim here
+        // is that the drain does not stop at the **relay's** limit — that it
+        // keeps reading past the 1024 bytes it will actually send. Whether the
+        // production bounds are generous enough for a real payload is a
+        // different claim, and `StandardInputTests` makes it against the
+        // production numbers where it belongs. Measuring both here made this
+        // test's verdict depend on how busy the machine was.
+        let drained = StandardInput.drain(limit: 1024, ceiling: .seconds(30), from: readEnd)
+        // Closed **before** the join, and that order is the whole point of the
+        // `F_SETNOSIGPIPE` above. If the drain ever did give up early the writer
+        // would still be blocked in `write`, and joining first would wait for a
+        // thread that is waiting for this close. Closing first hands it EPIPE,
+        // the loop ends, and the test reports a short write instead of hanging.
         close(readEnd)
-        let written = await writer.value
+        let written = counted.waitForCount()
 
         #expect(written == payload.count)
         #expect(drained.total == payload.count)
         #expect(drained.data.count == 1024)
     }
+
 }

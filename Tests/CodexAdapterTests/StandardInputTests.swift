@@ -36,7 +36,26 @@ struct StandardInputTests {
             guard pipe(&descriptors) == 0 else {
                 throw PipeUnavailable(code: errno)
             }
-            (readEnd, writeEnd) = (descriptors[0], descriptors[1])
+            let (readEnd, writeEnd) = (descriptors[0], descriptors[1])
+            // A write into a pipe whose reader has gone must be an error, never
+            // a signal. Every test here leaves a writer running behind a reader
+            // that has already given up, and SIGPIPE would take the whole test
+            // process — 796 passing tests with it — rather than fail one
+            // expectation. Per descriptor, so no other suite's behaviour
+            // changes. See the note on `RelayTests.drainsStandardInput`.
+            //
+            // Asserted, and both descriptors are closed by hand on the failure
+            // path: an initialiser that throws after its stored properties are
+            // set does not run `deinit`, so `self.readEnd`/`self.writeEnd`
+            // assigned below and then abandoned would leak both ends.
+            guard fcntl(writeEnd, F_SETNOSIGPIPE, 1) == 0 else {
+                let code = errno
+                close(readEnd)
+                close(writeEnd)
+                throw PipeUnavailable(code: code)
+            }
+            self.readEnd = readEnd
+            self.writeEnd = writeEnd
         }
 
         func write(_ text: String) {

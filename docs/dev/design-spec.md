@@ -357,7 +357,8 @@ app. Under a working row's command line:
 height     2 pt, radius 2 · margin 7 pt above
 track      ColorToken.meterTrack
 fill       a 40 %-wide sweep, transparent → stateWorking → transparent
-motion     2400 ms, ease-in-out, indeterminate
+motion     2400 ms, linear (Motion.traverse), indeterminate
+travel     from fully off the left edge to fully off the right
 ```
 
 **Deliberately not a spinner.** A spinner claims a duration AgentBar does not
@@ -367,9 +368,29 @@ sweep's ends are transparent so it has no edge to catch the eye — an edge woul
 read as a boundary between "done" and "not done", which is a claim this cannot
 make.
 
-Under Reduce Motion it renders as a **static 40 % fill at the left**: not hidden
-and not frozen mid-sweep, because a working row still has to look different from
-an idle one.
+Under Reduce Motion — and behind a dismissed panel — it renders as a **static
+40 % fill at the left**: not hidden and not frozen mid-sweep, because a working
+row still has to look different from an idle one.
+
+> **It stuttered, and the cause was the shape of the loop rather than its speed.**
+> The first build travelled from the track's left edge to its right on the `cycle`
+> curve, repeating without autoreverse. Both halves are wrong for a loop that
+> wraps. The travel began *inside* the track, so every cycle ended with a
+> 40 %-wide bar appearing out of nothing at the left edge; and ease-in-out spends
+> its slowest moments at both ends of the travel, putting a near-stop on each side
+> of that seam. What the eye saw was pop, crawl, race, crawl, pop. The fix is the
+> two lines above — linear, and off the track at both ends — and the rule behind
+> it is in [design-system.md](design-system.md#motion): `cycle` is for a loop that
+> returns, `traverse` for a loop that wraps.
+>
+> The moving sweep and the parked one are also **two views, not one offset with a
+> conditional animation.** A `repeatForever` animation is started by a value
+> *change*, so re-entering the moving state — a user turning Reduce Motion off
+> with the panel open, or the panel coming back on screen — finds a single shared
+> flag already at its end value, fires nothing, and leaves the row with an empty
+> track for as long as it lives. That defect has now been fixed twice from
+> opposite directions; giving the moving bar its own view gives it a fresh state
+> and a fresh `onAppear` every time, so it cannot fail to re-arm.
 
 **Inline row actions are not shipped.** The mock draws `Reply` and `Open` inside
 a waiting row. The panel is a status surface — clicking a row already opens the
@@ -1244,9 +1265,10 @@ footer gear for it; the sound matrix has to be editable, so the screen exists
 now.
 
 **It is deliberately not the panel's vocabulary.** A settings window is system
-chrome: an ordinary titled `NSWindow` with a grouped SwiftUI `Form` and native
-controls. Three reasons. macOS users already know what one looks like and how it
-behaves. Reproducing the panel's glass in a resizable window would need the dark
+chrome: a titled `NSWindow` — with the title bar made transparent in v2, so the
+buttons sit on the sidebar — around a sidebar and a grouped SwiftUI `Form` of
+native controls. Three reasons. macOS users already know what one looks like and
+how it behaves. Reproducing the panel's glass in a resizable window would need the dark
 chip inks [design-system.md](design-system.md) says do not exist yet, which would
 mean designing rather than transcribing. And a form of standard controls inherits
 every accessibility behaviour — focus order, VoiceOver, Full Keyboard Access —
@@ -1262,10 +1284,86 @@ in would be worse than the focus rule it would be honouring. Closing it calls
 `NSApp.hide` — otherwise an accessory app is left active with nothing on screen
 and every keystroke going nowhere.
 
-Opens at 720 × 640, resizable, and **never larger than the screen it opens on**.
-The resize minimum is 638 × 420, and it is **derived** — from what the matrix
-needs at every provider the domain has, plus the grouped form's own insets —
-rather than chosen beside it. It scrolls vertically; it never scrolls horizontally.
+Opens at 932 × 640, resizable, and **never larger than the screen it opens on**.
+The resize minimum is 850 × 420, and it is **derived** — from what the matrix
+needs at every provider the domain has, plus the grouped form's own insets, plus
+the sidebar's fixed width — rather than chosen beside it. It scrolls vertically;
+it never scrolls horizontally.
+
+### The sidebar
+
+**Added in v2**, and the one part of the mock this window had refused. The
+argument for refusing it was that there was no split view to give a selection
+fill to; the answer is that there is one now, because a settings window with
+seven sections and no navigation is a window you scroll to find things in.
+
+A fixed 212 pt column: the app's mark and name, a hairline, then one row per
+section. The rows are `Notifications`, `Quiet Hours`, `While You're Working`,
+`Sounds`, `Caffeine`, `General` and `About` — the last two beyond what the mock
+drew, because the mock did not know about them and dropping either would have
+hidden a real setting. The mock's width is 200; the extra twelve points are what
+*While You're Working* needs at the system's own sidebar text size, and shrinking
+the text to fit a mock is the wrong way round.
+
+- **Glass here and nowhere else in this window.** Long lists of settings text
+  over a blurred backdrop are measurably harder to read and the content pane has
+  no reason to show what is behind the window. Under Reduce Transparency the
+  sidebar becomes a flat `surface` fill, the same rule the panel already follows.
+- **The traffic lights sit on it**, with no title bar of their own —
+  `fullSizeContentView`, a transparent title bar, and a hidden title. Three
+  decisions that only work together, and the room for the buttons comes from the
+  window's own 32 pt safe-area inset: the sidebar's *content* respects it, its
+  *glass* ignores it. Paying for it twice pushes the whole interface an inch down
+  the window, and paying for it never puts the buttons on a bare strip.
+- **Selection is a filled pill** — radius 9, the accent at 0.14 light / 0.18
+  dark, no hairline — and the row's ink takes the accent too, so the selection is
+  never carried by a fill alone. Hover on an unselected row is `hoverOverlay`.
+- **A focus ring**, read from inside the row's own `ButtonStyle` the way
+  `SessionRowButtonStyle` already does it in the panel — `.plain` draws no focus
+  indication of its own, and this is the one hand-rolled navigation list in a
+  window whose stated reason for native controls is that they inherit Full
+  Keyboard Access. The ring is the system accent rather than `stateWorking`, so
+  it cannot be mistaken for the selection fill it sits beside.
+- **SF Symbols, not the mock's hand-drawn figures.** A settings sidebar is the
+  most conventional list in macOS.
+
+**It scrolls the content pane; it does not switch panes.** The sections stay one
+continuous column with the preview block at its head — which is the only way the
+preview can be what the design asks it to be, *above every section* rather than
+above one of them — and a sidebar row moves the scroll to that section's heading.
+The lit row therefore follows the last row pressed rather than the scroll
+position, and that is a deliberate limit: making it follow the scroll means
+measuring section frames on every scrolled frame, and publishing a measurement
+out of layout is what once cost this app 98 % of a core in the panel.
+
+The anchors live on the **section headings**, not on the `Section`s. A `Section`
+in a grouped `Form` is a layout container rather than a view in the scroll's own
+content, and an `.id` on one is not reliably what `ScrollViewReader` finds.
+
+**Pressing the already-lit row scrolls to it too.** The request that drives the
+scroll carries a count as well as a section, and the count changes on every
+press including a repeat — because the lit row does not follow the scroll, a
+user who presses `Sounds`, reads on past it, and wants to come back has no
+other way to ask than pressing `Sounds` again, and a request keyed on the
+section alone would see no change and do nothing.
+
+A scroll view lays its content out **into** its safe area rather than stopping
+at it, so a heading at rest sits below the traffic lights but a scrolled row
+runs up to the window's bare top edge — a control sliced in half against
+nothing, with no title bar left to draw a material over it. The content pane
+covers that strip with its own `canvas` fill, sized from the same safe-area
+inset the sidebar reads, so a scrolled section stops exactly where the buttons
+begin rather than running under them.
+
+> The title is still set on the window even though nothing draws it: that is what
+> VoiceOver and the window list announce, and hiding a window's title bar is a
+> different decision from hiding its name.
+>
+> The window's own sizing had to change with the chrome. `contentLayoutRect` — the
+> part of the content *not obscured by the title bar* — is no longer the same
+> quantity `setContentSize` sets, so the re-showing path reads
+> `contentRect(forFrameRect:)` instead. Left alone it would have reported the
+> window as 32 pt shorter than it is and shrunk it by a title bar on every visit.
 
 > **Step 11: it opened 620 wide around a form that could not be drawn narrower
 > than 710.** SwiftUI does not refuse that. It lays the form out at 710 anyway,
@@ -1301,6 +1399,7 @@ rather than chosen beside it. It scrolls vertically; it never scrolls horizontal
 | `Sounds` | **Add Sound File…**, **Reveal Sounds Folder**, and every current sound problem |
 | `Caffeine` | The three-state setting, a live status line, and the limitation |
 | `General` | Launch at login, and its last error if it has one |
+| `About` | The running version, and the one claim about this app worth making in the interface: it reads what the two tools already tell it, on this Mac only, and makes no network request to Anthropic or OpenAI. Added in v2 so the sidebar's last row leads somewhere |
 
 Section headers use the panel's `sectionLabel` — 11 pt semibold, uppercase,
 tracked — in `ink400`. Every section has a footnote in Caption explaining the one
@@ -1331,9 +1430,9 @@ with reality is worse than no preview.*
   and the sound.
 - Static under Reduce Motion.
 
-The mock's **sidebar** treatment is deliberately not implemented. This window is
-a `Form`, not a split view; there is no sidebar to give a selection fill to, and
-introducing one is a restructure the design does not ask for.
+The preview keeps its place at the head of the content pane now that the
+[sidebar](#the-sidebar) exists — the sidebar scrolls that pane rather than
+replacing it, so *above every section* stays literally true.
 
 ### The matrix
 
@@ -1715,13 +1814,15 @@ Settings was the third row here until step 07. It is now a real surface — see
 joined it in step 08 as one more section, plus the footer indicator described
 under [Footer](#footer).
 
-Two more things v2 deliberately left unbuilt, both recorded so their absence is a
-decision rather than an oversight:
+One more thing v2 deliberately left unbuilt, recorded so its absence is a
+decision rather than an oversight. The settings sidebar was the second entry here
+and is no longer: it was refused on the grounds that the window was a `Form`
+rather than a split view, which was a statement about the implementation rather
+than about the design, and it is built — see [The sidebar](#the-sidebar).
 
 | Not built | Why, and what would change it |
 |---|---|
 | Inline row actions on a waiting row | The panel is a status surface and clicking a row already opens the session. Ship the panel, use it for a week, and see whether reaching a waiting session is slow. If it is, one `Open session` button is likely enough — see [Session row](#session-row) |
-| A sidebar in the settings window | The window is a `Form`, not a split view. The mock's sidebar-selection treatment has nothing to apply to, and adding a split view is a restructure this design does not ask for |
 
 And one that is **not** deferred but refused: a `Reply` field on a notification
 banner. It needs a channel from AgentBar into a running agent session, which is

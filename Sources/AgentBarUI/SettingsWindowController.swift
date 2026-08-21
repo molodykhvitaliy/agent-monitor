@@ -37,7 +37,7 @@ enum SettingsWindowLayout {
     /// the matrix had one column. Step 09 added the second and nothing
     /// re-measured the window it had to fit in.
     static let ideal = NSSize(
-        width: max(720, minimum.width), height: 640)
+        width: max(720 + DesignTokens.SettingsSidebar.width, minimum.width), height: 640)
 
     /// The smallest the user may drag it to: the width at which the matrix is
     /// at its floor and still whole, so no resize can clip it.
@@ -47,9 +47,16 @@ enum SettingsWindowLayout {
     /// provider added to the domain without a number changed here would clip
     /// the column it brings — the mistake this whole type exists to close, one
     /// provider later.
+    ///
+    /// > **The sidebar is added, not absorbed.** It is a fixed-width column
+    /// > beside the form rather than above it, so every point it takes is a
+    /// > point the matrix does not get. Deriving the minimum from the matrix
+    /// > alone once the sidebar existed would recreate the original defect
+    /// > exactly — a window narrower than the form inside it, resolved by
+    /// > clipping the verb labels with no scroller and no diagnostic.
     static let minimum = NSSize(
         width: NotificationMatrixView.minimumWidth(providers: Provider.allCases.count)
-            + formChromeWidth,
+            + formChromeWidth + DesignTokens.SettingsSidebar.width,
         height: 420)
 
     static func contentSize(fitting available: NSSize) -> NSSize {
@@ -69,6 +76,23 @@ enum SettingsWindowLayout {
     /// of zero size.
     private static func fit(_ wanted: CGFloat, _ available: CGFloat) -> CGFloat {
         available > 0 ? min(wanted, available) : wanted
+    }
+
+    /// The window's content size **as `setContentSize` would set it**.
+    ///
+    /// A named function rather than an expression at the one call site, because
+    /// the obvious alternative is wrong in a way nothing else would catch.
+    /// `contentLayoutRect` is the part of the content *not obscured by the title
+    /// bar*; since v2 the title bar is transparent and the content runs
+    /// underneath it, so that is 32 pt less than what `setContentSize` sets.
+    /// Comparing one against the other reports the window as shorter than it is
+    /// and shrinks it by a title bar on **every showing** — a window that loses
+    /// an inch a visit and no failing test anywhere. This is the exact inverse
+    /// of `setContentSize`, so the two cannot disagree, and
+    /// `SettingsWindowChromeTests` holds it.
+    @MainActor
+    static func currentContentSize(of window: NSWindow) -> NSSize {
+        window.contentRect(forFrameRect: window.frame).size
     }
 
     /// How much room a window has for *content* on a given screen: the visible
@@ -172,8 +196,21 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
 
         let window = NSWindow(
             contentViewController: SettingsWindowLayout.hostingController(model: model))
+        // Kept even though it is not drawn: the title is what VoiceOver and the
+        // window list announce, and hiding a window's name from the system is a
+        // different decision from hiding its title bar.
         window.title = String(localized: "AgentBar Settings", comment: "Settings window title")
-        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        // The traffic lights sit directly on the sidebar's glass, the way every
+        // native macOS window with a sidebar has since Big Sur. That needs three
+        // things together — the content view runs the full height of the frame,
+        // the title bar draws nothing of its own, and the title itself is not
+        // painted over the sidebar. `SettingsSidebar` reserves the room at its
+        // top; nothing else in the window may be placed under the buttons.
+        window.styleMask = [
+            .titled, .closable, .miniaturizable, .resizable, .fullSizeContentView,
+        ]
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
         window.isReleasedWhenClosed = false
         window.delegate = self
         fitToScreen(window, resetToIdeal: true)
@@ -188,6 +225,13 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
         window?.close()
     }
 
+    /// The window, for the render proof and nothing else.
+    ///
+    /// This window owns its own chrome now — a transparent title bar with the
+    /// buttons sitting on the sidebar's glass — and that is a fact no snapshot
+    /// of the SwiftUI view can show. Getting at it needs the `NSWindow` itself.
+    var renderedWindow: NSWindow? { window }
+
     /// Sizes the window against the screen it will appear on.
     ///
     /// `resetToIdeal` separates the two callers: opening for the first time
@@ -195,8 +239,12 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// the user resized it to and only shrinks it when it no longer fits.
     private func fitToScreen(_ window: NSWindow, resetToIdeal: Bool) {
         let screen = window.screen ?? NSScreen.main
-        // The chrome a titled window adds around its content — the title bar.
-        // Measured rather than assumed, because it is a system metric.
+        // What the window adds around its content. Measured rather than
+        // assumed, because it is a system metric — and since v2 the honest
+        // answer is **nothing**: a `fullSizeContentView` window's frame *is* its
+        // content rect, so this is zero and the title bar is deliberately not
+        // subtracted. It is still asked rather than hardcoded, so a style-mask
+        // change is accounted for instead of silently ignored.
         let available = SettingsWindowLayout.available(
             visibleFrame: screen?.visibleFrame.size ?? .zero,
             chrome: window.frameRect(forContentRect: .zero).size)
@@ -209,7 +257,7 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
         }
         guard
             let smaller = SettingsWindowLayout.shrink(
-                window.contentLayoutRect.size, toFit: available)
+                SettingsWindowLayout.currentContentSize(of: window), toFit: available)
         else { return }
         window.setContentSize(smaller)
         window.center()

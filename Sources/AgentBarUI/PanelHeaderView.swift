@@ -126,38 +126,69 @@ struct WaitingWash: View {
 /// > element and not a stopped sweep.** The row still has to look different from
 /// > an idle one — the rule for every cyclical indicator in the app is that its
 /// > static appearance carries the same fact its motion does.
+///
+/// > **It stuttered once, and the cause was the shape of the loop rather than
+/// > its speed.** The sweep used to travel from the track's left edge to its
+/// > right on `Motion.cycle`, repeating without autoreverse. Both halves of that
+/// > are wrong for a loop that wraps. The travel began *inside* the track, so
+/// > every cycle ended with a 40 %-wide bar appearing out of nothing at the left
+/// > edge; and an ease-in-out spends its slowest moments at both ends of the
+/// > travel, which puts a near-stop on each side of that seam. What the eye saw
+/// > was: pop, crawl, race, crawl, pop. It now starts fully off the left, ends
+/// > fully off the right, and moves at one speed the whole way — see
+/// > `Motion.traverse`.
 struct WorkingHairline: View {
     @Environment(\.accessibilityPreferences) private var accessibility
     @Environment(\.surfaceIsOnScreen) private var isOnScreen
-    @State private var isSweeping = false
 
     var body: some View {
         GeometryReader { proxy in
             let width = proxy.size.width
             let sweep = width * DesignTokens.Progress.sweepWidth
             let moving = accessibility.runsCyclicalMotion && isOnScreen
-            // **One value drives both the position and the animation**, and it
-            // has to include the motion setting. Keying the animation on
-            // `isSweeping` alone means a user who turns Reduce Motion *off* with
-            // the panel open moves the sweep without animating it — `isSweeping`
-            // is already `true`, so nothing fires — and the row is left with an
-            // empty track for as long as it lives.
-            let sweeping = moving && isSweeping
             track
                 .overlay(alignment: .leading) {
-                    gradient
-                        .frame(width: sweep)
-                        // At rest it sits at the left, which is exactly the
-                        // static 40 % fill the design asks for under Reduce
-                        // Motion. Moving, it travels from there off the right.
-                        .offset(x: sweeping ? width : 0)
-                        .animation(
-                            moving
-                                ? DesignTokens.Motion.repeating(
-                                    DesignTokens.Motion.hairlineSweep,
-                                    DesignTokens.Motion.cycle)
-                                : nil,
-                            value: sweeping)
+                    // **Two branches, not one offset with a conditional
+                    // animation**, and the reason is a defect this view has
+                    // already had twice. A `repeatForever` animation is driven
+                    // by a value *change*; when the moving state is entered
+                    // again — a user turning Reduce Motion off with the panel
+                    // open, or the panel coming back on screen — a single shared
+                    // `@State` is already at its end value, so nothing fires and
+                    // the row is left with an empty track for as long as it
+                    // lives. Entering this branch gives `SweepingBar` a fresh
+                    // identity and therefore a fresh `@State` and a fresh
+                    // `onAppear`, so the loop cannot fail to re-arm.
+                    if moving, width > 0 {
+                        SweepingBar(width: width, sweep: sweep) { gradient }
+                            // **The travel is geometry, so a change in geometry
+                            // has to re-arm the loop.** `onAppear` fires once;
+                            // a `width` that arrives later — a lazily
+                            // materialised row whose first `GeometryReader`
+                            // pass reports zero, or a scroller appearing and
+                            // taking 15 pt — would otherwise retarget the
+                            // offset outside any animated transaction and park
+                            // the bar off an edge for the life of the row. A
+                            // new identity is a new `@State` and a new
+                            // `onAppear`, which is the same mechanism the
+                            // branch above relies on.
+                            //
+                            // Safe as an identity because this width is
+                            // discrete: the panel is a fixed
+                            // `DesignTokens.panelWidth` and the row takes a
+                            // small number of values inside it. A width that
+                            // could wobble sub-pixel must never be an `id` —
+                            // that is the shape of the 98 % core this app has
+                            // already paid for once.
+                            .id(width)
+                    } else {
+                        // Reduce Motion, a panel that is not on screen, or a
+                        // width that has not arrived yet: a fill at the left,
+                        // never a hidden element. A working row must still look
+                        // different from an idle one when nothing is allowed to
+                        // move.
+                        gradient.frame(width: width * DesignTokens.Progress.staticFill)
+                    }
                 }
                 .clipShape(
                     RoundedRectangle(
@@ -165,19 +196,6 @@ struct WorkingHairline: View {
         }
         .frame(height: DesignTokens.Progress.height)
         .padding(.top, DesignTokens.Progress.topMargin)
-        // Started here rather than in an initialiser: a `repeatForever`
-        // animation needs a value change to drive it, and the change has to
-        // happen after the view is on screen or the first cycle is spent
-        // off-screen.
-        //
-        // > **The resting position is the left edge, not off it.** An earlier
-        // > version parked the sweep at `-sweep` and only rendered it inside the
-        // > animated branch, so a user who turned Reduce Motion *off* with the
-        // > panel open got a permanently empty track: the branch flipped, the
-        // > gradient appeared parked off-screen, and `isSweeping` was already
-        // > `true` so nothing could drive it back. A working row must never look
-        // > like an idle one, whatever the setting was when the row appeared.
-        .onAppear { isSweeping = true }
         .accessibilityHidden(true)
     }
 
@@ -198,5 +216,40 @@ struct WorkingHairline: View {
             ],
             startPoint: .leading,
             endPoint: .trailing)
+    }
+}
+
+/// The sweep while it is allowed to move: off the left edge, across, off the
+/// right, for ever and at one speed.
+///
+/// Its own type rather than a branch inside `WorkingHairline`, because its
+/// `@State` **is** the mechanism. A `repeatForever` animation needs a value to
+/// change in order to start, so the loop has to begin from a value that is
+/// genuinely fresh every time the view appears. Entering the enclosing `if`
+/// gives this a new identity and therefore a new `false`; a shared flag on the
+/// parent would already be `true` and the loop would silently never run.
+private struct SweepingBar<Content: View>: View {
+    let width: CGFloat
+    let sweep: CGFloat
+    @ViewBuilder let content: () -> Content
+
+    /// Whether the travel has been asked for. The animation interpolates from
+    /// the resting `-sweep` to `width`, which is the full traverse: the bar is
+    /// wholly outside the track at both ends, so the wrap has nothing visible to
+    /// pop.
+    @State private var hasLeft = false
+
+    var body: some View {
+        content()
+            .frame(width: sweep)
+            .offset(x: hasLeft ? width : -sweep)
+            .animation(
+                DesignTokens.Motion.repeating(
+                    DesignTokens.Motion.hairlineSweep, DesignTokens.Motion.traverse),
+                value: hasLeft
+            )
+            // After the view is on screen, not in an initialiser: a first cycle
+            // spent off screen is a cycle the user never sees.
+            .onAppear { hasLeft = true }
     }
 }
