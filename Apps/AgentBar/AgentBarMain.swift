@@ -159,7 +159,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let router = NotificationRouter(
             presenter: centre,
-            attachments: ProviderBadgeAttachments(directory: Self.badgeDirectory()),
+            attachments: EventAttachments(directory: Self.attachmentDirectory()),
             frontmost: WorkspaceFrontmostApplication())
         notifications = router
 
@@ -181,17 +181,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { await router.start() }
     }
 
-    /// Where the pre-rendered provider badges live.
+    /// Where the pre-rendered attachment squares live.
     ///
     /// Caches, because they are derived and re-creatable — which they have to
     /// be: `UNNotificationAttachment` **moves** the file it is given into the
-    /// notification's own store, so every badge is consumed by its first use.
-    private static func badgeDirectory() -> URL {
+    /// notification's own store, so every square is consumed by its first use.
+    private static func attachmentDirectory() -> URL {
         let base =
             (try? FileManager.default.url(
                 for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true))
             ?? URL(filePath: NSTemporaryDirectory(), directoryHint: .isDirectory)
-        return base.appending(path: "AgentBar/badges", directoryHint: .isDirectory)
+        return base.appending(path: "AgentBar/attachments", directoryHint: .isDirectory)
     }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {

@@ -18,6 +18,13 @@ public enum CodexRelayOutcome: Sendable, Hashable, CustomStringConvertible {
     /// The payload is larger than the endpoint would accept, so it is drained
     /// and dropped rather than sent to be refused.
     case payloadTooLarge(bytes: Int)
+    /// The payload never finished arriving, so what is in hand is a fragment.
+    /// Either the budget ran out with the writer still holding its end, or a
+    /// read failed partway. The helper drops it rather than posting a truncated
+    /// JSON body for the endpoint to refuse — and rather than waiting, because
+    /// an unbounded wait here is a process that outlives the agent that spawned
+    /// it.
+    case payloadIncomplete(bytes: Int, reason: String)
     /// No endpoint description on disk: AgentBar is not running, or has never
     /// run. The overwhelmingly common failure, and a silent one by design.
     case endpointUnknown
@@ -29,6 +36,8 @@ public enum CodexRelayOutcome: Sendable, Hashable, CustomStringConvertible {
         case .delivered(let status): "delivered, \(status)"
         case .nothingToSend: "nothing on stdin"
         case .payloadTooLarge(let bytes): "payload of \(bytes) bytes is too large to relay"
+        case .payloadIncomplete(let bytes, let reason):
+            "payload incomplete (\(reason)); \(bytes) bytes arrived and were dropped"
         case .endpointUnknown: "AgentBar is not running"
         case .undelivered(let reason): "not delivered: \(reason)"
         }
@@ -203,25 +212,126 @@ public struct CodexHelperRelay: Sendable {
     }
 }
 
-/// Reads standard input to the end, whatever else happens.
+/// Reads standard input to the end, whatever else happens — but never for ever.
 ///
 /// Draining is not politeness. Codex writes the payload into a pipe, and a
 /// reader that leaves early hands the writer `EPIPE` — a visible effect on the
 /// agent, from a tool that is supposed to be invisible. So the read continues to
 /// EOF even once the payload is past the size the relay would send: what comes
-/// back is bounded, what is consumed is not.
+/// back is capped at the caller's limit, what is *consumed* is not.
+///
+/// > **It is bounded in time, and that bound is not optional.** This was the one
+/// > unbounded wait in the whole project: a blocking `read` in a loop with no
+/// > deadline, in the one binary an agent spawns on **every tool call**. A
+/// > writer that holds the pipe open holds the helper open with it — measured at
+/// > exactly the six seconds a test writer was told to wait — and a helper that
+/// > outlives the Codex process that spawned it is reparented to `launchd` and
+/// > sits in the session's working directory for ever. One per tool call, all
+/// > day. Nothing about the safe-superset rule survives that.
+/// >
+/// > So every wait goes through `poll` against a deadline, and the read only
+/// > happens once `poll` has said bytes are there. That also fixes a quieter
+/// > bug: a descriptor the parent left non-blocking returned `EAGAIN`, which the
+/// > old loop read as end of input and silently dropped the payload.
 public enum StandardInput {
-    /// Everything on stdin up to `limit`, and the total number of bytes that
-    /// arrived.
+    /// How long the writer may say nothing before the drain gives up on it.
     ///
-    /// The count is what tells a truncated payload from a complete one. A
-    /// truncated JSON object is not worth relaying — the endpoint would refuse
-    /// it and record a diagnostic naming AgentBar's own helper as the source.
-    public static func drain(limit: Int, from descriptor: Int32 = 0) -> (data: Data, total: Int) {
+    /// **The bound that does the work, and it measures silence rather than
+    /// elapsed time.** A payload arrives as a run of chunks; what a stalled
+    /// writer looks like is a gap. Bounding the *total* instead conflates the
+    /// two, and the arithmetic says why: the worst legitimate payload — a
+    /// `PostToolUse` carrying the endpoint's whole 4 MB limit through a 64 KB
+    /// pipe — is about a millisecond on an idle machine but **93–105 ms** with
+    /// this repository's suite running in parallel. A total budget large enough
+    /// to be safe there would have to be most of the agent's own, and one small
+    /// enough to be polite would drop real events on a busy Mac.
+    ///
+    /// 150 ms of silence is a hundred times the gap between two chunks of a
+    /// payload that is actually being written even on the loaded machine above —
+    /// 93–105 ms across some sixty-four chunks — and a fifth of the smallest
+    /// budget either agent gives a hook.
+    public static let defaultQuiet: Duration = .milliseconds(150)
+
+    /// The bound on the whole drain, whatever the writer does.
+    ///
+    /// Silence alone is not enough: a writer trickling one byte every hundred
+    /// milliseconds resets the quiet period for ever and would hold the helper
+    /// open exactly as the unbounded read did. This is what closes that, and it
+    /// is chosen against the **whole** helper run rather than against this
+    /// stage — Codex caps a `SessionEnd` hook at one second and runs it
+    /// synchronously whatever `async` says, and the relay that follows carries
+    /// its own 500 ms total, so 400 here keeps the worst path inside 900 ms.
+    public static let defaultCeiling: Duration = .milliseconds(400)
+
+    /// How a read ended, which is what decides whether the payload is worth
+    /// relaying.
+    public enum DrainOutcome: Sendable, Hashable {
+        /// The writer closed its end. Everything it meant to send arrived.
+        case complete
+        /// The budget ran out first, so what arrived is a fragment.
+        case expired
+        /// A syscall failed. Also a fragment, and for a different reason worth
+        /// telling apart in a diagnostic.
+        case failed(code: Int32)
+    }
+
+    /// What one drain produced.
+    public struct Drained: Sendable, Hashable {
+        /// Everything that arrived, up to the caller's limit.
+        public let data: Data
+        /// How many bytes arrived in total, limit or no limit.
+        ///
+        /// A figure for the diagnostic, not a verdict — `outcome` is what says
+        /// whether the payload is whole. It is worth carrying because "the
+        /// payload never ended" reads very differently at eleven bytes and at
+        /// four megabytes.
+        public let total: Int
+        public let outcome: DrainOutcome
+
+        /// Whether what arrived is the whole of what the writer meant to send.
+        ///
+        /// The only question the caller has. Anything else — a budget that ran
+        /// out, a read that failed halfway — leaves a fragment, and a fragment
+        /// must never go out as if it were a payload.
+        public var isComplete: Bool { outcome == .complete }
+    }
+
+    /// Everything on stdin up to `limit`, giving up after `quiet` of silence or
+    /// `ceiling` in total, whichever comes first.
+    public static func drain(
+        limit: Int,
+        quiet: Duration = StandardInput.defaultQuiet,
+        ceiling: Duration = StandardInput.defaultCeiling,
+        from descriptor: Int32 = 0
+    ) -> Drained {
+        let ceilingDeadline = ContinuousClock.now + ceiling
         var collected = Data()
         var total = 0
         var buffer = [UInt8](repeating: 0, count: 64 * 1024)
         while true {
+            // Whichever bound expires first. The quiet period restarts on every
+            // wait, which is what lets a large payload take as long as its
+            // chunks need; the ceiling never does, which is what stops a trickle
+            // from taking for ever.
+            //
+            // **Until the first byte, the ceiling is the only bound.** "The
+            // writer has gone quiet" is not a statement anybody can make about a
+            // writer that has not started, and the gap between this process
+            // being spawned and Codex writing into the pipe belongs to Codex and
+            // to how busy the Mac is. Applying the quiet period there would give
+            // up on a payload that was always going to arrive.
+            let deadline =
+                total == 0 ? ceilingDeadline : min(ContinuousClock.now + quiet, ceilingDeadline)
+            // Always before the read, never after it. A blocking descriptor
+            // never reports `EAGAIN` — it simply never returns — so a deadline
+            // enforced by inspecting `errno` would enforce nothing at all on the
+            // descriptor the helper actually gets.
+            switch waitForInput(descriptor, until: deadline) {
+            case .ready: break
+            case .expired: return Drained(data: collected, total: total, outcome: .expired)
+            case .failed(let code):
+                return Drained(data: collected, total: total, outcome: .failed(code: code))
+            }
             let count = buffer.withUnsafeMutableBytes { destination in
                 Darwin.read(descriptor, destination.baseAddress, destination.count)
             }
@@ -233,9 +343,49 @@ public enum StandardInput {
                 }
                 continue
             }
-            if count < 0, errno == EINTR { continue }
-            break
+            if count == 0 { break }  // End of file: the writer has gone.
+            let code = errno
+            // A signal, or a readiness that did not survive to the read — the
+            // second is possible on a descriptor somebody else left
+            // non-blocking. Neither is the end of the payload, and the deadline
+            // is what stops either from becoming a loop.
+            if code == EINTR || code == EAGAIN || code == EWOULDBLOCK { continue }
+            // Anything else really did fail, and reporting it as end of input is
+            // how a truncated body gets posted as though it were whole.
+            return Drained(data: collected, total: total, outcome: .failed(code: code))
         }
-        return (collected, total)
+        return Drained(data: collected, total: total, outcome: .complete)
+    }
+
+    /// What one wait resolved to.
+    enum Readiness: Sendable, Hashable {
+        case ready
+        case expired
+        case failed(code: Int32)
+    }
+
+    /// Waits until `descriptor` has something to say, or the deadline passes.
+    ///
+    /// A failed `poll` is **not** reported as ready. It is tempting to fall
+    /// through to the read and let that report the real error, and on a blocking
+    /// descriptor that read is exactly the unbounded wait this whole file exists
+    /// to remove — `poll` can fail with `EAGAIN` on Darwin when the kernel
+    /// cannot allocate for it, which is precisely the loaded machine the wait
+    /// must survive. A signal is the one failure worth retrying, and the
+    /// deadline bounds the retry.
+    private static func waitForInput(
+        _ descriptor: Int32, until deadline: ContinuousClock.Instant
+    ) -> Readiness {
+        while true {
+            let left = RelaySocket.remaining(until: deadline)
+            guard left > .zero else { return .expired }
+            var watched = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
+            let ready = poll(&watched, 1, RelaySocket.milliseconds(left))
+            if ready > 0 { return .ready }
+            if ready == 0 { return .expired }
+            let code = errno
+            if code == EINTR { continue }
+            return .failed(code: code)
+        }
     }
 }

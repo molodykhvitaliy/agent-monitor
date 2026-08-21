@@ -95,11 +95,20 @@ nonisolated public enum DurationText {
     /// `Started 14:02, running 41m` — the row's tooltip, which absorbs
     /// `startedAt` and `uptime` without spending a pixel on either.
     public static func startedAndRunning(at start: Date, uptime: Duration) -> String {
-        let time = start.formatted(date: .omitted, time: .shortened)
+        let time = start.formatted(timeOfDay)
         return String(
             localized: "Started \(time), running \(compact(uptime))",
             comment: "Session row tooltip")
     }
+
+    /// The style every row's tooltip formats its start time with.
+    ///
+    /// Held rather than built per call. `Date.formatted(date:time:)` constructs a
+    /// fresh style on every invocation, and every row's tooltip is rebuilt on the
+    /// open panel's one-second clock — so a list of sessions turned a hover hint
+    /// into per-second ICU work. A stored style is the same output through the
+    /// same formatter cache.
+    private static let timeOfDay = Date.FormatStyle(date: .omitted, time: .shortened)
 
     /// Days, hours, minutes and seconds of one duration.
     private struct Units {

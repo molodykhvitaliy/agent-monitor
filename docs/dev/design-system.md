@@ -181,13 +181,24 @@ survives colour blindness and the monochrome menu-bar glyph.
 | State | Shape | Why |
 |---|---|---|
 | Working | filled circle | calm, present, no badge |
-| Waiting | filled triangle (menu bar: filled **circle** badge) | unmissable |
+| Waiting | filled triangle (menu bar: filled apex **with a pulse ring**) | unmissable |
 | Failed | filled rounded square | a different silhouette from waiting even in mono |
 | Unknown | dashed ring | deliberately not solid — must never read as working |
 | Idle | hollow ring | near-invisible |
 
 Reuse these shapes everywhere a state appears: session row, status item,
 notification, and any future settings surface.
+
+> **One divergence, deliberate and documented rather than hidden.** The v2
+> menu-bar glyph draws Waiting as a filled apex with a ring leaving it, and the
+> row and footer keep the up-triangle. At 6–8 pt a ring around a disc is mud;
+> the triangle is the most legible small silhouette in the set and always
+> carries a text label beside it. The two alternatives are worse: a filled disc
+> would make Waiting and Working the same shape at row size, distinguished by
+> colour alone, which breaks the rule this section exists for; and a triangle at
+> the glyph's apex is a triangle inside a triangle of nodes at 18 pt. Failed,
+> Unknown, Idle and Working still match the glyph exactly. Recorded in
+> `StateShapeView`'s own comment as well as here.
 
 Sizes in the session row: circle 6 pt diameter; triangle 8 pt base × 6 pt tall;
 rounded square 7 pt with 2 pt corners; rings 7 pt across on a 1.4 pt stroke,
@@ -355,9 +366,26 @@ than drawn.
 
 ### Status-item glyph
 
-A separate asset, designed standalone for legibility at menu-bar size. It is
-**not** derived from the app mark. Geometry is in
-[design-spec.md](design-spec.md#status-item).
+**Revised in v2, and the revision reverses the old rule.** The glyph used to be
+a separate asset, designed standalone and deliberately *not* derived from the app
+mark. It was a filled 12 pt disc with a badge punched out: clean, and invisible —
+at 18 pt among a dozen system items a plain disc has no identity, reads as a
+generic indicator, and tells a first-time user nothing about what the app is.
+
+It is now **the same three-node figure as the app mark**, reduced to two base
+nodes, an apex and hairline links. The silhouette is not confusable with Wi-Fi,
+battery, Bluetooth or Control Center, it reads as "several things, connected",
+and the menu bar, the notification art and the app icon finally agree about what
+AgentBar looks like. The apex is the **state node**: the only element that
+changes, so the eye has a fixed frame of reference and one moving part.
+
+Geometry is in [design-spec.md](design-spec.md#status-item) and, normatively, in
+`GlyphFigure` — which is where every renderer reads it from. There are three:
+an AppKit template image for the status item, a SwiftUI canvas for the panel
+header and the onboarding, and a gradient square for the notification
+attachment. They share the numbers rather than each holding a copy, because
+drift between them would be invisible until somebody put the surfaces side by
+side.
 
 ### App icon and logo
 
@@ -391,6 +419,97 @@ Step 12 owns that.
 
 ---
 
+## Motion
+
+Animation exists to communicate three things and nothing else:
+
+1. **a state changed** — the transition between glyph states,
+2. **where something came from** — the panel and the onboarding drop from the top,
+3. **that a process is alive** — the working hairline, the waiting pulse.
+
+Anything that does not do one of those is decoration and does not ship. Five
+prohibitions, because each one is a thing that gets reached for:
+
+- **No rotating spinner.** A spinner claims a duration the app does not know.
+  The indeterminate sweep claims only "alive", which is true.
+- **No bouncing Dock icon.** `LSUIElement`; there is no Dock tile.
+- **No flashing faster than 2 Hz.** An accessibility hazard, and it reads as an
+  error even when it is not.
+- **Nothing decorative longer than 400 ms.**
+- **Nothing animating while its surface is closed.** Timers sleep with the panel.
+
+Every duration and curve lives in `DesignTokens.Motion`; no view spells either.
+
+| Token | Duration | Where |
+|---|---|---|
+| `drop` | 600 ms | a surface arriving from the top |
+| `rise` | 400 ms | a step change, a result line |
+| `stateInto` / `stateBack` | 280 / 320 ms | a glyph state gaining or losing fill |
+| `micro` | 180 ms | button feedback, the collapse into Failed |
+| `crossFade` | 150 ms | the Reduce Motion substitute for all of the above |
+| `waitingPulse` | 2200 ms | the menu-bar ring |
+| `workingChase` | 1500 ms | the menu-bar nodes — computed, and **off** |
+| `hairlineSweep` | 2400 ms | the working row's progress hairline |
+| `meterSweep` | 3400 ms | the limits meters |
+| `dashCrawl` | 4000 ms | the unknown state's dashed links |
+| `breathe` | 3000 ms | the `allQuiet` rings, the onboarding pointer |
+
+`crossFade` is deliberately the same 150 ms as
+`AccessibilityPreferences.rowAnimation`, so a cross-fade is one duration in the
+app rather than two that nearly agree.
+
+**Two curves for two kinds of loop, and picking the wrong one is visible.**
+`cycle` (ease-in-out) is for a loop that **returns** — a pulse, a breathe, a
+glow — and is always paired with `autoreverses: true`, so the value comes back
+the way it went and the loop point is not a seam. `traverse` (linear) is for a
+loop that **wraps**: the working hairline leaves one edge and re-enters from the
+other, and a wrapping loop restarts at its beginning rather than reversing.
+Ease-in-out puts the slowest part of the motion on both sides of that restart and
+the fastest in the middle, so the sweep crawls out of the left edge, races
+across, crawls to a halt at the right and reappears — a stutter, not a loop.
+Constant velocity is the only thing with no seam, and the travel has to start and
+end **off** the track, or the element pops into existence wherever the cycle
+begins. Both halves were wrong in the first build of the hairline and both had to
+change; `MotionTokenTests` pins the curve by its property — `value(at: t) == t` —
+rather than by its name.
+
+**Two rules that are easy to lose.** Every cyclical indicator owes a *static*
+appearance that carries the same fact its motion does — a working row under
+Reduce Motion still has to look different from an idle one, which is why the
+hairline becomes a 40 % fill at the left rather than disappearing or freezing
+mid-sweep. And **no animation is load-bearing**: Reduce Motion, a sleeping
+timer, an offscreen render and a profiler run all produce the static frame, so
+anything only visible once an animation has run is a thing that is sometimes
+missing.
+
+Reduce Motion is read through `AccessibilityPreferences` — `entranceAnimation`,
+`stepAnimation`, `runsCyclicalMotion` and `stagger(_:)` — and never by a view
+directly, so no surface has to remember the rule.
+
+The status item runs **one** timer, at 8 fps, only while the aggregate state has
+something to animate, and never at all under Reduce Motion. 8 fps is enough for a
+2.2 s ease and halves the wake-ups against 12.
+
+## Elevation
+
+Four levels, expressed as **fill and hairline, never as a blur radius**.
+
+| Level | Meaning | Treatment | Used by |
+|---|---|---|---|
+| 0 | Flat | no fill change; hairline dividers only | list rows, dividers |
+| 1 | Card | `surface` on `canvas`, 1 pt `hairline`, radius `card` | settings sections, the integration card |
+| 2 | Above content | `surface`, hairline, radius `panel`. **System shadow only** | a popover inside a window, a sheet |
+| 3 | Above the window | the material, radius `panel`. **System shadow only** | the menu-bar panel, the onboarding, a banner |
+
+Levels 2 and 3 are surfaces macOS already shadows. Drawing a second shadow under
+one of them is the mistake the Material section warns about, and it is what a
+mock inevitably shows, because a browser has no window server to do it for free.
+
+Gradients follow the same discipline. v2 uses one in exactly three places — the
+panel's waiting wash, the notification attachment art, and the working
+hairline's sweep. Everywhere else, a flat token. **A gradient that does not
+carry state is decoration.**
+
 ## How this reaches the code
 
 Step 06 landed the tokens as:
@@ -413,6 +532,13 @@ The alpha-based dark values (`hairline`, `divider`, `fillQuiet`, `ringQuiet`,
 purpose: they sit on glass, whose backdrop is whatever is behind the panel, and a
 solid neutral would band against it. Store them as white with the alpha, not as
 the colour they happen to resolve to over any particular background.
+
+v2 adds **no base token**. The notification attachment art needs a gradient per
+event, and those eight stops are *derived* — each is an existing token's light
+value moved ±12 % in OKLCH lightness, hue and chroma untouched, so an event
+square and the row tint for the state it announces are visibly the same colour.
+They live in `AttachmentRamp` beside `ColorToken`, with the rule that generated
+them in the comment, so they can be regenerated when a base token moves.
 
 Two rules for anyone extending this:
 

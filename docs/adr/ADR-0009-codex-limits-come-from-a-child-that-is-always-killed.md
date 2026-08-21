@@ -5,7 +5,7 @@ status: accepted
 date: 2026-08-19
 supersedes: null
 superseded_by: null
-amended_by: [ADR-0011]
+amended_by: [ADR-0011, ADR-0012]
 tags: [codex, quota, process, architecture]
 ---
 
@@ -82,6 +82,17 @@ editor spends quota this process never hears about.
 > minutes still bounds everything else. The decision this record is *about* —
 > one child per reading, killed on every path — is unchanged and governs the new
 > trigger too.
+
+> **Amended again in step 11, on the word "killed".** `SIGTERM` is a *request*,
+> and this record treated it as the guarantee. The measured Codex exits inside
+> 10 ms, so nothing was ever observed surviving one — but a build that blocks the
+> signal, or wedges while handling it, would have left a Rust runtime behind on
+> every reading, and this project's non-negotiables do not admit a guarantee that
+> depends on the child's manners. `CodexProcessTransport.end()` now arms a
+> `SIGKILL` two seconds behind the `SIGTERM`, cancelled by the child's own
+> termination handler the instant it exits, and aimed only while `Process` still
+> reports the child alive. `ProcessTransportTests` pins it against a child that
+> ignores `SIGTERM` outright.
 
 ## Consequences
 

@@ -81,6 +81,18 @@ public final class PanelModel {
     /// Set when the footer status is pressed: the card in place of the list,
     /// reachable at any time and not only on first run.
     public var showsIntegrationCard = false
+    /// Whether the panel is actually on screen.
+    ///
+    /// Read by the two repeating indicators in the panel so neither runs behind
+    /// a dismissal. A `Bool` that changes twice per open — nothing here is on a
+    /// clock.
+    ///
+    /// **The setter is internal, deliberately.** The only thing that may set it
+    /// is the thing that shows and hides the window, and that lives in this
+    /// module. A public setter would be a settable mirror of window state, and a
+    /// client that desynchronised it would leave both cycles running behind a
+    /// dismissed panel — precisely what the property exists to prevent.
+    public internal(set) var isOnScreen = false
 
     @ObservationIgnored private let services: any PanelServices
 
@@ -97,6 +109,22 @@ public final class PanelModel {
     }
 
     public var footer: FooterStatus { FooterStatus.summarise(integrations) }
+
+    /// The header's urgency pill, or `nil` when there is nothing urgent.
+    ///
+    /// The header says how many sessions need a human; the footer says whether
+    /// the plumbing is healthy. Two summaries from two different sources, and
+    /// neither is derived from the other.
+    public var headerSummary: PanelHeaderSummary? {
+        PanelHeaderSummary.summarise(snapshot)
+    }
+
+    /// Whether the panel wears its waiting wash.
+    ///
+    /// A `Bool` rather than a count, because that is the whole of what the wash
+    /// needs and a count would invalidate the panel every time a second session
+    /// started waiting for the same reason.
+    public var isAnyoneWaiting: Bool { snapshot.waitingSessionCount > 0 }
 
     /// Computed rather than stored on purpose. The value comes from an
     /// observable object the assembly owns, so reading it here — inside the
@@ -115,8 +143,26 @@ public final class PanelModel {
 
     /// Re-reads the store. Cheap — an actor hop and a value copy — which is why
     /// it can run once a second while the panel is open.
+    ///
+    /// **Published only when the rendered part changed, and `@Observable` cannot
+    /// work that out by itself here.** Observation already suppresses an
+    /// assignment whose value is equal, so most of this model needs no help. A
+    /// `StoreSnapshot` is the exception: `takenAt` is a fresh `Date` on every
+    /// read, so no two readings are ever equal, and every one of them would
+    /// invalidate the whole panel — sixty rebuilds a minute of every row, every
+    /// localised string and every date format, to draw the same pixels. With
+    /// nothing running, this guard is what takes the idle view-graph traffic to
+    /// zero.
+    ///
+    /// **The comparison is `projects`, and that is now an invariant.** `takenAt`
+    /// and the hundred-entry `finished` history are not rendered anywhere; a
+    /// surface that ever *does* render one of them has to widen this comparison
+    /// to match, or it will show a value from the last time the rows happened to
+    /// change.
     public func refreshSnapshot() async {
-        snapshot = await services.snapshot()
+        let reading = await services.snapshot()
+        guard reading.projects != snapshot.projects else { return }
+        snapshot = reading
     }
 
     /// The closed-panel tick: retire what the watchdog has given up on, then
@@ -148,6 +194,10 @@ public final class PanelModel {
     /// than a disk read, so the open panel can run it on its one-second clock —
     /// otherwise a refresh landing while the panel is open would not appear
     /// until it was closed and opened again.
+    /// No guard here, unlike `refreshSnapshot`: `[UsageWindow]` is `Equatable`
+    /// and Observation suppresses an equal assignment by itself, so the windows
+    /// this re-reads on the open panel's one-second clock publish only when they
+    /// actually move — which is at most once every ten minutes.
     public func refreshUsage() async {
         usage = await services.usageWindows()
     }

@@ -52,13 +52,16 @@ public struct PreparedNotification: Sendable, Hashable {
     public let categoryIdentifier: String
     public let title: String
     /// The title to use if the attachment turns out not to be attachable after
-    /// all. Names the provider, which the badge would otherwise have carried.
+    /// all. Names the provider, which the art would otherwise have carried.
     public let titleWithoutBadge: String
+    /// The provider, always. The one slot that was unused before v2, and the
+    /// reason the attachment square is free to carry the event instead.
+    public let subtitle: String
     public let body: String?
     public let sound: SoundSelection
     public let isTimeSensitive: Bool
-    /// A pre-rendered provider badge, or `nil` when one could not be produced —
-    /// in which case `title` already names the provider instead.
+    /// Pre-rendered art for the event, or `nil` when none could be produced —
+    /// in which case `title` names the provider instead.
     public let attachment: URL?
 
     public init(
@@ -67,6 +70,7 @@ public struct PreparedNotification: Sendable, Hashable {
         categoryIdentifier: String,
         title: String,
         titleWithoutBadge: String,
+        subtitle: String,
         body: String?,
         sound: SoundSelection,
         isTimeSensitive: Bool,
@@ -77,6 +81,7 @@ public struct PreparedNotification: Sendable, Hashable {
         self.categoryIdentifier = categoryIdentifier
         self.title = title
         self.titleWithoutBadge = titleWithoutBadge
+        self.subtitle = subtitle
         self.body = body
         self.sound = sound
         self.isTimeSensitive = isTimeSensitive
@@ -103,24 +108,30 @@ public protocol NotificationPresenting: AnyObject {
     func post(_ notification: PreparedNotification) async -> String?
 }
 
-/// Supplies the pre-rendered provider badge a notification carries.
+/// Supplies the pre-rendered art a notification carries.
 ///
-/// A seam because the badge is drawn by `AgentBarUI`, which this module may not
+/// A seam because the art is drawn by `AgentBarUI`, which this module may not
 /// import — and must not, since the two are siblings. `Apps/AgentBar` links both
 /// and is where the image is actually produced.
+///
+/// > **Keyed on the event, not on the provider.** It used to be the other way
+/// > round, and that spent the only graphic surface AgentBar controls on
+/// > information the text can carry for free: the provider now rides on the
+/// > `subtitle`, and the square says *what happened*. The banner's leading slot
+/// > is always the app's own icon, so an attachment that repeated the app or
+/// > the provider was saying something already on screen.
 @MainActor
 public protocol NotificationAttachmentProviding: AnyObject {
-    /// A file URL for the provider's badge image, or `nil` if none could be
-    /// produced. Called on every send and expected to be cached by the
-    /// implementation.
-    func badgeImageURL(for provider: Provider) -> URL?
+    /// A file URL for the event's art, or `nil` if none could be produced.
+    /// Called on every send and expected to be cached by the implementation.
+    func attachmentURL(for event: NotificationEvent) -> URL?
 }
 
-/// No badge, ever. The fallback path made explicit, and the default for an
+/// No art, ever. The fallback path made explicit, and the default for an
 /// assembly that has not wired a renderer.
 public final class NoNotificationAttachments: NotificationAttachmentProviding {
     public init() {}
-    public func badgeImageURL(for provider: Provider) -> URL? { nil }
+    public func attachmentURL(for event: NotificationEvent) -> URL? { nil }
 }
 
 /// Reads which application the user is looking at.

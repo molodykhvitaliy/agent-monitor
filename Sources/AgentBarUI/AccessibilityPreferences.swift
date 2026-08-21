@@ -67,9 +67,60 @@ public final class AccessibilityPreferences {
     public var rowAnimation: Animation? {
         reduceMotion ? nil : .easeOut(duration: 0.15)
     }
+
+    /// How a surface arrives: its own entrance, or a cross-fade of the same
+    /// 150 ms `rowAnimation` already uses.
+    ///
+    /// Here rather than in each view, so no view reads `reduceMotion` to pick
+    /// an animation — the rule is one place, and a surface that forgets it is a
+    /// surface that slides for a user who asked for no sliding.
+    public func entranceAnimation(_ duration: Duration = DesignTokens.Motion.drop) -> Animation {
+        reduceMotion
+            ? DesignTokens.Motion.animation(DesignTokens.Motion.crossFade, .linear)
+            : DesignTokens.Motion.animation(duration, DesignTokens.Motion.entrance)
+    }
+
+    /// A step or content change inside a surface that is already on screen.
+    public var stepAnimation: Animation {
+        reduceMotion
+            ? DesignTokens.Motion.animation(DesignTokens.Motion.crossFade, .linear)
+            : DesignTokens.Motion.animation(DesignTokens.Motion.rise, .easeOut)
+    }
+
+    /// The delay before the nth item of a staggered entrance, in seconds.
+    ///
+    /// Zero under Reduce Motion, which turns a stagger into a single
+    /// cross-fade — the rule lives here so a view never multiplies an index by
+    /// a duration and forgets the exception.
+    public func stagger(_ index: Int, by step: Duration = .milliseconds(70)) -> Double {
+        reduceMotion ? 0 : Double(index) * step.seconds
+    }
+
+    /// Whether a repeating indicator should run **at all**.
+    ///
+    /// Not "should it be slower": a cyclical animation under Reduce Motion is
+    /// stopped, not softened, and every indicator that reads this owes a static
+    /// appearance that is still visibly different from its resting state. A
+    /// working row must not look idle merely because nothing is moving.
+    public var runsCyclicalMotion: Bool { !reduceMotion }
 }
 
 extension EnvironmentValues {
     /// Passed down rather than read per view, so one observer serves the panel.
     @Entry public var accessibilityPreferences = AccessibilityPreferences.shared
+
+    /// Whether the surface this view is in is actually on screen.
+    ///
+    /// > **The last of the motion rules, made enforceable.** *Nothing animating
+    /// > while its surface is closed* — and the panel is `orderOut`, not
+    /// > destroyed, so its whole SwiftUI tree survives a dismissal with every
+    /// > `repeatForever` in it still attached. Whether AppKit suspends the
+    /// > render loop for a hidden borderless `NSPanel` is a framework behaviour
+    /// > this project cannot assert, so the cycles are gated on a fact it owns
+    /// > instead of on an assumption about one it does not.
+    ///
+    /// Defaults to `true`: a host that has not wired it — a preview, a render
+    /// proof, a test — should see the designed appearance rather than a silently
+    /// frozen one.
+    @Entry public var surfaceIsOnScreen = true
 }

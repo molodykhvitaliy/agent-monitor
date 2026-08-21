@@ -73,6 +73,111 @@ struct DesignTokenTests {
     }
 }
 
+/// Motion is a token set like colour is, for the same reason: a duration spelled
+/// in a view is a duration that drifts from the one beside it.
+@MainActor
+@Suite("Motion tokens")
+struct MotionTokenTests {
+
+    /// Every prohibition in the design's motion rules, as a bound on the tokens
+    /// rather than as a paragraph nobody re-reads.
+    @Test("No token breaks the motion rules")
+    func tokensObeyTheRules() {
+        let decorative: [Duration] = [
+            DesignTokens.Motion.rise,
+            DesignTokens.Motion.stateInto,
+            DesignTokens.Motion.stateBack,
+            DesignTokens.Motion.micro,
+            DesignTokens.Motion.crossFade,
+        ]
+        for duration in decorative {
+            #expect(duration.seconds > 0)
+            // "Nothing decorative longer than 400 ms."
+            #expect(duration.seconds <= 0.4)
+        }
+
+        let cycles: [Duration] = [
+            DesignTokens.Motion.waitingPulse,
+            DesignTokens.Motion.workingChase,
+            DesignTokens.Motion.hairlineSweep,
+            DesignTokens.Motion.meterSweep,
+            DesignTokens.Motion.dashCrawl,
+            DesignTokens.Motion.breathe,
+        ]
+        for cycle in cycles {
+            // "No flashing faster than 2 Hz" — with a wide margin, because these
+            // are cycles a user sees out of the corner of an eye all day.
+            #expect(cycle.seconds >= 1)
+        }
+    }
+
+    /// The curve a **wrapping** loop takes, pinned as the property that makes it
+    /// the right one rather than as a name.
+    ///
+    /// The working hairline restarts at its beginning instead of reversing, so
+    /// the eye sees the seam between one cycle and the next. Only a curve with
+    /// the same velocity everywhere has no seam — and constant velocity is
+    /// exactly `value(at: t) == t`. `cycle` is the opposite by design: it is
+    /// slowest at both ends, which is what puts a near-stop on each side of the
+    /// wrap and reads as a stutter. The two must not be the same token.
+    @Test("A wrapping cycle moves at one speed the whole way")
+    func traverseIsSeamless() {
+        for step in 0...10 {
+            let time = Double(step) / 10
+            #expect(
+                abs(DesignTokens.Motion.traverse.value(at: time) - time) < 0.0001,
+                "traverse is not constant-velocity at \(time)")
+        }
+        // The stutter this closed: an ease-in-out crawls out of one edge and
+        // crawls to a halt at the other.
+        #expect(DesignTokens.Motion.cycle.value(at: 0.1) < 0.1)
+        #expect(DesignTokens.Motion.cycle.value(at: 0.9) > 0.9)
+    }
+
+    /// The Reduce Motion substitute is deliberately the same 150 ms the row
+    /// animation already uses, so a cross-fade is one duration in the app rather
+    /// than two that nearly agree.
+    @Test("The cross-fade matches the existing row animation")
+    func crossFadeMatchesRows() {
+        #expect(DesignTokens.Motion.crossFade.seconds == 0.15)
+    }
+
+    @Test("Durations convert to seconds exactly")
+    func durationConversion() {
+        #expect(Duration.milliseconds(600).seconds == 0.6)
+        #expect(Duration.seconds(2).seconds == 2)
+        #expect(Duration.milliseconds(0).seconds == 0)
+    }
+
+    /// The curves have to actually curve: a bezier typed in wrongly still
+    /// compiles and still animates, just linearly.
+    @Test("Every curve is a curve")
+    func curvesAreCurves() {
+        for curve in [
+            DesignTokens.Motion.entrance, DesignTokens.Motion.settle, DesignTokens.Motion.pulse,
+        ] {
+            #expect(curve.value(at: 0) == 0)
+            #expect(curve.value(at: 1) == 1)
+            // Every one of these front-loads: half the travel is done well
+            // before half the time.
+            #expect(curve.value(at: 0.5) > 0.5)
+        }
+    }
+
+    /// Under Reduce Motion an entrance is a cross-fade and a cycle does not run
+    /// at all — the rule lives here so no view has to remember it.
+    @Test("Reduce Motion answers both helpers")
+    func reduceMotionHelpers() {
+        let preferences = AccessibilityPreferences.shared
+        // Whatever the machine running the suite is set to, the two helpers must
+        // agree with each other rather than with a constant.
+        #expect(preferences.runsCyclicalMotion == !preferences.reduceMotion)
+        #expect(
+            (preferences.rowAnimation == nil) == preferences.reduceMotion,
+            "the two motion rules disagree about the same setting")
+    }
+}
+
 enum SessionStateKindAccents {
     static var withoutAccent: [SessionStateKind] {
         SessionStateKind.allCases.filter { $0.accent == nil }

@@ -181,6 +181,38 @@ nonisolated extension IntegrationCondition {
         }
     }
 
+    /// The same fact as `statusLine`, as a phrase that reads inside a sentence.
+    ///
+    /// The onboarding's summary is `{Provider} — {phrase}`, and the copy table
+    /// anticipated only two of these: *connected* and *skipped*. A provider that
+    /// is installed and not yet trusted is neither, and calling it *skipped*
+    /// would be the summary's one job — being honest about what is not set up —
+    /// done wrongly. Every rung gets a phrase, and all of them read as quietly
+    /// as `skipped` does: the tone carries "recoverable", not the wording.
+    public var summaryPhrase: String {
+        switch self {
+        case .connected:
+            String(localized: "connected", comment: "Onboarding summary, a set-up provider")
+        case .notConnected:
+            String(localized: "skipped", comment: "Onboarding summary, a provider left alone")
+        case .notTrusted:
+            String(
+                localized: "installed, not trusted",
+                comment: "Onboarding summary, a provider half set up")
+        case .needsRepair:
+            String(
+                localized: "needs repair", comment: "Onboarding summary, a provider that drifted")
+        case .notReceiving:
+            String(
+                localized: "installed, not receiving",
+                comment: "Onboarding summary, a provider with no endpoint")
+        case .settingsUnreadable:
+            String(
+                localized: "configuration unreadable",
+                comment: "Onboarding summary, a provider whose file could not be read")
+        }
+    }
+
     /// The shape and colour the status line takes. Every accent is paired with
     /// a silhouette, here as everywhere.
     public var indicator: (kind: SessionStateKind, color: ColorToken)? {

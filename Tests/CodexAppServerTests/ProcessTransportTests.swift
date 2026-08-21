@@ -77,12 +77,118 @@ struct ProcessTransportTests {
     /// Waits for the child to go, or gives up. Polled rather than slept through:
     /// `SIGTERM` lands in single-digit milliseconds and the reaping is
     /// Foundation's, so the answer is usually immediate.
+    ///
+    /// > **Bounded by the clock rather than by a count of sleeps, and
+    /// > generously.** `Process.isRunning` turns false when *Foundation* reaps
+    /// > the child, on a queue this test does not own; on a machine saturated
+    /// > enough — a CI runner, or this repository's own suite running beside a
+    /// > build — that reaping is simply late. Two hundred ten-millisecond sleeps
+    /// > looks like two seconds and is not: it is two hundred sleeps that each
+    /// > take as long as the scheduler feels like, and it still ran out. A
+    /// > passing test pays none of the ceiling below, because it returns the
+    /// > moment the child is gone; only a real regression waits for it.
+    static let exitAllowance: Duration = .seconds(10)
+
     static func waitForExit(_ transport: CodexProcessTransport) async -> Bool {
-        for _ in 0..<200 {
+        let deadline = ContinuousClock.now + exitAllowance
+        while ContinuousClock.now < deadline {
             if !transport.isChildRunning { return true }
             try? await Task.sleep(for: .milliseconds(10))
         }
-        return false
+        return !transport.isChildRunning
+    }
+
+    /// Ignores `SIGTERM` outright. `trap "" TERM` is the shell saying "this
+    /// signal is not mine to handle", which is exactly what a wedged or
+    /// signal-blocking child looks like from outside.
+    ///
+    /// It announces itself on stdout, and the announcement is load-bearing:
+    /// `Process.run()` returns as soon as the child exists, which is well before
+    /// `sh` has read the first line of the script. A signal sent into that
+    /// window lands on a shell that has not installed the trap yet and kills it
+    /// for ordinary reasons — so the test would pass with the escalation deleted.
+    static let deaf = """
+        trap "" TERM
+        printf 'trapping\\n'
+        while :; do sleep 0.1; done
+        """
+
+    /// `terminate()` is a request. A transport whose guarantee is "the child is
+    /// always killed" has to be able to keep it against a child that declines,
+    /// or the guarantee is really about the child's manners — and a menu-bar app
+    /// that spawns one of these per reading and leaves it running is the process
+    /// leak this project cannot ship.
+    @Test("A child that ignores SIGTERM is killed anyway")
+    func killsAChildThatIgnoresTermination() async throws {
+        let fake = try FakeCodex(body: Self.deaf)
+        let transport = CodexProcessTransport(
+            executable: fake.executable, terminationGrace: .milliseconds(200))
+        var lines = try transport.start().makeAsyncIterator()
+        #expect(await lines.next() != nil, "the child has to be trapping before it is signalled")
+
+        transport.end()
+
+        #expect(await Self.waitForExit(transport), "SIGTERM was ignored and nothing followed it")
+    }
+
+    /// The escalation must not outlive the child it was armed against: a signal
+    /// aimed at a process identifier the kernel has already handed to somebody
+    /// else is worse than the leak it was meant to close.
+    @Test("A child that exits on the signal leaves no kill behind it")
+    func disarmsTheKillWhenTheChildGoes() async throws {
+        let fake = try FakeCodex(body: Self.answering)
+        let transport = CodexProcessTransport(
+            executable: fake.executable, terminationGrace: .seconds(30))
+        _ = try transport.start()
+
+        transport.end()
+        #expect(await Self.waitForExit(transport))
+
+        // The termination handler runs on Foundation's own queue, so the
+        // disarming lands a moment after the exit does.
+        for _ in 0..<100 where transport.hasPendingKill {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!transport.hasPendingKill)
+    }
+
+    /// Floods stdout with one enormous line, then answers properly.
+    ///
+    /// `head -c` from `/dev/zero` through `tr` is a megabyte and a half of `a`,
+    /// which is what an unbounded `pending` buffer would hold for the whole
+    /// exchange. The newline after it is deliberate and is what the recovery is
+    /// about: framing resumes at the **next** newline, so a message glued
+    /// directly onto unterminated output is lost either way — that is a fact
+    /// about the child, not about the cap.
+    static let unterminated = """
+        head -c 1500000 /dev/zero | tr '\\0' 'a'
+        printf '\\n'
+        while IFS= read -r line; do
+          case "$line" in
+            *initialize*)
+              printf '{"id":1,"result":{"userAgent":"AgentBar/9.9.9 (x; y) z (AgentBar; 0.1.0)",\
+        "codexHome":"/x","platformFamily":"unix","platformOs":"macos"}}\\n' ;;
+          esac
+        done
+        """
+
+    /// The last buffer in this file that could grow without a bound.
+    ///
+    /// A child writing megabytes with no newline in them is not sending a reply
+    /// this transport can parse, and holding it to the end of a twenty-second
+    /// budget would trade a parse failure for heap growth. What has to survive
+    /// the drop is **framing**: the next newline resynchronises, and the reply
+    /// after it is delivered as though nothing had happened.
+    @Test("An enormous line is dropped rather than buffered, and framing recovers")
+    func recoversFromUnterminatedOutput() async throws {
+        let fake = try FakeCodex(body: Self.unterminated)
+        let transport = CodexProcessTransport(executable: fake.executable)
+        let version = try await AppServerExchange.run(
+            transport: transport, clientVersion: "0.1.0", budget: .seconds(10)
+        ) { _, version in version }
+
+        #expect(version.raw == "9.9.9", "framing did not recover after the buffer was dropped")
+        #expect(await Self.waitForExit(transport))
     }
 
     @Test("A real child answers a real exchange")

@@ -76,6 +76,23 @@ struct SettingsWindowLayoutTests {
         #expect(SettingsWindowLayout.minimum.width >= needed)
         #expect(SettingsWindowLayout.ideal.width >= SettingsWindowLayout.minimum.width)
     }
+
+    /// The same defect, one surface later.
+    ///
+    /// Visual v2 put a fixed-width sidebar beside the form. Every point it takes
+    /// is a point the matrix does not get, so a minimum still derived from the
+    /// matrix alone would be a window narrower than its own content again — and
+    /// the failure mode has not changed: no exception, no horizontal scroller,
+    /// just the verb labels cut off the left edge.
+    @Test("The sidebar's width is taken out of the window, not out of the matrix")
+    func leavesRoomForTheSidebar() {
+        let content =
+            NotificationMatrixView.minimumWidth(providers: Provider.allCases.count)
+            + SettingsWindowLayout.formChromeWidth
+        #expect(
+            SettingsWindowLayout.minimum.width
+                >= content + DesignTokens.SettingsSidebar.width)
+    }
 }
 
 /// The defect itself: the form's own minimum width, against the window's.
@@ -247,12 +264,21 @@ struct SettingsWindowSizingTests {
 /// can be produced on demand: the undocked laptop, the short screen under a tall
 /// Dock, and the window that has not been placed on any screen yet. Pure
 /// functions, so they need no window server and no display at all.
+///
+/// `SettingsWindowLayout.available(visibleFrame:chrome:)` takes `chrome` as a
+/// parameter rather than reading it from a real window, and every fixture below
+/// passes `NSSize(width: 0, height: 32)` — an ordinary titled window's chrome,
+/// **not** this window's own. `SettingsWindowChromeTests.chromeIsNothing` proves
+/// this window's real chrome is zero under `.fullSizeContentView`. Both are
+/// correct at once: this suite is exercising the arithmetic against a
+/// counterfactual on purpose, so a chrome this app has never shipped is still
+/// worth getting right if a future surface ever adds one back.
 @MainActor
 @Suite("Settings window against a screen")
 struct SettingsWindowScreenTests {
 
-    /// A 14-inch display with the menu bar and Dock taken out, less an ordinary
-    /// title bar.
+    /// A 14-inch display with the menu bar and Dock taken out, less a
+    /// counterfactual ordinary title bar — see the suite's own note.
     private let laptop = SettingsWindowLayout.available(
         visibleFrame: NSSize(width: 1512, height: 891), chrome: NSSize(width: 0, height: 32))
 

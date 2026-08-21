@@ -264,7 +264,7 @@ enum RelaySocket {
     /// `RelayTimeouts` is public with a public initialiser, so the number came
     /// from a caller — and this repository has a rule about arithmetic on those:
     /// compare and convert without ever letting the multiplication overflow.
-    private static func milliseconds(_ duration: Duration) -> Int32 {
+    static func milliseconds(_ duration: Duration) -> Int32 {
         let components = duration.components
         let (product, overflowed) = components.seconds.multipliedReportingOverflow(by: 1000)
         guard !overflowed else { return Int32.max }

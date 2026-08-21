@@ -57,8 +57,8 @@ struct WatchdogTests {
         "Silence is tolerated for as long as the state makes it plausible",
         arguments: [
             (EventKind.waitingInput(question: nil), Duration.hours(2)),
-            (EventKind.turnFinished, Duration.hours(8)),
-            (EventKind.failed(reason: "overloaded_error"), Duration.hours(8)),
+            (EventKind.turnFinished, Duration.minutes(10)),
+            (EventKind.failed(reason: "overloaded_error"), Duration.minutes(10)),
         ]
     )
     func allowanceMatchesState(kind: EventKind, allowance: Duration) async {
@@ -173,6 +173,11 @@ struct WatchdogTests {
     /// every session inside its own window — one derived `unknown`, one still
     /// waiting, one still building, one idle — because a sweep that evicts
     /// everything would make the comparison vacuous.
+    ///
+    /// The resting session is registered *after* the jump rather than before it:
+    /// a resting allowance is ten minutes and there is no band beyond it in
+    /// which a finished session is doubted rather than retired, so the only way
+    /// to have one on the list at all is for it to be recent.
     @Test("A reading taken before a sweep matches the one taken after")
     func snapshotAgreesWithSweep() async {
         let (store, clock) = fixture()
@@ -182,9 +187,9 @@ struct WatchdogTests {
         await store.apply(
             Fixture.event(
                 .toolStarted, session: "building", tool: Fixture.bash, toolUseId: "tool-1"))
-        await store.apply(Fixture.event(.turnFinished, session: "resting"))
 
         clock.advance(by: .minutes(30))
+        await store.apply(Fixture.event(.turnFinished, session: "resting", at: 1_800))
 
         let before = await store.snapshot()
         let changes = await store.sweep()

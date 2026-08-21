@@ -27,7 +27,11 @@ struct PanelModelTests {
 
     /// Nothing else retires a session whose agent died, and the power assertion
     /// in step 08 depends on that happening.
-    @Test("The closed-panel tick sweeps before it reads")
+    ///
+    /// Both clocks call this, and that was not always true: the open clock used
+    /// to only re-read, so a panel left on screen kept every session the
+    /// watchdog had given up on, labelled `Unknown` and unable to leave.
+    @Test("A tick sweeps before it reads")
     func sweepThenRead() async {
         let services = StubServices()
         let model = model(services)

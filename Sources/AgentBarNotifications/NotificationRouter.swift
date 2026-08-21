@@ -297,29 +297,31 @@ public final class NotificationRouter {
 
     /// Renders a draft into the thing the notification centre takes.
     ///
-    /// Two decisions live here and nowhere else. The badge is looked up first,
-    /// because whether it exists decides the title: with a badge the provider is
-    /// carried by the image, without one it goes into the title so it is not
-    /// simply lost. And the sound is validated **again**, at send time, because
+    /// Two decisions live here and nowhere else. The art is looked up first,
+    /// because whether it exists decides the title: with art the square carries
+    /// the event and the subtitle carries the provider, without it the provider
+    /// goes into the title as well so it cannot be lost to a truncated
+    /// subtitle. And the sound is validated **again**, at send time, because
     /// `~/Library/Sounds` is the user's own folder and can be emptied between
     /// the moment they chose a sound and the moment it plays.
     func prepared(_ draft: NotificationDraft) -> PreparedNotification {
-        let badge = attachments.badgeImageURL(for: draft.provider)
+        let art = attachments.attachmentURL(for: draft.event)
         return PreparedNotification(
             identifier: draft.sessionId.value,
             threadIdentifier: draft.project.id.value,
             categoryIdentifier: draft.event.categoryIdentifier,
-            title: badge == nil ? draft.titleNamingProvider : draft.title,
-            // Carried even when a badge was found, because finding one is not
-            // the same as attaching one: `UNNotificationAttachment` can still
-            // refuse the file — it was consumed by an earlier post, or it fails
-            // the system's own validation — and a banner with neither a badge
-            // nor a provider name is the outcome this title exists to prevent.
+            title: art == nil ? draft.titleNamingProvider : draft.title,
+            // Carried even when art was found, because finding a file is not
+            // the same as attaching it: `UNNotificationAttachment` can still
+            // refuse — it was consumed by an earlier post, or it fails the
+            // system's own validation — and this title is what stops that
+            // becoming a banner with no provider on it at all.
             titleWithoutBadge: draft.titleNamingProvider,
+            subtitle: draft.subtitle,
             body: draft.body,
             sound: resolvedSound(for: draft),
             isTimeSensitive: draft.event.isTimeSensitive,
-            attachment: badge)
+            attachment: art)
     }
 
     /// The chosen sound, or the default with the problem recorded.

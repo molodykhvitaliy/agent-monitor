@@ -78,6 +78,10 @@ public final class UserNotificationCentre: NSObject, NotificationPresenting {
     /// Posts, and returns the reason it could not.
     public func post(_ notification: PreparedNotification) async -> String? {
         let content = UNMutableNotificationContent()
+        // Always set. The provider used to ride on the attachment image and this
+        // slot went unused, which spent the only graphic surface the app
+        // controls on a word the text can carry for free.
+        content.subtitle = notification.subtitle
         if let body = notification.body { content.body = body }
         content.categoryIdentifier = notification.categoryIdentifier
         content.threadIdentifier = notification.threadIdentifier
@@ -88,10 +92,10 @@ public final class UserNotificationCentre: NSObject, NotificationPresenting {
         // privilege rather than a failure to deliver.
         content.interruptionLevel = notification.isTimeSensitive ? .timeSensitive : .active
 
-        // The title is decided by whether a badge was actually attached, not by
-        // whether one was found: the caller could only check that the file
+        // The title is decided by whether art was actually attached, not by
+        // whether it was found: the caller could only check that the file
         // exists, and the attachment can still be refused here. Without this a
-        // refusal would cost the banner both its badge and the provider's name.
+        // refusal would cost the banner both its art and the provider's name.
         let attachment = Self.attachment(at: notification.attachment)
         if let attachment { content.attachments = [attachment] }
         content.title =
@@ -128,12 +132,12 @@ public final class UserNotificationCentre: NSObject, NotificationPresenting {
     private static func attachment(at url: URL?) -> UNNotificationAttachment? {
         guard let url else { return nil }
         do {
-            return try UNNotificationAttachment(identifier: "provider", url: url, options: nil)
+            return try UNNotificationAttachment(identifier: "event", url: url, options: nil)
         } catch {
             // The caller has already titled the notification for this case: the
-            // provider is named in the title when no badge could be attached.
+            // provider is named in the title when no art could be attached.
             Self.logger.error(
-                "provider badge not attached: \(error, privacy: .public)")
+                "event art not attached: \(error, privacy: .public)")
             return nil
         }
     }

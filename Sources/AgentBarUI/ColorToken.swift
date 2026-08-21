@@ -106,6 +106,71 @@ nonisolated public enum ColorToken: String, CaseIterable, Sendable {
     }
 }
 
+/// The two gradient stops the notification attachment art is built from.
+///
+/// **No new base token.** Each pair is one existing `ColorToken`'s *light*
+/// value moved ±12 % in OKLCH lightness, hue and chroma untouched. The rule is
+/// written down here rather than left in a design document because it is what
+/// makes these regenerable: move a base token and these four pairs move with it,
+/// by applying that one transformation again.
+///
+/// > **The colour is the event's, not the announced state's.** An event square
+/// > and the settings matrix's indicator for that event always agree, because
+/// > both read this table. They do **not** always agree with the row tint for
+/// > the state the event announces, and one pair diverges on purpose:
+/// > `question` and `waiting` both announce `SessionStateKind.waiting`, whose
+/// > accent is amber, and the design gives `Question` amber and `Waiting` blue —
+/// > a specific question and a bare block are different news and are worth
+/// > telling apart at a glance. Do not "fix" `waiting` back to `stateWaiting`;
+/// > that would make the two squares differ only in silhouette.
+///
+/// > **Both stops are derived from the light appearance, and that is not an
+/// > oversight.** An attachment is a file the notification centre copies into
+/// > its own store; it is not re-rendered when the system theme changes, so a
+/// > dark-appearance square would be wrong half the time. White figures on
+/// > these gradients read correctly on a light banner and on a dark one.
+nonisolated public struct AttachmentRamp: Sendable, Hashable {
+    /// The token these stops were derived from.
+    public let base: ColorToken
+    /// The 155° gradient's first stop — the base at +12 % OKLCH lightness.
+    public let start: NSColor
+    /// Its last stop — the base at −12 %.
+    public let end: NSColor
+
+    /// The ramp for a notification verb.
+    ///
+    /// > **Four, not five.** The handoff also specifies an `Unknown` square,
+    /// > "for completeness". `NotificationPolicy.classify` returns `nil` for
+    /// > `unknown` and that stays true — the absence of information is not worth
+    /// > an interruption — so a fifth ramp would be a colour pair nothing can
+    /// > ever ask for. The row tint and the menu-bar glyph carry `unknown`,
+    /// > which is where a user actually meets it.
+    public static func ramp(for verb: NotificationVerb) -> AttachmentRamp {
+        switch verb {
+        case .question:
+            AttachmentRamp(base: .stateWaiting, start: srgb(0xEF_AF_2E), end: srgb(0xA8_70_0A))
+        case .failed:
+            AttachmentRamp(base: .stateFailed, start: srgb(0xE3_5C_5C), end: srgb(0x9E_2C_2C))
+        case .finished:
+            AttachmentRamp(base: .connected, start: srgb(0x52_B3_6E), end: srgb(0x2A_6E_3E))
+        case .waiting:
+            AttachmentRamp(base: .stateWorking, start: srgb(0x5E_9B_DE), end: srgb(0x2E_5D_97))
+        }
+    }
+
+    /// What an indicator beside this event should take, so the settings matrix
+    /// and the banner agree about what colour an event is.
+    public var accent: Color { base.color }
+
+    private static func srgb(_ hex: UInt32) -> NSColor {
+        NSColor(
+            srgbRed: CGFloat((hex >> 16) & 0xFF) / 255,
+            green: CGFloat((hex >> 8) & 0xFF) / 255,
+            blue: CGFloat(hex & 0xFF) / 255,
+            alpha: 1)
+    }
+}
+
 extension ShapeStyle where Self == Color {
     /// `.token(.ink600)` at a use site, so a view never spells a colour name
     /// twice.
@@ -126,15 +191,21 @@ nonisolated extension SessionStateKind {
     }
 
     /// What the row's state label reads. Five words and no sixth.
-    public var label: String {
-        switch self {
-        case .idle: String(localized: "Idle", comment: "Session state")
-        case .working: String(localized: "Working", comment: "Session state")
-        case .waiting: String(localized: "Waiting", comment: "Session state")
-        case .failed: String(localized: "Failed", comment: "Session state")
-        case .unknown: String(localized: "Unknown", comment: "Session state")
-        }
-    }
+    ///
+    /// Resolved once per process rather than per row per frame. Every open panel
+    /// rebuilds every row on its one-second clock, and each rebuild asked
+    /// Foundation to look this string up in the bundle again — five constants
+    /// that cannot change while the app is running, because macOS relaunches an
+    /// app when its language changes.
+    public var label: String { SessionStateKind.labels[self] ?? rawValue }
+
+    private static let labels: [SessionStateKind: String] = [
+        .idle: String(localized: "Idle", comment: "Session state"),
+        .working: String(localized: "Working", comment: "Session state"),
+        .waiting: String(localized: "Waiting", comment: "Session state"),
+        .failed: String(localized: "Failed", comment: "Session state"),
+        .unknown: String(localized: "Unknown", comment: "Session state"),
+    ]
 
     /// The full-row wash a row of this state takes, as an opacity on `accent`.
     ///

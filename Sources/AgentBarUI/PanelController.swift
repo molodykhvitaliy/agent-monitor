@@ -31,12 +31,26 @@ public final class PanelController: NSObject, NSWindowDelegate {
     /// told apart from a click away. Weak: the controller does not own the
     /// menu-bar presence and must not keep it alive past `stop()`.
     private weak var anchor: NSStatusBarButton?
+    /// The content's fixed width.
+    ///
+    /// A parameter rather than the token, because the first-run flow is
+    /// presented through this same controller at 420 pt — wider than the panel,
+    /// because its steps carry more copy and it is transient. Everything else
+    /// about the presentation is deliberately identical: the anchor, the tail,
+    /// the material, the dismissal and the focus policy are the whole reason the
+    /// onboarding does not get a window class of its own.
+    private let width: CGFloat
 
-    public init<Content: View>(content: Content, onDismiss: @escaping () -> Void) {
+    public init<Content: View>(
+        content: Content,
+        width: CGFloat = DesignTokens.panelWidth,
+        onDismiss: @escaping () -> Void
+    ) {
         self.onDismiss = onDismiss
+        self.width = width
         hosting = FirstMouseHostingView(rootView: content)
         panel = AgentBarPanel(
-            contentRect: NSRect(x: 0, y: 0, width: DesignTokens.panelWidth, height: 120),
+            contentRect: NSRect(x: 0, y: 0, width: width, height: 120),
             // `.nonactivatingPanel` is what lets the panel take keyboard input
             // without activating AgentBar and pulling the user out of their
             // editor. `.borderless` because the panel draws its own 18 pt
@@ -136,7 +150,7 @@ public final class PanelController: NSObject, NSWindowDelegate {
         let anchorFrame = anchorWindow.convertToScreen(anchor.convert(anchor.bounds, to: nil))
         hosting.layoutSubtreeIfNeeded()
         let size = NSSize(
-            width: DesignTokens.panelWidth,
+            width: width,
             height: max(hosting.fittingSize.height, 1))
         let visible = (anchorWindow.screen ?? NSScreen.main)?.visibleFrame ?? anchorFrame
 
@@ -146,7 +160,17 @@ public final class PanelController: NSObject, NSWindowDelegate {
         origin.x = min(max(origin.x, visible.minX + 8), visible.maxX - size.width - 8)
         origin.y = max(origin.y, visible.minY + 8)
 
-        panel.setFrame(NSRect(origin: origin, size: size), display: true)
+        // Nothing moved, so nothing is set. The open panel's clock calls this
+        // once a second and the push leg calls it again on every batch of state
+        // moves, and the overwhelming majority of those find the panel exactly
+        // where it already is. `setFrame(display: true)` is not free — it drives
+        // a display cycle — and `invalidateShadow` makes the window server
+        // recompute the shadow of a transparent borderless window. Paying for
+        // both once a second for a frame that did not change is a menu-bar app
+        // costing the user a measurable slice of a core while it sits there.
+        let target = NSRect(origin: origin, size: size)
+        guard panel.frame != target else { return }
+        panel.setFrame(target, display: true)
         // A borderless transparent window keeps the shadow it was drawn with,
         // so a panel that grew a row would wear the outline of the shorter one.
         panel.invalidateShadow()

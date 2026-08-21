@@ -211,6 +211,14 @@ public final class CaffeineController {
     /// Carries out one demand. Idempotent: holding while already held renews
     /// rather than taking a second assertion, and releasing while nothing is
     /// held does nothing.
+    ///
+    /// `reading` is assigned unconditionally, which is safe because Observation
+    /// suppresses an assignment whose value is equal — this runs on the 30-second
+    /// renewal clock and on every coalesced push, and the panel footer reads
+    /// `reading` inside its body, so an unsuppressed equal assignment would
+    /// rebuild the whole panel to draw the identical indicator. That is a claim
+    /// about the toolchain rather than about this file, and it is pinned by
+    /// `PanelModelTests.equalAssignmentsAreSuppressedByObservation`.
     private func apply(_ demand: CaffeineDemand) {
         guard demand.shouldHold else {
             if assertion.isHeld {

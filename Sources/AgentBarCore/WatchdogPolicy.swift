@@ -24,8 +24,23 @@ public struct WatchdogPolicy: Sendable, Hashable {
     /// `waiting` is the loudest thing the menu-bar icon can show.
     public var waitingTimeout: Duration
 
-    /// Silence tolerated by a session that is idle or failed. Nothing more is
-    /// expected from it, so this only decides when to stop claiming it is there.
+    /// Silence tolerated by a session that has finished its turn — `idle` or
+    /// `failed` — before it is retired outright.
+    ///
+    /// **Ten minutes, and it retires rather than doubts.** A resting session is
+    /// not one whose liveness is in question: it said what it had to say, and
+    /// nothing more is expected from it. It used to be given eight hours and
+    /// then an hour of `unknown` on top, which meant a working day's worth of
+    /// finished sessions — one per project, per tool, per restart — sat in the
+    /// panel until the small hours. Fifty rows redrawn on the open panel's
+    /// one-second clock is the load this app exists not to impose, and the
+    /// sessions were dead the whole time.
+    ///
+    /// The cost is stated plainly: a session you left idle while reading its
+    /// output disappears after ten minutes and reappears the moment you type,
+    /// because the store adopts a session on whatever event reaches it first.
+    /// A session that ends properly never waits for this at all — both
+    /// providers send `SessionEnd`, and that retires it at once.
     public var restingTimeout: Duration
 
     /// How long an `unknown` session stays on the list before it is retired.
@@ -51,7 +66,7 @@ public struct WatchdogPolicy: Sendable, Hashable {
         workingTimeout: .seconds(15 * 60),
         openToolTimeout: .seconds(60 * 60),
         waitingTimeout: .seconds(2 * 60 * 60),
-        restingTimeout: .seconds(8 * 60 * 60),
+        restingTimeout: .seconds(10 * 60),
         evictionTimeout: .seconds(60 * 60)
     )
 
@@ -87,6 +102,14 @@ public struct WatchdogPolicy: Sendable, Hashable {
     ) -> WatchdogVerdict {
         let allowance = silenceAllowance(for: state, hasOpenTool: hasOpenTool)
         guard silence >= allowance else { return .keep }
+        // A resting session skips `unknown` entirely. `unknown` means "this may
+        // still be alive and we cannot tell", which is a real question about a
+        // session that was working or waiting and a meaningless one about a
+        // session that already finished. Sending a finished session through it
+        // would add the eviction timeout to the resting one and put the
+        // retirement an hour and ten minutes out — which is how the panel came
+        // to hold a day's dead sessions.
+        if state.isResting { return .evict }
         return silence - allowance >= evictionTimeout ? .evict : .markUnknown
     }
 }

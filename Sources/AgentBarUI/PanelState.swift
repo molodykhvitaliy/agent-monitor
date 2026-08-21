@@ -103,6 +103,57 @@ nonisolated public struct FooterStatus: Sendable, Hashable {
     }
 }
 
+/// The panel header's urgency line: how many sessions need a human, or nothing.
+///
+/// > **Ours, unlike a notification stack's summary.** macOS composes the string
+/// > above a group of banners and there is no API to set it; this one is drawn
+/// > by the panel, so it is ours to compose — and it is the answer to "is
+/// > anything urgent?" that the panel could not give without reading the list.
+///
+/// Note the division of labour with `FooterStatus`: the **header** says how many
+/// need you, the **footer** says whether the plumbing is healthy. They never
+/// duplicate each other, and neither is derived from the other's source.
+nonisolated public struct PanelHeaderSummary: Sendable, Hashable {
+    /// From the same state-shape language as everything else, so colour is never
+    /// alone.
+    public let shape: SessionStateKind
+    public let color: ColorToken
+    public let text: String
+    /// How many sessions this is about. Kept so a test can assert the count
+    /// without parsing a localised sentence back out.
+    public let count: Int
+
+    /// Ordered rules, first match wins — the same shape as
+    /// `FooterStatus.summarise`, and `nil` when there is nothing to say.
+    ///
+    /// Waiting outranks failed because a waiting agent is blocked *on this
+    /// person right now*, and a failed one has already stopped. That is
+    /// `attentionRank`'s order and not a decision made here.
+    public static func summarise(_ snapshot: StoreSnapshot) -> PanelHeaderSummary? {
+        let waiting = snapshot.sessions.count { $0.state.kind == .waiting }
+        if waiting > 0 {
+            return PanelHeaderSummary(
+                shape: .waiting, color: .stateWaiting,
+                text: String(
+                    localized: "\(waiting) waiting for you",
+                    comment: "Panel header urgency summary"),
+                count: waiting)
+        }
+        let failed = snapshot.sessions.count { $0.state.kind == .failed }
+        if failed > 0 {
+            return PanelHeaderSummary(
+                shape: .failed, color: .stateFailed,
+                text: String(
+                    localized: "\(failed) failed", comment: "Panel header urgency summary"),
+                count: failed)
+        }
+        // Quiet. The pill is absent rather than reassuring: a permanent
+        // "0 waiting" is a thing the eye learns to stop reading, which costs the
+        // pill its meaning on the day it matters.
+        return nil
+    }
+}
+
 /// The status item's accessibility label — a full sentence, recomputed on every
 /// state change, because VoiceOver gets nothing from the silhouette.
 nonisolated public enum StatusItemLabel {

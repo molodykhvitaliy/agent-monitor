@@ -71,10 +71,16 @@ struct NotificationMatrixView: View {
     private func label(for verb: NotificationVerb) -> some View {
         VStack(alignment: .leading, spacing: DesignTokens.Row.detailGap) {
             HStack(spacing: DesignTokens.Row.shapeGap) {
+                // The shape says which state, and the colour comes from the
+                // event's own attachment ramp rather than from the state's
+                // accent — so the matrix, the banner and the settings preview
+                // agree about what colour a `Finished` is. They would not
+                // otherwise: `finished` announces the *idle* state, which is the
+                // one state with no accent at all.
                 StateShapeView(
                     kind: verb.shape,
                     size: StateShapeView.rowSize(for: verb.shape),
-                    color: (verb.shape.accent ?? .ink400).color)
+                    color: AttachmentRamp.ramp(for: verb).accent)
                 Text(verb.title)
                     .font(DesignTokens.Text.rowTitle)
             }

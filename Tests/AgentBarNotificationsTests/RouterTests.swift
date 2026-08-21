@@ -78,17 +78,17 @@ struct RouterTests {
         #expect(posted.threadIdentifier == Fixture.project("/Users/dev/web").id.value)
     }
 
-    @Test("With a badge the title carries no provider; without one it does")
+    @Test("With art the title carries no provider; without it the title does")
     func providerFallsBackIntoTheTitle() async throws {
-        let withBadge = RecordingPresenter()
-        let badged = await startedRouter(
-            presenter: withBadge,
-            attachments: StubAttachments(url: URL(filePath: "/tmp/badge.png")))
-        badged.record([Fixture.change()])
-        badged.stop()
-        await badged.flush()
-        #expect(withBadge.posted.first?.title == "Finished · agentbar")
-        #expect(withBadge.posted.first?.attachment != nil)
+        let withArt = RecordingPresenter()
+        let illustrated = await startedRouter(
+            presenter: withArt,
+            attachments: StubAttachments(url: URL(filePath: "/tmp/event.png")))
+        illustrated.record([Fixture.change()])
+        illustrated.stop()
+        await illustrated.flush()
+        #expect(withArt.posted.first?.title == "Finished · agentbar")
+        #expect(withArt.posted.first?.attachment != nil)
 
         let without = RecordingPresenter()
         let bare = await startedRouter(presenter: without)
@@ -96,6 +96,26 @@ struct RouterTests {
         bare.stop()
         await bare.flush()
         #expect(without.posted.first?.title == "Finished · Claude Code · agentbar")
+    }
+
+    /// The slot that was unused before v2. It is what freed the attachment
+    /// square to say *what happened* instead of repeating which app this is.
+    @Test("The subtitle always names the provider")
+    func subtitleNamesTheProvider() async throws {
+        for provider in Provider.allCases {
+            let presenter = RecordingPresenter()
+            let router = await startedRouter(
+                presenter: presenter,
+                attachments: StubAttachments(url: URL(filePath: "/tmp/event.png")))
+            router.record([Fixture.change(provider: provider)])
+            router.stop()
+            await router.flush()
+            let posted = try #require(presenter.posted.first)
+            #expect(posted.subtitle == provider.displayName)
+            // And nothing more. A session ordinal has no honest source here, and
+            // an invented number is the one thing the copy rules forbid outright.
+            #expect(!posted.subtitle.contains("session"))
+        }
     }
 
     @Test("Changes that fire nothing reach no presenter")

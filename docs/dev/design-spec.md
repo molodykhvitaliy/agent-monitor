@@ -51,8 +51,15 @@ constant so it cannot drift to a hyphen.
 ## Status item
 
 The most important element: it answers "does anything need me?" before the panel
-is opened. One monochrome template image (`isTemplate = true`) so AppKit tints
-it for light, dark and a tinted menu bar.
+is opened. Monochrome template images (`isTemplate = true`) so AppKit tints them
+for light, dark and a tinted menu bar.
+
+**The figure is three agent nodes** — two at the base, one at the apex, joined by
+hairline links — which is the app mark reduced to its skeleton. It replaces the
+filled disc v1 shipped: a disc is clean and invisible at 18 pt among a dozen
+system items, has no identity, and tells a first-time user nothing.
+[design-system.md](design-system.md#status-item-glyph) has the reasoning; the
+geometry below is normative and lives in `GlyphFigure`.
 
 **Priority — the icon shows the single most urgent state present:**
 Waiting → Failed → Working → Unknown → Idle. This is
@@ -61,41 +68,81 @@ encodes exactly this order.
 
 | State | Glyph |
 |---|---|
-| Idle | thin hollow ring at 40 % opacity — nearly invisible |
-| Working | solid filled disc, full opacity, no badge |
-| Waiting | solid disc + filled **circle** badge, top-right, with a ring gap punched around it |
-| Failed | solid disc + filled **rounded-square** badge, top-right, same ring gap |
-| Unknown | dashed ring outline — never solid, must not read as Working |
+| Idle | all three nodes as rings, whole figure at 40 % coverage — nearly invisible |
+| Working | all three nodes filled, full coverage |
+| Waiting | apex filled at 2.50 pt **plus** a ring leaving it; base nodes filled |
+| Failed | apex is a rounded square; base nodes filled |
+| Unknown | everything dashed — nodes and links — at 60 % coverage |
 
-Geometry, on an 18 pt menu-bar canvas with the glyph occupying the central
-60–70 %:
+Geometry, on an 18 pt menu-bar canvas with **y measured up from the bottom**
+(AppKit's convention, ready for `NSBezierPath`):
 
 | Element | Value |
 |---|---|
 | Canvas | 18 × 18 pt |
-| Glyph outer diameter | 12 pt, centred — 67 % of the canvas |
-| Working disc | 12 pt, filled |
-| Idle ring | 12 pt outer, 1.3 pt stroke, 40 % opacity |
-| Unknown ring | 12 pt outer, 1.4 pt stroke, dashed 2 pt on / 2 pt off |
-| Waiting badge | 4.8 pt circle — 40 % of the glyph |
-| Failed badge | 4.0 pt square, 0.8 pt corners — 33 % of the glyph |
-| Badge centre | on the glyph's circumference at 45° upper-right |
-| Badge gap | 1 pt of cleared space, punched **out** of the glyph rather than stroked — a template image is one channel of alpha and has no second colour to stroke with |
+| Apex centre | (9.0, 13.0), radius 2.40 — 2.50 when filled for Waiting |
+| Base left centre | (4.5, 5.0), radius 1.90 |
+| Base right centre | (13.5, 5.0), radius 1.90 |
+| Node stroke, when hollow | 0.90 pt |
+| Link stroke | 0.80 pt, round caps, trimmed to each node's edge |
+| Link coverage | 0.45 **of the state's own coverage**, so links stay subordinate in every state |
+| Failed apex | 4.60 pt square, 1.20 pt corners |
+| Waiting pulse | ring at 1.20 pt stroke, travelling 0.70 → 2.10 of the apex radius |
+| Node dash | 1.2 on / 1.3 off · link dash 1.3 on / 1.7 off |
 
-The badge ratios are the canvas's own (12/30 and 10/30 on its 30 pt specimen) and
-scale down cleanly. The knockout is what replaces the canvas's coloured badge and
-background-coloured ring: neither survives a template image, and the shape alone
-is what the state-shape language relies on anyway.
+The optical bounding box is 12.8 × 12.8 pt — **71 %** of the canvas, deliberately
+wider than the old disc's 67 %. An outlined, mostly empty figure reads lighter
+than a solid one of the same diameter and needs the width to hold equal weight
+beside a battery glyph. Verify optically against the system items, not against
+the number.
 
-Draw all five with `NSBezierPath` rather than shipping five PDFs. That settles the
+All of this is normative in `GlyphFigure`, which every renderer reads from —
+the AppKit template image, the SwiftUI canvas the panel header and the
+onboarding draw, and the notification attachment art. One set of numbers, three
+renderers.
+
+Draw with `NSBezierPath` rather than shipping five PDFs. That settles the
 light/dark asset-pair question by construction, and it removes the reachability
-question hanging over `StatusItemController`'s current `"AB"` text fallback: an SF
-Symbol name can be withdrawn between macOS releases, a path cannot.
+question that hung over the old `"AB"` text fallback: an SF Symbol name can be
+withdrawn between macOS releases, a path cannot.
 
-> **Deviation.** The canvas draws the badge bottom-right in the menu-bar strip
-> and top-right in the zoomed specimens. Top-right is normative: it is what
-> the canvas's screens document states in prose, and it is where macOS puts
-> badges.
+> **A template image has one channel of alpha, and that governs everything
+> here.** No colour survives tinting, so the pulse ring is a *shape* — an
+> even-odd annulus — and not a coloured stroke. Colour lives in the notification
+> attachment, the panel row and the footer indicator. Never in the status item.
+
+### Animation
+
+The status item is three cached static images and one cached frame array.
+
+| Cycle | Duration | Behaviour |
+|---|---|---|
+| Waiting pulse | 2200 ms, 18 frames at 8 fps | the ring leaves the apex and fades |
+| Working chase | 1500 ms, 12 frames | computed, and **not shipped** |
+
+Four rules, and each one is a defect if broken:
+
+1. **One timer**, invalidated whenever the aggregate state has nothing to
+   animate. Idle, Failed and Unknown are static.
+2. **8 fps**, not 12 and not 60 — enough for a 2.2 s ease, half the wake-ups.
+3. **No timer at all under Reduce Motion.** The resting frame is shown, and
+   `AccessibilityPreferences` is the one place that setting is read.
+4. **The resting frame is frame 0**, so the static image and the animation
+   cannot disagree about what a state looks like.
+
+> **The resting frame is not phase zero, and this matters.** At phase zero the
+> pulse ring is still inside the filled apex, so Waiting draws as a filled
+> triangle — which is *Working*. Reduce Motion, a sleeping timer, an offscreen
+> render and a profiler run all produce that frame, so the cycle is phase-shifted
+> to start at the earliest phase where the ring has cleared the apex. It is
+> searched at build time rather than written down, so moving the curve, the
+> travel or the apex radius moves it too.
+
+**Working does not animate in the menu bar.** Its information is already carried
+by the panel, the working row's hairline and the fact that the user just started
+the agent, and it would run for most of a working day as a permanently moving
+thing in peripheral vision. The chase is computed either way; turning it on is
+`GlyphFigure.animatesWorking` and nothing else.
 
 **Optional waiting count.** When `StoreSnapshot.waitingSessionCount > 1`, a
 numeral may sit to the right of the glyph, battery-percentage style. Only above
@@ -146,7 +193,7 @@ away. There is nothing to subscribe to.
 | Signal | Carries | Latency |
 |---|---|---|
 | **Push** — the ingest boundary forwards `apply()`'s `.changed(StateChange)` outcomes to an app-level observer | every state move an event caused, including a session becoming `waiting` | immediate |
-| Timer, panel open, 1 s | `snapshot()`, republish — the durations tick | 1 s |
+| Timer, panel open, 1 s | `sweep()`, `snapshot()`, republish — the durations tick | 1 s |
 | Timer, panel closed, 30–60 s | `sweep()`, then `snapshot()`; the status item is redrawn **only when `mostUrgentState` or `waitingSessionCount` actually changed** | up to a minute |
 
 Push is not an optimisation. Without it a waiting agent — the one signal the
@@ -161,8 +208,73 @@ closed-panel interval is not the watchdog's: the tightest allowance is fifteen
 
 Container: panel radius 18, glass material, 1 pt hairline, contents clipped.
 
-**Structure, top to bottom:** project groups → Limits → footer. The onboarding
-card replaces the project groups entirely; it does not sit above them.
+**Structure, top to bottom:** header → project groups → Limits → footer. The
+onboarding card replaces the project groups entirely; it does not sit above them.
+
+### Header
+
+**Added in v2.** The panel used to start at the first project group, which left
+it a floating list of rows that could have belonged to anything, and no answer to
+"is anything urgent?" short of reading every row.
+
+```
+height        41 pt  (11 top / 10 bottom padding + 20 pt of content)
+padding       15 pt sides
+divider       1 pt hairline at the bottom, ColorToken.hairline
+```
+
+Left: the 16 pt three-node figure — drawn as a SwiftUI view rather than a
+template image here, so it *may* carry the state accent — then `AgentBar` in
+`rowTitle`.
+
+Right: the urgency pill, or nothing.
+
+| Condition | Summary | Shape | Colour |
+|---|---|---|---|
+| Any session waiting | `%lld waiting for you` | waiting | `stateWaiting` |
+| Else any failed | `%lld failed` | failed | `stateFailed` |
+| Else | *absent* | — | — |
+
+The pill is 3 pt vertical / 9 pt horizontal padding at radius 7, filled with the
+accent at 0.16 in light and 0.24 in dark, with an inset hairline at accent 0.30
+and a semibold `caption` label. Composed by `PanelHeaderSummary.summarise` —
+ordered rules, first match wins, the same shape as `FooterStatus.summarise`.
+Waiting outranks failed because a waiting agent is blocked on this person *right
+now* and a failed one has already stopped; that is `attentionRank`, not a
+decision the header makes.
+
+**When nothing is waiting and nothing has failed the pill is absent, not
+reassuring.** A permanent `0 waiting` is a thing the eye learns to stop reading,
+which costs it its meaning on the day it matters.
+
+**The height is stated, not derived**, and that is the point of the number: a
+header that grew when the pill appeared would push every row down at the exact
+moment something started waiting — the worst possible moment for the list to move
+under a pointer reaching for it.
+
+Note the division of labour: the **header** says how many need you, the
+**footer** says whether the plumbing is healthy. Neither is derived from the
+other's source, and they never duplicate each other.
+
+### The waiting wash
+
+**Added in v2.** While any session is waiting, the panel takes a warm gradient at
+its **top edge only**: `stateWaiting` at 0.20 (light) / 0.18 (dark) over 72 pt,
+fading to transparent. It sits above the material and below the content, so the
+header and the first rows read through it.
+
+Two rules:
+
+- **It is state, not decoration.** It appears for `waiting` and never for
+  `failed` — a failure is already carried by a row tint and a footer line, and
+  two washes at once would say nothing.
+- **It costs no height.** It is a background, so a session starting to wait must
+  not resize the window. A test asserts that.
+
+It does not replace the row wash: a waiting row still takes its own tint, and the
+top wash is a separate, larger signal about the panel as a whole. Under Reduce
+Transparency the panel is a flat `surface` fill and the wash stays — it is an
+opacity over a fill, not a material effect.
 
 ### Project group
 
@@ -238,6 +350,55 @@ text column with a 10 pt gap, badge top-aligned.
 **Row tint** per the design system: waiting, failed and unknown rows take a
 full-row wash of their accent; working and idle rows take none.
 
+**The working hairline** — added in v2, and the only progress indicator in the
+app. Under a working row's command line:
+
+```
+height     2 pt, radius 2 · margin 7 pt above
+track      ColorToken.meterTrack
+fill       a 40 %-wide sweep, transparent → stateWorking → transparent
+motion     2400 ms, linear (Motion.traverse), indeterminate
+travel     from fully off the left edge to fully off the right
+```
+
+**Deliberately not a spinner.** A spinner claims a duration AgentBar does not
+know; a sweep claims only that something is happening, which is the whole of what
+a hook payload says. There is no percentage available and none is implied. The
+sweep's ends are transparent so it has no edge to catch the eye — an edge would
+read as a boundary between "done" and "not done", which is a claim this cannot
+make.
+
+Under Reduce Motion — and behind a dismissed panel — it renders as a **static
+40 % fill at the left**: not hidden and not frozen mid-sweep, because a working
+row still has to look different from an idle one.
+
+> **It stuttered, and the cause was the shape of the loop rather than its speed.**
+> The first build travelled from the track's left edge to its right on the `cycle`
+> curve, repeating without autoreverse. Both halves are wrong for a loop that
+> wraps. The travel began *inside* the track, so every cycle ended with a
+> 40 %-wide bar appearing out of nothing at the left edge; and ease-in-out spends
+> its slowest moments at both ends of the travel, putting a near-stop on each side
+> of that seam. What the eye saw was pop, crawl, race, crawl, pop. The fix is the
+> two lines above — linear, and off the track at both ends — and the rule behind
+> it is in [design-system.md](design-system.md#motion): `cycle` is for a loop that
+> returns, `traverse` for a loop that wraps.
+>
+> The moving sweep and the parked one are also **two views, not one offset with a
+> conditional animation.** A `repeatForever` animation is started by a value
+> *change*, so re-entering the moving state — a user turning Reduce Motion off
+> with the panel open, or the panel coming back on screen — finds a single shared
+> flag already at its end value, fires nothing, and leaves the row with an empty
+> track for as long as it lives. That defect has now been fixed twice from
+> opposite directions; giving the moving bar its own view gives it a fresh state
+> and a fresh `onAppear` every time, so it cannot fail to re-arm.
+
+**Inline row actions are not shipped.** The mock draws `Reply` and `Open` inside
+a waiting row. The panel is a status surface — clicking a row already opens the
+session — and with no reply channel possible ([Notifications](#notifications)) a
+`Reply` button could only duplicate that gesture. Rows would also grow taller and
+the 340 pt list would hold fewer of them. Revisit only if reaching a waiting
+session turns out to be slow in real use.
+
 **The detail line, per state** — one line, and the typeface is itself a signal:
 **monospace is text a machine produced**, proportional is text AgentBar composed
 or a person wrote.
@@ -304,10 +465,11 @@ what makes the *notification* worth reading. Landed in step 06 (ADR-0005); see
 [Obligations](#step-06-or-07--the-question-line).
 
 **Idle and Failed rows are ordinary rows.** They persist for as long as the store
-holds them — eight hours of silence before the watchdog even considers them
-`unknown` — and the panel never hides a session the store still has, nor offers a
-per-row dismiss. An ordinary working day is mostly Idle rows, and the design has
-to be calm at that, not just at the hero case: an Idle row is badge, hollow ring,
+holds them — ten minutes of silence, after which the session is retired outright
+rather than turning `Unknown` ([ADR-0012](../adr/ADR-0012-a-finished-session-is-retired-not-doubted.md))
+— and the panel never hides a session the store still has, nor offers a per-row
+dismiss. An ordinary working day is mostly Idle rows, and the design has to be
+calm at that, not just at the hero case: an Idle row is badge, hollow ring,
 `Idle`, duration, no tint, no second line. A Failed row keeps its wash for as long
 as it is listed.
 
@@ -773,6 +935,84 @@ A failure to start ingest at all surfaces as `.endpointUnavailable` on every
 installed provider. That is the honest reading: the hooks are fine, AgentBar is
 not listening.
 
+### The first-run flow
+
+**Added in v2, and it does not replace the card above.** The two surfaces answer
+different questions and both stay.
+
+| | First-run flow | `Get Started` card |
+|---|---|---|
+| When | once, on first launch | any time the snapshot is empty and an integration blocks events; also on demand from the footer |
+| Shape | five sequential steps | one card, one row per provider |
+| Teaches | where the app lives; what it will do | why nothing is appearing right now |
+| State | derived, transient | derived, permanent |
+
+**The whole design rests on one decision: the flow hangs from the status item.**
+AgentBar has no Dock icon and no window, so the single most important thing a
+first launch has to teach is a *location*, not a feature. A centred window
+explaining notifications teaches the wrong thing — the user reads it, closes it,
+and then cannot find the app. Presented through `PanelController` at **420 pt**
+with the status item highlighted, the eye goes to the menu bar within the first
+second.
+
+| # | Step | Purpose | Advances by |
+|---|---|---|---|
+| 1 | Welcome | teach the location; three one-line capability bullets | button, or skip |
+| 2 | Claude Code | install the hook, honestly | button, or skip |
+| 3 | Codex | install **and** trust, as two visible stages | button, or skip |
+| 4 | Notifications | request authorisation, showing a real banner first | button, or skip |
+| 5 | Done | confirm state, hand off to the panel | button closes |
+
+Below the step: a five-segment progress rail, 3 pt tall with 5 pt gaps, and
+`Step %lld of %lld · %@` centred beneath it. Segments rather than dots — dots do
+not communicate remaining length, and five steps is enough that a user wants to
+know how much is left.
+
+**State comes from the real reports, never from a local flag.** The flow
+persists exactly one boolean: whether the first run has happened. Everything else
+is derived from `IntegrationStatus` and the notification authorisation, re-read
+on entry to every step and on a three-second poll while an install step is
+showing — a user who runs the installer in a terminal, or answers Codex's own
+trust prompt, has to see the step flip without pressing anything here. An early
+draft also kept a set of skipped steps; it was deleted, because a step is skipped
+exactly when its provider is still not connected, and a second answer to that
+question is the failure mode this design exists to avoid.
+
+**Steps 2 and 3 owe three facts in the step itself**, not in a footnote and not
+behind a link, because they write into a file the user owns: what is read
+(*status events only — never your code or your conversation*), where it lives
+(*~/.claude/settings.json*, *~/.codex/hooks.json*), and that it is reversible.
+Step 3 draws Codex's two stages as a progression, because "I installed it, why is
+nothing happening" is what that requirement produces when it is only explained.
+
+**Step 4 shows before it asks.** A real banner built from the real attachment art
+sits above the permission button, so *no surprises* is true rather than a claim.
+Three authorisation outcomes need a face, and the third has a rule: `.denied`
+offers **Open System Settings** and **never re-prompts** — macOS shows its prompt
+once per app and silently ignores a second request, so a button that re-asked
+would visibly do nothing.
+
+**A skip is never punished.** Nothing is written and nothing is logged as an
+error; skipping step 1 jumps to the summary, which then reports honestly what is
+and is not set up, in secondary ink. No red, no warning glyph, no "incomplete".
+The copy table anticipated two outcomes, `connected` and `skipped`; a provider
+that is installed and not yet trusted is neither, so every rung of
+`IntegrationCondition` gets a phrase and all of them read as quietly as
+`skipped`. The tone carries "recoverable"; the wording carries the fact.
+
+**`PanelContent.decide` is untouched.** The flow sits *before* that decision
+rather than inside it — the controller chooses between "show the flow" and "show
+the panel", and only in the second branch does `PanelContent` apply. Folding it
+in would have made a tested pure function depend on a persisted flag.
+
+> **The status item is not made to lie.** The design asks for the menu-bar glyph
+> to come alive on the last step. A status item pulsing *waiting* while nothing
+> is waiting would be the app's first act being false, so the live figure is
+> drawn inside the card instead — the highlight already does the pointing.
+
+Under Reduce Motion the whole flow cross-fades at 150 ms: no drop, no rise, no
+glow, no stagger.
+
 ---
 
 ## Notifications
@@ -783,9 +1023,18 @@ and hierarchy: **what needs me → which agent → where →** one line of detai
 | Field | Content |
 |---|---|
 | `title` | `{What} · {project}` |
+| `subtitle` | the provider's display name |
 | `body` | the one relevant detail line |
-| attachment | the provider badge, pre-rendered per provider |
+| attachment | the **event**'s art, pre-rendered per event |
 | `categoryIdentifier` | one per event type |
+
+> **Revised in v2: the attachment says what happened, not which app it is.** It
+> used to be one square per *provider*, which spent the only graphic surface the
+> app controls on a word the `subtitle` — then unused — can carry for free, three
+> centimetres from a leading icon slot that is always AgentBar's own and cannot
+> be replaced. The square now carries the event, and there are exactly four
+> decisions in a banner that are ours: this image, the three text slots, the
+> actions, and the grouping.
 
 The four verbs: **Question · Waiting · Finished · Failed**. Each is the first
 word, so a banner truncated at ~30 characters still delivers the meaning. The
@@ -839,9 +1088,63 @@ length bound and `NativeEventDecoder` applies none either, so the body takes the
 first 60 characters on a word boundary and drops the rest. The system truncates
 anyway; doing it deliberately means the cut lands somewhere readable.
 
-The provider is carried by the attachment image, not by the title — except in
-the fallback, where the image could not be rendered and the title becomes
-`Question · Claude Code · agentbar-web` so the provider is not simply lost.
+The provider is carried by the `subtitle`, always. The provider-naming title —
+`Question · Claude Code · agentbar-web` — stays as a safety net for the path
+where no art could be attached: `subtitle` is a slot the system may truncate or
+drop before it truncates the title, and losing which agent is asking costs more
+than a repeated word does on a rare path.
+
+**The title is chosen by whether art was actually attached, not by whether a file
+was found.** `UNNotificationAttachment` can still refuse a file that exists — it
+was consumed by an earlier post, or it fails the system's own validation — so the
+decision belongs at the point of attachment and not at the point of lookup. It is
+subtle and it is correct; do not simplify it.
+
+### Attachment art
+
+Four squares, one per verb, each carrying the same three-node figure as the menu
+bar so the banner, the status item and the app icon are visibly one family.
+**Silhouette first, colour second** — verified by desaturating all four and
+comparing them, because four gradients are trivially distinguishable and prove
+nothing.
+
+| Event | Figure | Base token |
+|---|---|---|
+| Question | apex filled, ring leaving it | `stateWaiting` |
+| Waiting | all three nodes filled | `stateWorking` |
+| Finished | all three filled, enclosed in a closed ring | `connected` |
+| Failed | apex is a rounded square | `stateFailed` |
+
+`Waiting` and `Finished` draw the same nodes — both mean "the agent is not
+working right now" — and the enclosing ring is the whole of what tells them
+apart. Losing it would leave two squares differing only in hue.
+
+```
+canvas       256 × 256 px, generated; the system clips it to ~38 pt
+gradient     linear, 155°, light stop → dark stop
+top sheen    radial white, 45 % → transparent, centred 22 % / 8 %
+figure       the three-node glyph at 56 % of the canvas, in onAccent white
+```
+
+Each gradient is two stops derived from an existing `ColorToken` at ±12 % OKLCH
+lightness — **no new base token** — held in `AttachmentRamp`. Rendered in the
+**light appearance always**: an attachment is not re-rendered when the system
+theme changes, so a dark-appearance square would be wrong half the time.
+
+There is deliberately **no fifth square for `unknown`**. `NotificationPolicy`
+returns `nil` for it and that stays true, so a fifth ramp would be a colour pair
+nothing can ever ask for.
+
+**No actions ship.** A `Reply` field on the banner needs a channel from AgentBar
+into a running agent session, which is impersonation under the safe-superset
+rule; and a text channel into a permission prompt is a mechanism by which a
+dropped connection could resolve into a granted permission, which the
+never-auto-approve rule forbids without exception. Categories keep `actions: []`
+so `Approve`/`Deny` can arrive later without orphaning anything delivered.
+
+**The stack summary is not ours.** `threadIdentifier` groups per project and
+macOS composes the string above a group; there is no API to set it. The panel
+header carries our own summary, and that one *is* ours.
 
 The `{project}` slot is the bare `ProjectRef.name`, **not** the panel's
 disambiguated label. A notification is emitted per event and has no view of what
@@ -857,17 +1160,21 @@ radius 5 offset −3 / −3, ringed 2 pt in the banner's own background. That
 composite has to be generated and attached as a `UNNotificationAttachment` — one
 static PNG per provider, rendered once.
 
-> **Deviation, step 07: the corner badge is dropped.** What ships is the provider
-> tile alone, 38 pt at 2×, rendered by `ProviderBadgeImage` and written to
-> Caches. On macOS a banner already shows the **app's own icon** in its leading
-> slot and places an attachment as a separate thumbnail beside it, so the
-> AgentBar badge in the corner would repeat the app icon three centimetres from
-> itself. The composite's job — "which agent is this from" — is done by the tile.
-> This section's own instruction for that case is to match the intent, not the
-> pixel.
+> **Deviation, step 07: the corner badge is dropped.** On macOS a banner already
+> shows the **app's own icon** in its leading slot and places an attachment as a
+> separate thumbnail beside it, so an AgentBar badge in the corner of the
+> attachment would repeat the app icon three centimetres from itself. This
+> section's own instruction for that case is to match the intent, not the pixel.
+>
+> **Revised again in v2: the provider tile is dropped too.** Step 07 kept the
+> tile alone, and the same argument that killed the corner badge applies one step
+> further — the `subtitle` says `Claude Code` in words for free, so a square
+> repeating it wastes the only graphic surface the app controls. What ships is
+> [the event's art](#attachment-art). `ProviderBadgeImage` went with its last
+> caller; `ProviderBadge`, the view, stays, because the panel rows use it.
 >
 > The attachment is re-rendered on demand: `UNNotificationAttachment` **moves**
-> the file it is given into the notification's own store, so every badge is
+> the file it is given into the notification's own store, so every square is
 > consumed by its first use. When it cannot be produced at all the title becomes
 > `Question · Claude Code · agentbar-web`, as specified above.
 
@@ -958,9 +1265,10 @@ footer gear for it; the sound matrix has to be editable, so the screen exists
 now.
 
 **It is deliberately not the panel's vocabulary.** A settings window is system
-chrome: an ordinary titled `NSWindow` with a grouped SwiftUI `Form` and native
-controls. Three reasons. macOS users already know what one looks like and how it
-behaves. Reproducing the panel's glass in a resizable window would need the dark
+chrome: a titled `NSWindow` — with the title bar made transparent in v2, so the
+buttons sit on the sidebar — around a sidebar and a grouped SwiftUI `Form` of
+native controls. Three reasons. macOS users already know what one looks like and
+how it behaves. Reproducing the panel's glass in a resizable window would need the dark
 chip inks [design-system.md](design-system.md) says do not exist yet, which would
 mean designing rather than transcribing. And a form of standard controls inherits
 every accessibility behaviour — focus order, VoiceOver, Full Keyboard Access —
@@ -976,10 +1284,86 @@ in would be worse than the focus rule it would be honouring. Closing it calls
 `NSApp.hide` — otherwise an accessory app is left active with nothing on screen
 and every keystroke going nowhere.
 
-Opens at 720 × 640, resizable, and **never larger than the screen it opens on**.
-The resize minimum is 638 × 420, and it is **derived** — from what the matrix
-needs at every provider the domain has, plus the grouped form's own insets —
-rather than chosen beside it. It scrolls vertically; it never scrolls horizontally.
+Opens at 932 × 640, resizable, and **never larger than the screen it opens on**.
+The resize minimum is 850 × 420, and it is **derived** — from what the matrix
+needs at every provider the domain has, plus the grouped form's own insets, plus
+the sidebar's fixed width — rather than chosen beside it. It scrolls vertically;
+it never scrolls horizontally.
+
+### The sidebar
+
+**Added in v2**, and the one part of the mock this window had refused. The
+argument for refusing it was that there was no split view to give a selection
+fill to; the answer is that there is one now, because a settings window with
+seven sections and no navigation is a window you scroll to find things in.
+
+A fixed 212 pt column: the app's mark and name, a hairline, then one row per
+section. The rows are `Notifications`, `Quiet Hours`, `While You're Working`,
+`Sounds`, `Caffeine`, `General` and `About` — the last two beyond what the mock
+drew, because the mock did not know about them and dropping either would have
+hidden a real setting. The mock's width is 200; the extra twelve points are what
+*While You're Working* needs at the system's own sidebar text size, and shrinking
+the text to fit a mock is the wrong way round.
+
+- **Glass here and nowhere else in this window.** Long lists of settings text
+  over a blurred backdrop are measurably harder to read and the content pane has
+  no reason to show what is behind the window. Under Reduce Transparency the
+  sidebar becomes a flat `surface` fill, the same rule the panel already follows.
+- **The traffic lights sit on it**, with no title bar of their own —
+  `fullSizeContentView`, a transparent title bar, and a hidden title. Three
+  decisions that only work together, and the room for the buttons comes from the
+  window's own 32 pt safe-area inset: the sidebar's *content* respects it, its
+  *glass* ignores it. Paying for it twice pushes the whole interface an inch down
+  the window, and paying for it never puts the buttons on a bare strip.
+- **Selection is a filled pill** — radius 9, the accent at 0.14 light / 0.18
+  dark, no hairline — and the row's ink takes the accent too, so the selection is
+  never carried by a fill alone. Hover on an unselected row is `hoverOverlay`.
+- **A focus ring**, read from inside the row's own `ButtonStyle` the way
+  `SessionRowButtonStyle` already does it in the panel — `.plain` draws no focus
+  indication of its own, and this is the one hand-rolled navigation list in a
+  window whose stated reason for native controls is that they inherit Full
+  Keyboard Access. The ring is the system accent rather than `stateWorking`, so
+  it cannot be mistaken for the selection fill it sits beside.
+- **SF Symbols, not the mock's hand-drawn figures.** A settings sidebar is the
+  most conventional list in macOS.
+
+**It scrolls the content pane; it does not switch panes.** The sections stay one
+continuous column with the preview block at its head — which is the only way the
+preview can be what the design asks it to be, *above every section* rather than
+above one of them — and a sidebar row moves the scroll to that section's heading.
+The lit row therefore follows the last row pressed rather than the scroll
+position, and that is a deliberate limit: making it follow the scroll means
+measuring section frames on every scrolled frame, and publishing a measurement
+out of layout is what once cost this app 98 % of a core in the panel.
+
+The anchors live on the **section headings**, not on the `Section`s. A `Section`
+in a grouped `Form` is a layout container rather than a view in the scroll's own
+content, and an `.id` on one is not reliably what `ScrollViewReader` finds.
+
+**Pressing the already-lit row scrolls to it too.** The request that drives the
+scroll carries a count as well as a section, and the count changes on every
+press including a repeat — because the lit row does not follow the scroll, a
+user who presses `Sounds`, reads on past it, and wants to come back has no
+other way to ask than pressing `Sounds` again, and a request keyed on the
+section alone would see no change and do nothing.
+
+A scroll view lays its content out **into** its safe area rather than stopping
+at it, so a heading at rest sits below the traffic lights but a scrolled row
+runs up to the window's bare top edge — a control sliced in half against
+nothing, with no title bar left to draw a material over it. The content pane
+covers that strip with its own `canvas` fill, sized from the same safe-area
+inset the sidebar reads, so a scrolled section stops exactly where the buttons
+begin rather than running under them.
+
+> The title is still set on the window even though nothing draws it: that is what
+> VoiceOver and the window list announce, and hiding a window's title bar is a
+> different decision from hiding its name.
+>
+> The window's own sizing had to change with the chrome. `contentLayoutRect` — the
+> part of the content *not obscured by the title bar* — is no longer the same
+> quantity `setContentSize` sets, so the re-showing path reads
+> `contentRect(forFrameRect:)` instead. Left alone it would have reported the
+> window as 32 pt shorter than it is and shrunk it by a title bar on every visit.
 
 > **Step 11: it opened 620 wide around a form that could not be drawn narrower
 > than 710.** SwiftUI does not refuse that. It lays the form out at 710 anyway,
@@ -1008,16 +1392,47 @@ rather than chosen beside it. It scrolls vertically; it never scrolls horizontal
 | Section | Contents |
 |---|---|
 | *(unnamed, conditional)* | The authorisation problem, when there is one. First in the window, because every other setting is moot if macOS will not deliver. Carries the failed state shape, the sentence, and either **Allow…** or **Open System Settings** |
+| `Preview` | A live mirror of what the settings below would produce — see below |
 | `Events` | The global switch, the matrix, one **Test {Provider}** button per registered provider, and the last action's result |
 | `Quiet Hours` | Enable, plus From and Until at half-hour granularity |
 | `While You're Working` | Enable, plus the application list with add and remove |
 | `Sounds` | **Add Sound File…**, **Reveal Sounds Folder**, and every current sound problem |
 | `Caffeine` | The three-state setting, a live status line, and the limitation |
 | `General` | Launch at login, and its last error if it has one |
+| `About` | The running version, and the one claim about this app worth making in the interface: it reads what the two tools already tell it, on this Mac only, and makes no network request to Anthropic or OpenAI. Added in v2 so the sidebar's last row leads somewhere |
 
 Section headers use the panel's `sectionLabel` — 11 pt semibold, uppercase,
 tracked — in `ink400`. Every section has a footnote in Caption explaining the one
 thing about it a user cannot infer.
+
+### The preview block
+
+**Added in v2.** The window used to open onto a section: the user toggled
+something and had to imagine the result.
+
+The block is a miniature menu-bar strip over a desktop-tinted fill, with a banner
+mock beneath it. Its one rule is why it is worth having: **it is built from the
+code that ships.** The glyph is `StatusItemGlyph`'s own template image and the
+square is `EventAttachmentImage`'s own art — neither is redrawn here, so the
+preview cannot drift from the thing it previews. *A preview that can disagree
+with reality is worse than no preview.*
+
+- **It follows the matrix by ordered rules**, first enabled event wins. Turning
+  `Question` off moves the preview to the next event the user would actually
+  receive rather than to one they have just switched off. Nothing enabled — or
+  the global switch off — replaces the banner with a sentence saying no banner
+  will arrive.
+- **It is a mirror, not a control.** Hit testing is off, so it cannot become a
+  second, undocumented control surface.
+- **The banner mock is approximate and should look it.** macOS owns that chrome;
+  chasing fidelity invites a bug report. What it is accurate about is the four
+  decisions that are actually ours — the art, the three text slots, the grouping
+  and the sound.
+- Static under Reduce Motion.
+
+The preview keeps its place at the head of the content pane now that the
+[sidebar](#the-sidebar) exists — the sidebar scrolls that pane rather than
+replacing it, so *above every section* stays literally true.
 
 ### The matrix
 
@@ -1040,12 +1455,18 @@ numbers rather than chosen beside them.
 The row label is the verb's state shape, the verb, and one line saying what the
 event actually is — the settings window is the one surface with room for it:
 
-| Verb | Shape | Explanation |
-|---|---|---|
-| Question | waiting triangle | An agent asked you something |
-| Waiting | waiting triangle | An agent is blocked and needs you |
-| Finished | idle hollow ring | An agent finished its turn |
-| Failed | failed rounded square | A turn ended in an error |
+| Verb | Shape | Colour | Explanation |
+|---|---|---|---|
+| Question | waiting triangle | `stateWaiting` | An agent asked you something |
+| Waiting | waiting triangle | `stateWorking` | An agent is blocked and needs you |
+| Finished | idle hollow ring | `connected` | An agent finished its turn |
+| Failed | failed rounded square | `stateFailed` | A turn ended in an error |
+
+**The colour is the event's `AttachmentRamp` base, not the state's accent**, so
+the matrix, the banner and the preview block agree about what colour an event is.
+The two disagree in exactly one place and it is the place that matters:
+`Finished` announces the *idle* state, which is the one state with no accent at
+all, so a matrix reading the accent drew it grey while the banner drew it green.
 
 Each cell is a **Notify** checkbox, a sound picker, and a play button that
 auditions the selection. The picker is grouped — Standard (Default, None),
@@ -1392,3 +1813,20 @@ Settings was the third row here until step 07. It is now a real surface — see
 [Settings window](#settings-window) — and the footer gear opens it. Caffeine
 joined it in step 08 as one more section, plus the footer indicator described
 under [Footer](#footer).
+
+One more thing v2 deliberately left unbuilt, recorded so its absence is a
+decision rather than an oversight. The settings sidebar was the second entry here
+and is no longer: it was refused on the grounds that the window was a `Form`
+rather than a split view, which was a statement about the implementation rather
+than about the design, and it is built — see [The sidebar](#the-sidebar).
+
+| Not built | Why, and what would change it |
+|---|---|
+| Inline row actions on a waiting row | The panel is a status surface and clicking a row already opens the session. Ship the panel, use it for a week, and see whether reaching a waiting session is slow. If it is, one `Open session` button is likely enough — see [Session row](#session-row) |
+
+And one that is **not** deferred but refused: a `Reply` field on a notification
+banner. It needs a channel from AgentBar into a running agent session, which is
+impersonation under the safe-superset rule, and a text channel into a permission
+prompt is a mechanism by which a dropped connection could resolve into a granted
+permission. Revisit only alongside the Approve/Deny work, under whatever consent
+model that establishes.

@@ -49,6 +49,9 @@ public struct SessionRowView: View {
                 VStack(alignment: .leading, spacing: DesignTokens.Row.detailGap) {
                     topLine
                     detailLine
+                    // The one place in the app that says "a process is alive",
+                    // and only on the one row where that is true.
+                    if session.state.kind == .working { WorkingHairline() }
                 }
             }
             .padding(.vertical, DesignTokens.Row.verticalPadding)

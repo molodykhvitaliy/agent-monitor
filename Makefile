@@ -125,6 +125,10 @@ format: ## Apply swift-format in place
 tos-check: ## Scan for Terms of Service boundary violations
 	@./scripts/tos-scan.sh
 
+.PHONY: perf-probe
+perf-probe: ## Measure a running AgentBar under synthetic load (app must be running)
+	@./scripts/perf-probe.py
+
 .PHONY: schema-sync
 schema-sync: ## Regenerate and diff the Codex App Server protocol schema
 	@./scripts/schema-sync.sh

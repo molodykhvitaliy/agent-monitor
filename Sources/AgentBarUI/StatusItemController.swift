@@ -1,5 +1,6 @@
 import AgentBarCore
 import AppKit
+import Observation
 
 /// Owns the menu-bar presence for the whole app lifetime.
 ///
@@ -27,20 +28,64 @@ public final class StatusItemController {
     /// alone and makes the sentence wrong.
     private var shownDescription: String?
 
+    /// The frames of the state currently shown. One entry for a state that does
+    /// not animate, which is most of them.
+    private var frames: [NSImage] = []
+    private var frameIndex = 0
+    /// **One timer for the whole status item**, and only while the aggregate
+    /// state has something to animate. Idle, Failed and Unknown are static, and
+    /// leaving a timer running with an unchanging frame is a menu-bar app
+    /// costing a laptop battery for nothing.
+    private var animation: Timer?
+    /// Whether the item is drawn lit. See `setHighlighted(_:)`.
+    private var isHighlighted = false
+    private var screensAreAsleep = false
+    private var sleepObservers: [NSObjectProtocol] = []
+    private let accessibility: AccessibilityPreferences
+
     /// `onActivate` receives the button to anchor against and whether the click
     /// asked for keyboard focus.
-    public init(onActivate: @escaping (NSStatusBarButton, Bool) -> Void) {
+    public init(
+        accessibility: AccessibilityPreferences = .shared,
+        onActivate: @escaping (NSStatusBarButton, Bool) -> Void
+    ) {
+        self.accessibility = accessibility
         self.onActivate = onActivate
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         configureButton()
+        observeReduceMotion()
+        observeScreenSleep()
     }
 
     /// The anchor a panel positions itself against.
     public var button: NSStatusBarButton? { statusItem.button }
 
+    /// Draws the item as if a menu were open under it.
+    ///
+    /// Held for the whole of the first-run flow, and for nothing else. It is the
+    /// entire pedagogy of that flow: a Dock-less app's first job is teaching
+    /// where it lives, and a lit item with a panel hanging off it says that
+    /// before any copy is read.
+    ///
+    /// > **Remembered, not merely set.** `update(from:)` reassigns the button's
+    /// > image, title, position and font whenever the aggregate state moves, and
+    /// > the very first one lands a hop *after* the flow lights the item —
+    /// > `MenuBarController.start()` queues its first refresh before it shows the
+    /// > flow. If AppKit drops the cell highlight on reconfiguration, the flow
+    /// > loses the one thing it exists to say, silently. Re-applying it costs
+    /// > nothing and removes the question.
+    public func setHighlighted(_ isHighlighted: Bool) {
+        self.isHighlighted = isHighlighted
+        statusItem.button?.highlight(isHighlighted)
+    }
+
     /// Removes the item from the menu bar. Present so teardown is explicit
     /// rather than a side effect of deallocation.
     public func remove() {
+        stopAnimating()
+        let centre = NSWorkspace.shared.notificationCenter
+        for observer in sleepObservers { centre.removeObserver(observer) }
+        sleepObservers.removeAll()
         NSStatusBar.system.removeStatusItem(statusItem)
     }
 
@@ -55,7 +100,7 @@ public final class StatusItemController {
         if shownState != .some(state) || shownWaitingCount != waiting {
             shownState = .some(state)
             shownWaitingCount = waiting
-            button.image = StatusItemGlyph.image(for: state)
+            showFrames(for: state)
             // Only above one. The common case is a single waiting session, and
             // a permanent "1" is noise; status items have no native badge, so
             // this is a title beside the glyph.
@@ -63,7 +108,18 @@ public final class StatusItemController {
             button.imagePosition = waiting > 1 ? .imageLeading : .imageOnly
             button.font = .monospacedDigitSystemFont(
                 ofSize: NSFont.smallSystemFontSize, weight: .medium)
+            // Last, and after every other property this branch touches. The
+            // image went up through `showFrames`, which asserts it too.
+            if isHighlighted { button.highlight(true) }
         }
+
+        // Unconditional, and cheap: `refreshAnimation` returns immediately when
+        // the timer is already in the state it wants. This is what re-arms the
+        // pulse after `isOnScreen` has gone false and come back — the item
+        // returning to the bar posts no notification this class observes, and
+        // the alternative is a waiting glyph that never pulses again until the
+        // aggregate state happens to move.
+        refreshAnimation()
 
         // Checked separately: the sentence names a project, so it moves when the
         // glyph does not.
@@ -81,7 +137,8 @@ public final class StatusItemController {
             // worse than an unlabelled item.
             return
         }
-        button.image = StatusItemGlyph.image(for: nil)
+        frames = [StatusItemGlyph.image(for: nil)]
+        button.image = frames[0]
         button.imagePosition = .imageOnly
         button.setAccessibilityLabel(
             String(
@@ -92,6 +149,148 @@ public final class StatusItemController {
         // Both buttons, so a right-click reaches the same panel rather than
         // doing nothing at all.
         button.sendAction(on: [.leftMouseDown, .rightMouseDown])
+    }
+
+    // MARK: - Animation
+
+    /// Whether a state should be animated **right now**, which is not the same
+    /// question as whether it has a cycle: Reduce Motion turns every cycle in
+    /// the app off, and this is the one place the status item asks.
+    ///
+    /// A pure decision so it can be tested — `StatusItemController` itself needs
+    /// a real status bar, and no test builds one.
+    static func animates(
+        _ state: SessionStateKind?, reduceMotion: Bool, isOnScreen: Bool = true
+    ) -> Bool {
+        guard let state, !reduceMotion, isOnScreen else { return false }
+        return GlyphFigure.animates(state)
+    }
+
+    /// Whether anybody can see the glyph.
+    ///
+    /// > **The one prohibition this animation could otherwise break.** The motion
+    /// > rules end with *nothing animating while its surface is closed*, and
+    /// > `waiting` is precisely the state that persists unattended — a waiting
+    /// > agent overnight, with the display asleep or the item ⌘-dragged off the
+    /// > bar, would be eight wake-ups a second and an image assignment each,
+    /// > indefinitely. Both conditions are cheap to ask and neither needs a
+    /// > permission.
+    private var isOnScreen: Bool { statusItem.isVisible && !screensAreAsleep }
+
+    /// Swaps in a state's frames and starts or stops the timer accordingly.
+    private func showFrames(for state: SessionStateKind?) {
+        frames =
+            state.map { StatusItemGlyph.frames(for: $0) } ?? [
+                StatusItemGlyph.image(for: nil)
+            ]
+        frameIndex = 0
+        // The resting frame goes up immediately rather than on the first tick,
+        // so a state change is visible at once even at 8 fps.
+        show(frames[0])
+        refreshAnimation()
+    }
+
+    /// Puts a frame on the button, and re-asserts the highlight with it.
+    ///
+    /// > **Every image assignment, not only the reconfiguring one.** The
+    /// > highlight's whole job is the first-run flow, and that flow can be
+    /// > running while the glyph pulses — AgentBar relaunched beside an agent
+    /// > already at a permission prompt is the ordinary way a first run happens
+    /// > on a working machine. If AppKit drops the cell highlight when the image
+    /// > changes, a defence applied only in `update(from:)` would be cleared by
+    /// > the first animation tick 125 ms later. One funnel removes the question
+    /// > and costs a boolean per frame.
+    private func show(_ image: NSImage) {
+        guard let button = statusItem.button else { return }
+        button.image = image
+        if isHighlighted { button.highlight(true) }
+    }
+
+    /// Starts the timer, or invalidates it, from what is true now.
+    private func refreshAnimation() {
+        guard
+            Self.animates(
+                shownState.flatMap { $0 },
+                reduceMotion: accessibility.reduceMotion,
+                isOnScreen: isOnScreen),
+            frames.count > 1
+        else {
+            stopAnimating()
+            // Back to the resting frame: a stopped cycle must not leave the
+            // glyph frozen mid-pulse, which reads as a rendering fault.
+            if let first = frames.first { show(first) }
+            return
+        }
+        guard animation == nil else { return }
+        // `.common`, like the panel's clock: the menu bar's own tracking loop
+        // must not stop the glyph while the user drags across another item.
+        let timer = Timer(
+            timeInterval: StatusItemGlyph.frameInterval, repeats: true
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.advance() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        animation = timer
+    }
+
+    private func stopAnimating() {
+        animation?.invalidate()
+        animation = nil
+    }
+
+    private func advance() {
+        // Self-healing in the stopping direction: the item can be hidden by a
+        // ⌘-drag with no notification this class observes, so the tick that
+        // finds it gone is what stops the clock. The *starting* direction
+        // belongs to `update(from:)`, which asks on every reading — this tick
+        // cannot notice the item coming back, because by then it is not running.
+        guard frames.count > 1, isOnScreen else {
+            refreshAnimation()
+            return
+        }
+        frameIndex = (frameIndex + 1) % frames.count
+        show(frames[frameIndex])
+    }
+
+    /// Screen sleep, observed rather than polled, because it is the case that
+    /// lasts all night.
+    private func observeScreenSleep() {
+        let centre = NSWorkspace.shared.notificationCenter
+        // The asleep answer is captured per registration rather than read off
+        // the notification: `Notification` is not `Sendable`, and the only thing
+        // needed from it is which of the two names fired.
+        for (name, asleep) in [
+            (NSWorkspace.screensDidSleepNotification, true),
+            (NSWorkspace.screensDidWakeNotification, false),
+        ] {
+            sleepObservers.append(
+                centre.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        self.screensAreAsleep = asleep
+                        self.refreshAnimation()
+                    }
+                })
+        }
+    }
+
+    /// Re-arms itself on every change, which is how `@Observable` is read from
+    /// outside a SwiftUI view.
+    ///
+    /// `AccessibilityPreferences` is already the app's one observer of the
+    /// system's accessibility settings, and the handoff's rule is to extend it
+    /// rather than add a second mechanism. Registering for the workspace
+    /// notification again here would be that second mechanism.
+    private func observeReduceMotion() {
+        withObservationTracking {
+            _ = accessibility.reduceMotion
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                self.observeReduceMotion()
+                self.refreshAnimation()
+            }
+        }
     }
 
     /// A click never asks for keyboard focus. That is the rule the product

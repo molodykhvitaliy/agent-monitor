@@ -26,6 +26,21 @@ public enum SessionState: Sendable, Hashable {
         return question
     }
 
+    /// Whether the session has finished what it was doing and nothing further
+    /// is expected of it.
+    ///
+    /// The watchdog asks this to decide between doubting a session and retiring
+    /// it: `unknown` is a question about liveness, and a session that already
+    /// stopped has no such question to answer. `unknown` is deliberately not
+    /// resting — it is the state the watchdog *assigns* while it is still
+    /// deciding, and treating it as resting would evict on the wrong clock.
+    public var isResting: Bool {
+        switch self {
+        case .idle, .failed: true
+        case .working, .waitingInput, .waitingPermission, .unknown: false
+        }
+    }
+
     public var kind: SessionStateKind {
         switch self {
         case .idle: .idle

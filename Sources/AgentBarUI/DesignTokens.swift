@@ -45,6 +45,100 @@ nonisolated public enum DesignTokens {
     /// glass there is no colour to fade to.
     public static let listFadeHeight: CGFloat = 36
 
+    /// The panel's header: the mark, the name, and the one question a glance is
+    /// asking.
+    ///
+    /// The height is stated rather than derived. A header whose height follows
+    /// its content is a header that changes height when the pill appears, which
+    /// moves every row under the pointer at the moment something started
+    /// waiting — the worst possible moment for the list to jump.
+    public enum Header {
+        public static let contentHeight: CGFloat = 20
+        public static let topPadding: CGFloat = 11
+        public static let bottomPadding: CGFloat = 10
+        public static let sidePadding: CGFloat = 15
+        /// Including the hairline beneath it.
+        public static let height: CGFloat = contentHeight + topPadding + bottomPadding
+        public static let glyphSize: CGFloat = 16
+        public static let glyphGap: CGFloat = 8
+        /// The urgency pill.
+        public static let pillVerticalPadding: CGFloat = 3
+        public static let pillHorizontalPadding: CGFloat = 9
+        public static let pillShapeGap: CGFloat = 5
+        /// The pill's fill and its inset hairline, as opacities on the accent.
+        public static let pillFillLight: Double = 0.16
+        public static let pillFillDark: Double = 0.24
+        public static let pillStroke: Double = 0.30
+    }
+
+    /// The warm wash across the panel's top edge while anything is waiting.
+    ///
+    /// State, not decoration: it appears for `waiting` and for nothing else, and
+    /// it leaves on its own. `failed` deliberately gets none — a failure is
+    /// already carried by a row tint and a footer line, and two washes at once
+    /// would say nothing.
+    public enum Wash {
+        public static let height: CGFloat = 72
+        public static let lightOpacity: Double = 0.20
+        public static let darkOpacity: Double = 0.18
+    }
+
+    /// The working row's progress hairline.
+    ///
+    /// The app's **only** progress indicator, and deliberately not a spinner: a
+    /// spinner claims a duration AgentBar does not know, and a sweep claims only
+    /// "something is happening", which is all it does know. There is no
+    /// percentage available and none should be implied.
+    public enum Progress {
+        public static let height: CGFloat = 2
+        public static let radius: CGFloat = 2
+        public static let topMargin: CGFloat = 7
+        /// The sweep's width as a fraction of the track.
+        public static let sweepWidth: CGFloat = 0.40
+        /// What the sweep becomes under Reduce Motion — a fill at the left,
+        /// never a hidden element: a working row must still look different from
+        /// an idle one when nothing is allowed to move.
+        public static let staticFill: CGFloat = 0.40
+    }
+
+    /// The settings window's navigation column.
+    ///
+    /// Its width is not only a taste decision: it is added to
+    /// `SettingsWindowLayout.minimum`, because the matrix in the content pane
+    /// still has to be drawable whole beside it. A sidebar that took its width
+    /// out of the content's is the clipped-verb-labels defect again, one surface
+    /// over.
+    public enum SettingsSidebar {
+        /// 200 in the mock, and 212 here. At the system's own sidebar text size
+        /// the longest section name — *While You're Working* — does not fit in
+        /// 200, and the two ways to make it fit were shrinking the text below
+        /// what macOS uses for a sidebar or truncating a navigation label. Both
+        /// are worse than twelve points of width.
+        public static let width: CGFloat = 212
+        public static let sidePadding: CGFloat = 10
+        /// The gap between the traffic lights and the app's mark below them.
+        ///
+        /// Only the gap. The **room** for the buttons themselves is not spelled
+        /// here and must not be: a `fullSizeContentView` window publishes a
+        /// 32 pt top safe-area inset, SwiftUI lays the whole view out inside it,
+        /// and a second hardcoded 32 here would push everything down twice.
+        /// What the surface owes the safe area is the opposite — its glass has
+        /// to ignore it, or the buttons sit on a bare strip above the sidebar.
+        public static let markTopPadding: CGFloat = 6
+        public static let markSize: CGFloat = 16
+        public static let itemInset: CGFloat = 10
+        public static let itemVerticalPadding: CGFloat = 7
+        public static let itemSpacing: CGFloat = 2
+        public static let itemRadius: CGFloat = 9
+        public static let symbolBox: CGFloat = 16
+        public static let symbolPointSize: CGFloat = 12
+        public static let symbolGap: CGFloat = 9
+        /// The selected row's fill, as an opacity on the accent. No hairline —
+        /// the fill is the whole of the treatment.
+        public static let selectionFillLight: Double = 0.14
+        public static let selectionFillDark: Double = 0.18
+    }
+
     public enum Row {
         public static let verticalPadding: CGFloat = 9
         public static let horizontalPadding: CGFloat = 4
@@ -145,7 +239,109 @@ nonisolated public enum DesignTokens {
         public static let sectionLabelTracking: CGFloat = 11 * 0.06
     }
 
+    /// Every duration and every curve the app animates with.
+    ///
+    /// Animation here exists to communicate three things and nothing else: that
+    /// a state changed, where a surface came from, and that a process is alive.
+    /// Anything else is decoration and does not ship — which is why this is a
+    /// closed list rather than a convenience: a view that needs a timing not in
+    /// it is proposing a fourth reason, and that is a design decision rather
+    /// than a layout one.
+    ///
+    /// Four prohibitions come with it, each one a thing that gets reached for:
+    /// no rotating spinner (it claims a duration the app does not know), no
+    /// flashing above 2 Hz, nothing decorative longer than 400 ms, and nothing
+    /// animating while its surface is closed.
+    public enum Motion {
+
+        // MARK: Curves
+
+        /// Entrances. A slight overshoot, so a surface reads as *arriving*
+        /// rather than as being switched on.
+        public static let entrance = UnitCurve.bezier(
+            startControlPoint: UnitPoint(x: 0.16, y: 0.9),
+            endControlPoint: UnitPoint(x: 0.24, y: 1))
+        /// Micro-movement and state settles.
+        public static let settle = UnitCurve.bezier(
+            startControlPoint: UnitPoint(x: 0.2, y: 0.8),
+            endControlPoint: UnitPoint(x: 0.2, y: 1))
+        /// Cyclical motion that **returns** — a pulse, a breathe, a glow.
+        /// Symmetric, and paired with `autoreverses: true`, so the value comes
+        /// back the way it went and there is no jolt at the loop point.
+        public static let cycle = UnitCurve.easeInOut
+        /// Cyclical motion that **wraps** — the working hairline's sweep, and
+        /// anything else that leaves one edge and re-enters from the other.
+        ///
+        /// > **Not `cycle`, and the difference is the whole of a bug.** A
+        /// > wrapping loop restarts at its beginning rather than reversing, so
+        /// > the eye sees the seam. An ease-in-out puts the slowest part of the
+        /// > motion on both sides of that seam and the fastest in the middle:
+        /// > the sweep crawls out of the left edge, races across, crawls to a
+        /// > halt at the right, and reappears at the left — which reads as a
+        /// > stutter, not as a loop. Linear is the only curve with no seam,
+        /// > because it has the same velocity everywhere, including across the
+        /// > wrap. The travel must also start and end **off** the track, or the
+        /// > element pops into existence wherever the cycle begins.
+        public static let traverse = UnitCurve.linear
+        /// The menu-bar Waiting pulse's own ease. Fast out, slow in — the ring
+        /// leaves the apex quickly and spends the rest of the cycle fading.
+        public static let pulse = UnitCurve.bezier(
+            startControlPoint: UnitPoint(x: 0.2, y: 0.6),
+            endControlPoint: UnitPoint(x: 0.3, y: 1))
+
+        // MARK: Durations
+
+        /// A surface arriving from the top: the panel, the onboarding.
+        public static let drop: Duration = .milliseconds(600)
+        /// A step change, or a result line appearing.
+        public static let rise: Duration = .milliseconds(400)
+        /// Any glyph state gaining fill.
+        public static let stateInto: Duration = .milliseconds(280)
+        /// Back to idle. Fade only, no movement.
+        public static let stateBack: Duration = .milliseconds(320)
+        /// Button press feedback, and the collapse into Failed.
+        public static let micro: Duration = .milliseconds(180)
+        /// The Reduce Motion substitute for every entrance and step change.
+        /// Deliberately the same 150 ms as `AccessibilityPreferences.rowAnimation`.
+        public static let crossFade: Duration = .milliseconds(150)
+
+        // MARK: Cycles
+
+        public static let waitingPulse: Duration = .milliseconds(2200)
+        public static let workingChase: Duration = .milliseconds(1500)
+        public static let hairlineSweep: Duration = .milliseconds(2400)
+        public static let meterSweep: Duration = .milliseconds(3400)
+        public static let dashCrawl: Duration = .milliseconds(4000)
+        public static let breathe: Duration = .milliseconds(3000)
+
+        /// Status-item frame sampling. 8 fps is enough for a 2.2 s ease and
+        /// halves the wake-ups against 12 — the perf probe notices the
+        /// difference and the eye does not.
+        public static let glyphFrameRate: Double = 8
+
+        /// A SwiftUI animation from a token pair, so no view spells either half.
+        public static func animation(_ duration: Duration, _ curve: UnitCurve) -> Animation {
+            .timingCurve(curve, duration: duration.seconds)
+        }
+
+        /// A repeating animation from a cycle token.
+        public static func repeating(_ duration: Duration, _ curve: UnitCurve) -> Animation {
+            animation(duration, curve).repeatForever(autoreverses: false)
+        }
+    }
+
     /// The separator between a state and its context, from one constant so it
     /// cannot drift into a hyphen somewhere.
     public static let separator = " · "
+}
+
+extension Duration {
+    /// Seconds, for the SwiftUI and AppKit APIs that take a `TimeInterval`.
+    ///
+    /// The tokens are declared as `Duration` because that is what a duration
+    /// is; this is the one conversion, so no view does the arithmetic.
+    nonisolated public var seconds: TimeInterval {
+        let (whole, attoseconds) = components
+        return TimeInterval(whole) + TimeInterval(attoseconds) / 1_000_000_000_000_000_000
+    }
 }
