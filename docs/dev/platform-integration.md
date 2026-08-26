@@ -2,11 +2,11 @@
 
 Verified facts about the extension surfaces AgentBar builds on.
 
-**Verification date:** 2026-08-19 (§1 re-verified in full while building step 04;
+**Verification date:** 2026-08-26 (§1 re-verified in full while building step 04;
 `AskUserQuestion`'s `tool_input` shape added 2026-08-19 for step 06; §2
-re-verified in full on 2026-08-19 while building step 09; **§3 re-verified in
-full on 2026-08-19 while building step 10**)
-**Verified against:** Claude Code `2.1.233`, Codex CLI `0.147.0`, macOS `27.0`
+re-verified against the hook reference and local payloads on 2026-08-26; **§3
+re-verified in full on 2026-08-19 while building step 10**)
+**Verified against:** Claude Code `2.1.233`, Codex CLI `0.148.0`, macOS `27.0`
 
 > **Precedence rule.** Official platform documentation wins over this file, and
 > this file wins over the original `.scratch/notes/INITIAL_SPEC.md`. Every claim
@@ -333,18 +333,17 @@ Turn-scoped: `PreToolUse`, `PermissionRequest`, `PostToolUse`, `PreCompact`,
 Session- and subagent-start: `SessionStart`, `SubagentStart`.
 Main thread only: `SessionEnd` — *"It won't run for subagents."*
 
-AgentBar installs eight of them: `SessionStart`, `UserPromptSubmit`,
-`PreToolUse`, `PostToolUse`, `SubagentStart`, `SubagentStop`, `Stop`,
-`SessionEnd`.
+AgentBar installs nine of them: `SessionStart`, `UserPromptSubmit`,
+`PreToolUse`, `PostToolUse`, `PermissionRequest`, `SubagentStart`,
+`SubagentStop`, `Stop`, `SessionEnd`.
 
-Three absences, each a decision rather than an oversight:
+`PostToolUseFailure` is not in the 0.148 lifecycle list and is therefore not a
+tenth installed handler. The decoder accepts that exact spelling defensively if
+a client emits it, treating it as a completed tool call so an observed wait can
+recover without exposing the provider name above the adapter.
 
-- **`PermissionRequest` is not installed.** It is the event the Approve/Deny
-  backlog item arrives on, and subscribing to it now would put AgentBar in the
-  path of a permission prompt for a state the MVP cannot show. The cost is real
-  and is stated in the code: Codex has **no other event meaning "blocked on a
-  human"**, so a Codex session waiting on an approval reads as `working` until
-  the watchdog demotes it. Claude Code's `Notification` has no counterpart here.
+Two absences, each a decision rather than an oversight:
+
 - **`PreCompact` / `PostCompact` are not installed.** Compaction is not a state
   the panel shows, and every extra entry is another hook the user must review
   before *any* of them run.
@@ -424,6 +423,7 @@ Common to every event: `session_id`, `transcript_path` (nullable), `cwd`,
 | `UserPromptSubmit` | `prompt` |
 | `PreToolUse` | `tool_name`, `tool_use_id`, `tool_input` |
 | `PostToolUse` | the above plus `tool_response` |
+| `PermissionRequest` | `tool_name`, `tool_input`; `turn_id` when turn-scoped; optional `description` |
 | `SubagentStart` | `agent_id`, `agent_type` |
 | `SubagentStop` | the above plus `agent_transcript_path`, `stop_hook_active`, `last_assistant_message` |
 | `Stop` | `stop_hook_active`, `last_assistant_message` |
@@ -441,12 +441,30 @@ Exit codes: `0` is success. **Exit code `2` blocks** on `PreToolUse`,
 `PostToolUse` and `UserPromptSubmit`, with the reason read from stderr. The
 helper therefore exits `0` on every path it has, including every failure.
 
+Current local clients call the function tool `request_user_input` through the
+already-installed `PreToolUse` hook. Its `tool_input.questions` is an array;
+AgentBar reads the first non-empty `question`, falls back to `header`, and adds
+the count of further questions. The exact provider tool name and nested JSON
+remain inside `CodexAdapter`.
+
 > **Not yet captured.** These shapes come from the documentation, not from
 > recordings: a `command` hook does not run until a human trusts it, so a
 > payload cannot be captured from a scripted run. `Tests/CodexAdapterTests/
 > Fixtures/README.md` says so in the files themselves and describes the capture.
 
 ### 2.4 PermissionRequest decision format
+
+AgentBar observes this hook immediately before Codex shows its normal approval
+surface. It maps the payload to `waitingPermission`, with a local fingerprint
+derived from `turn_id`, `tool_name` and canonical `tool_input`. That fingerprint
+is state identity only; it is not a Codex request id and can never be used to
+reply.
+
+The notification summary prefers a non-credential-shaped `description`. Its
+fallback is deliberately lock-screen-safe: only the executable and an
+allowlisted harmless subcommand, or the final component of a path, may leave the
+adapter. Opaque arguments, full paths and credential-shaped values fall back to
+the tool name.
 
 Codex uses a **nested object**:
 
@@ -466,6 +484,10 @@ Parsed but **not supported** — do not emit:
 `PermissionRequest`: `updatedInput`, `updatedPermissions`, `interrupt`;
 `PreToolUse`: `permissionDecision: "ask"`, `continue`, `stopReason`, `suppressOutput`;
 `PostToolUse`: `updatedMCPToolOutput`, `suppressOutput`.
+
+The helper emits **no stdout at all** for this event and exits `0`, exactly as
+for every other event. With no hook decision Codex continues its normal approval
+flow. AgentBar cannot approve, deny, rewrite or interrupt the request.
 
 ### 2.5 Trust — a product requirement, and where it is written down
 
@@ -509,9 +531,12 @@ Two consequences for the product:
 1. Writing `hooks.json` is not enough. Onboarding has to walk the user through
    `/hooks`, and the UI needs an explicit "installed but not yet trusted" state —
    otherwise the user gets a silently dead integration.
-2. **Any change to the hook command invalidates trust.** The command contains the
-   helper's absolute path, so the helper lives at a fixed place inside the bundle
-   and the installer detects a moved app rather than silently rewriting it.
+2. **Any change to the hook command invalidates trust.** Every AgentBar entry
+   therefore names `~/Library/Application Support/AgentBar/bin/agentbar-helper`.
+   The app atomically refreshes that AgentBar-owned copy from its signed bundle,
+   so Debug, distribution and installed app copies share one command. The first
+   migration from an app-bundle or DerivedData path needs one explicit Repair
+   and `/hooks` review; subsequent app moves do not create drift.
 
 `--dangerously-bypass-hook-trust` exists. AgentBar never uses it and never
 suggests it; ADR-0008 records the decision. The flag is named only in prose —
@@ -530,6 +555,13 @@ everywhere, 1 second on `SessionEnd`. Measured for the compiled helper on
 2026-08-19, Release build, 40 runs against a live endpoint, spawn to exit:
 **p50 6.5 ms on an idle machine and 11 ms under load**, against a `/bin/cat`
 baseline of 1.0 ms and 1.8 ms through the same harness.
+
+CI re-measures it on every code change through `make timing-proofs`, which runs
+the helper against that same baseline in an otherwise idle process and asserts
+both halves: the helper's own share stays inside 25 ms, and no single run passes
+the one second above. Before that target existed the proof needed a built binary
+nobody handed it, so it skipped itself and reported green — see
+[build.md](build.md).
 
 > **A hook's timeout is Codex's business, not the helper's.** Codex may or may
 > not kill a command that overruns, and the helper is a grandchild of Codex
@@ -555,11 +587,22 @@ On this machine it is already occupied by *Codex Computer Use*. AgentBar treats
 `notify` as **permanently unavailable** and must never write it. Hooks are the
 only Codex event source.
 
+This supports local Codex App, CLI and IDE sessions only where that client runs
+the global lifecycle hooks. Codex Cloud does not execute a helper on this Mac and
+is outside AgentBar's monitoring scope.
+
 ---
 
 ## 3. Codex App Server — limits
 
 Source: <https://learn.chatgpt.com/docs/app-server> plus locally generated schema.
+
+The protocol also contains approval and user-input **server requests**, but they
+belong to threads driven through that client connection. A second App Server
+process cannot passively observe Codex App, CLI or IDE sessions managed by other
+connections. Making AgentBar the proxy that owns those sessions would violate
+the safe-superset boundary, so lifecycle hooks remain the monitoring source;
+App Server is used only for account limits.
 
 ### 3.1 The schema is machine-readable — use it
 
@@ -1022,4 +1065,3 @@ Spotlight, in the login-items list, in System Settings › Notifications, and in
 the leading slot of every banner AgentBar posts — which is also why step 07 could
 drop the notification attachment's corner badge: the system was already showing
 this icon three centimetres away.
-

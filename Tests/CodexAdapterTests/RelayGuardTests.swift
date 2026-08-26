@@ -163,3 +163,83 @@ struct RelayGuardTests {
     }
 
 }
+
+/// The two conversions that turn a budget into a syscall's own timeout.
+///
+/// > **Zero means opposite things to the two of them, and only one of those is
+/// > safe.** `poll` reads `0` as *return immediately*; `SO_SNDTIMEO` and
+/// > `SO_RCVTIMEO` read `{0, 0}` as *block for ever*. A duration too small to
+/// > round up therefore has to floor at one microsecond on the socket path,
+/// > because the alternative is an unbounded syscall in the one process that
+/// > must never outlive the agent that spawned it.
+@Suite("Relay timeout conversion")
+struct RelayTimeoutConversionTests {
+
+    @Test(
+        "A sub-microsecond socket timeout never becomes no timeout",
+        arguments: [
+            Duration.nanoseconds(1), .nanoseconds(500), .nanoseconds(999), .zero,
+        ])
+    func socketTimeoutsFloorAtOneMicrosecond(duration: Duration) {
+        let value = RelaySocket.timeval(for: duration)
+        #expect(value.tv_sec > 0 || value.tv_usec > 0, "{0, 0} means no timeout at all")
+    }
+
+    @Test("An ordinary timeout converts exactly")
+    func ordinaryTimeoutsConvertExactly() {
+        let value = RelaySocket.timeval(for: .milliseconds(150))
+        #expect(value.tv_sec == 0)
+        #expect(value.tv_usec == 150_000)
+        let seconds = RelaySocket.timeval(for: .seconds(2))
+        #expect(seconds.tv_sec == 2)
+        #expect(seconds.tv_usec == 0)
+    }
+
+    /// The sibling conversion floors at zero on purpose, and the direction is
+    /// what makes that safe — this pins the asymmetry so neither is "fixed" to
+    /// match the other.
+    @Test("The poll conversion still floors at zero")
+    func pollTimeoutsFloorAtZero() {
+        #expect(RelaySocket.milliseconds(.zero) == 0)
+        #expect(RelaySocket.milliseconds(.nanoseconds(1)) == 0)
+        #expect(RelaySocket.milliseconds(.milliseconds(120)) == 120)
+    }
+
+    /// A budget that has already run out is a refusal, not a socket with no
+    /// timeout on it.
+    ///
+    /// Driven against `configure` directly. Through `exchange` the connect gives
+    /// up on a spent budget first, so this guard would never be reached — and a
+    /// guard nothing reaches is a guard nothing proves.
+    @Test("Arming a socket with no budget left refuses rather than blocking")
+    func aSpentBudgetIsARefusal() throws {
+        let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+        #expect(descriptor >= 0)
+        defer { close(descriptor) }
+        #expect(throws: RelaySocketError.timedOut) {
+            try RelaySocket.configure(
+                descriptor, timeouts: RelayTimeouts(),
+                deadline: ContinuousClock.now - .seconds(1))
+        }
+    }
+
+    /// And the ordinary path actually arms the kernel, rather than calling
+    /// `setsockopt` and discarding what it said.
+    @Test("A live budget arms both socket timeouts")
+    func aLiveBudgetArmsTheKernel() throws {
+        let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+        #expect(descriptor >= 0)
+        defer { close(descriptor) }
+        try RelaySocket.configure(
+            descriptor, timeouts: RelayTimeouts(), deadline: ContinuousClock.now + .seconds(5))
+
+        for option in [SO_SNDTIMEO, SO_RCVTIMEO] {
+            var value = timeval()
+            var size = socklen_t(MemoryLayout<timeval>.size)
+            #expect(getsockopt(descriptor, SOL_SOCKET, option, &value, &size) == 0)
+            #expect(
+                value.tv_sec > 0 || value.tv_usec > 0,
+                "option \(option) was left at {0, 0}, which POSIX reads as no timeout")
+        }
+    }
+}

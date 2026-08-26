@@ -18,8 +18,8 @@ import SwiftUI
 /// > already says which app it is. The square carries the one thing no other
 /// > slot can carry at a glance: *what happened*.
 ///
-/// Silhouette first, colour second. All four remain distinguishable desaturated
-/// — pinned by a test, because a gradient makes it very easy to build four
+/// Silhouette first, colour second. All five remain distinguishable desaturated
+/// — pinned by a test, because a gradient makes it very easy to build five
 /// squares that differ only in hue.
 public enum EventAttachmentImage {
     /// The generated canvas. The system clips and scales it to roughly 38 pt, so
@@ -92,7 +92,8 @@ struct EventAttachmentArt: View {
     }
 
     /// The same `GlyphFigure` the menu bar draws, in `onAccent` white — plus, for
-    /// `finished`, a closed ring around the whole thing.
+    /// `finished`, a closed ring around the whole thing; for `approval`, a
+    /// shield around it.
     ///
     /// The ring is the one element the glyph vocabulary does not already have,
     /// and it is what makes `finished` and `waiting` different silhouettes rather
@@ -102,11 +103,25 @@ struct EventAttachmentArt: View {
     @ViewBuilder private var figure: some View {
         let side = size * EventAttachmentImage.figureRatio
         ZStack {
-            if verb.attachmentIsEnclosed {
+            switch verb.attachmentEnclosure {
+            case .none:
+                EmptyView()
+            case .circle:
                 Circle()
                     .strokeBorder(
                         ColorToken.onAccent.color,
                         lineWidth: side * GlyphFigure.linkWidth / GlyphFigure.canvas
+                    )
+                    .frame(width: side, height: side)
+                    .opacity(GlyphFigure.linkCoverageRatio + 0.25)
+            case .shield:
+                ApprovalShield()
+                    .stroke(
+                        ColorToken.onAccent.color,
+                        style: StrokeStyle(
+                            lineWidth: side * GlyphFigure.linkWidth / GlyphFigure.canvas,
+                            lineCap: .round,
+                            lineJoin: .round)
                     )
                     .frame(width: side, height: side)
                     .opacity(GlyphFigure.linkCoverageRatio + 0.25)
@@ -120,6 +135,35 @@ struct EventAttachmentArt: View {
     }
 
     private var ramp: AttachmentRamp { AttachmentRamp.ramp(for: verb) }
+}
+
+/// A deliberately simple shield that survives the system scaling the 256 px
+/// attachment down to roughly 38 pt.
+struct ApprovalShield: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.midX, y: rect.minY + rect.height * 0.04))
+        path.addLine(
+            to: CGPoint(x: rect.maxX - rect.width * 0.12, y: rect.minY + rect.height * 0.18))
+        path.addLine(
+            to: CGPoint(x: rect.maxX - rect.width * 0.16, y: rect.minY + rect.height * 0.58))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.midX, y: rect.maxY - rect.height * 0.04),
+            control: CGPoint(x: rect.maxX - rect.width * 0.24, y: rect.maxY - rect.height * 0.16))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX + rect.width * 0.16, y: rect.minY + rect.height * 0.58),
+            control: CGPoint(x: rect.minX + rect.width * 0.24, y: rect.maxY - rect.height * 0.16))
+        path.addLine(
+            to: CGPoint(x: rect.minX + rect.width * 0.12, y: rect.minY + rect.height * 0.18))
+        path.closeSubpath()
+        return path
+    }
+}
+
+nonisolated enum EventAttachmentEnclosure: Sendable, Hashable {
+    case none
+    case circle
+    case shield
 }
 
 nonisolated extension NotificationVerb {
@@ -137,13 +181,18 @@ nonisolated extension NotificationVerb {
         // gesture the menu bar makes.
         case .question: .waiting
         // All three nodes filled and nothing moving.
-        case .waiting, .finished: .working
+        case .waiting, .approval, .finished: .working
         case .failed: .failed
         }
     }
 
-    /// Whether the figure is closed inside a ring. Only `finished` is: the ring
-    /// is what a completed thing looks like, and it is what tells this square
-    /// apart from `waiting`'s at a glance.
-    var attachmentIsEnclosed: Bool { self == .finished }
+    var attachmentEnclosure: EventAttachmentEnclosure {
+        switch self {
+        case .finished: .circle
+        case .approval: .shield
+        case .question, .waiting, .failed: .none
+        }
+    }
+
+    var attachmentIsEnclosed: Bool { attachmentEnclosure != .none }
 }

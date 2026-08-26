@@ -71,18 +71,15 @@ public struct NotificationGate: Sendable {
 /// Collapses a burst of state moves into the notifications a person would
 /// actually want.
 ///
-/// A busy turn moves a session several times a second, and every move that
-/// reaches a verb would otherwise be its own banner. Two mechanisms, and they
-/// solve different problems:
+/// A busy turn moves a session several times a second. Finished news is batched;
+/// human-required news is delivered immediately and only deduplicated after its
+/// first delivery. Two mechanisms solve those different problems:
 ///
-/// * **Within the window**, only the newest draft per session survives. A
-///   session that went waiting and then failed while the window was open
-///   produces one notification saying it failed, which is true, rather than two
-///   of which the first is already stale.
+/// * **Within the window**, only the newest deferred draft per session survives.
+///   At present that is `finished`; urgent drafts never enter this queue.
 /// * **Across windows**, an identical draft for the same session — same verb,
-///   same body — is dropped for `repeatWindow`. A different question is not
-///   identical and is delivered, which is the case that matters: it is genuinely
-///   new information.
+///   body and optional state fingerprint — is dropped for `repeatWindow`. A
+///   different question or approval request is genuinely new information.
 ///
 /// Notifications also carry the session id as their notification identifier, so
 /// the notification centre itself replaces a session's previous banner rather
@@ -97,34 +94,30 @@ public struct NotificationGate: Sendable {
 /// > "delivered" means.
 public struct NotificationCoalescer: Sendable {
 
-    /// How long a draft waits for a better one to replace it.
+    /// How long a non-urgent draft waits for a better one to replace it.
     ///
-    /// Long enough that a session which moves twice in quick succession — a
-    /// wait answered and the turn finishing, say — announces only where it
-    /// ended up, and short enough that the one signal the product exists for
-    /// still feels immediate. The panel's own push coalescing is 150 ms; this is
-    /// deliberately an order of magnitude longer, because a redrawn menu-bar
-    /// glyph costs nothing and a banner costs the user's attention.
-    ///
-    /// It cannot collapse a `waiting → working` flicker, because `working`
-    /// produces no draft at all and so has nothing to replace the wait with.
-    /// That is correct: the agent really did stop and ask.
+    /// `question`, `approval`, `waiting` and `failed` bypass this delay. The
+    /// panel's own push coalescing is 150 ms; finished notifications wait an
+    /// order of magnitude longer because they do not need human action.
     public static let window: Duration = .milliseconds(1_500)
 
     /// How long an identical notification stays suppressed after one was
-    /// delivered.
+    /// delivered when it is not urgent.
     public static let repeatWindow: Duration = .seconds(20)
 
-    private var pending: [SessionID: NotificationDraft] = [:]
-    private var delivered: [SessionID: Delivered] = [:]
+    /// Urgent news is delivered first and deduplicated afterwards. Keeping this
+    /// equal to the former coalescing delay suppresses a duplicated hook without
+    /// making the first approval or question wait for a possible replacement.
+    public static let urgentRepeatWindow: Duration = window
 
-    private struct Delivered: Sendable, Hashable {
+    private var pending: [SessionID: NotificationDraft] = [:]
+    private var delivered: [DeliveryFingerprint: MonotonicInstant] = [:]
+
+    private struct DeliveryFingerprint: Sendable, Hashable {
+        let sessionId: SessionID
         let event: NotificationEvent
         let body: String?
-        /// Monotonic, not wall time. The repeat window measures an interval, and
-        /// `TimeSource` keeps the two readings apart precisely so an NTP
-        /// correction cannot make a twenty-second window a twenty-minute one.
-        let at: MonotonicInstant
+        let fingerprint: String?
     }
 
     public init() {}
@@ -137,6 +130,14 @@ public struct NotificationCoalescer: Sendable {
     public mutating func enqueue(_ draft: NotificationDraft) {
         if let existing = pending[draft.sessionId], existing.at > draft.at { return }
         pending[draft.sessionId] = draft
+    }
+
+    /// Drops deferred news that is no newer than an urgent state for the same
+    /// session. Otherwise an old `Finished` can fire after a new question and
+    /// replace its actionable banner because both share a notification id.
+    public mutating func discardPending(through date: Date, for sessionId: SessionID) {
+        guard let existing = pending[sessionId], existing.at <= date else { return }
+        pending.removeValue(forKey: sessionId)
     }
 
     /// One draft per session, oldest first, and the queue emptied.
@@ -155,23 +156,30 @@ public struct NotificationCoalescer: Sendable {
     /// Whether this draft says exactly what was last delivered for its session,
     /// recently enough that saying it again would be noise.
     public func isRepeat(_ draft: NotificationDraft, now: MonotonicInstant) -> Bool {
-        guard let last = delivered[draft.sessionId] else { return false }
-        return last.event == draft.event && last.body == draft.body
-            && now - last.at < Self.repeatWindow
+        guard let last = delivered[Self.deliveryFingerprint(for: draft)] else { return false }
+        let window = draft.event.isTimeSensitive ? Self.urgentRepeatWindow : Self.repeatWindow
+        return now - last < window
     }
 
     /// Called after a draft has actually been delivered, which is what starts
     /// its repeat window.
     public mutating func recordDelivery(of draft: NotificationDraft, at now: MonotonicInstant) {
-        delivered[draft.sessionId] = Delivered(
-            event: draft.event, body: draft.body, at: now)
+        delivered[Self.deliveryFingerprint(for: draft)] = now
         forgetDeliveries(before: now)
+    }
+
+    private static func deliveryFingerprint(for draft: NotificationDraft) -> DeliveryFingerprint {
+        DeliveryFingerprint(
+            sessionId: draft.sessionId,
+            event: draft.event,
+            body: draft.body,
+            fingerprint: draft.fingerprint)
     }
 
     /// A session AgentBar has not heard from in a long while is not one whose
     /// last banner still needs remembering. Without this the map grows for the
     /// life of the process.
     private mutating func forgetDeliveries(before now: MonotonicInstant) {
-        delivered = delivered.filter { now - $0.value.at < Self.repeatWindow * 4 }
+        delivered = delivered.filter { now - $0.value < Self.repeatWindow * 4 }
     }
 }

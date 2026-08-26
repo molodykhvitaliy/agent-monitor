@@ -32,6 +32,26 @@ public struct StateChange: Sendable, Hashable {
         self.to = to
         self.at = at
     }
+
+    /// Whether this change is a turn coming to an end.
+    ///
+    /// `idle` and `failed` both are — one is the agent stopping, the other the
+    /// turn failing, and work was done either way. `unknown` deliberately is
+    /// **not**: the watchdog giving up says nothing about whether a turn
+    /// finished, and a caller that treated it as one would act on every session
+    /// that merely went quiet. A change with no `from` is a registration rather
+    /// than a turn, so it is not one either.
+    ///
+    /// Provider-neutral on purpose. The Codex quota reading is the one caller
+    /// today and it adds `provider == .codex` itself; the *rule* is about the
+    /// domain, and it belongs where `swift test` can reach it.
+    public var endsATurn: Bool {
+        guard from != nil else { return false }
+        switch to?.kind {
+        case .idle, .failed: return true
+        default: return false
+        }
+    }
 }
 
 /// What the store did with an event.

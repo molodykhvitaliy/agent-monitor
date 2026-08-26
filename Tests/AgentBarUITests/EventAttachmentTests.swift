@@ -20,11 +20,11 @@ struct EventAttachmentTests {
         }
     }
 
-    /// Four gradients are very easy to tell apart and prove nothing: the banner
+    /// Five gradients are very easy to tell apart and prove nothing: the banner
     /// is greyscale to a colour-blind user and to a screenshot in a bug report.
     /// So the squares are compared **desaturated**, which is the check that
     /// actually holds the "silhouette first, colour second" rule.
-    @Test("All four stay distinguishable with the colour taken out")
+    @Test("All five stay distinguishable with the colour taken out")
     func distinguishableInGreyscale() throws {
         var seen: [(NotificationVerb, [Double])] = []
         for verb in NotificationVerb.allCases {
@@ -45,12 +45,15 @@ struct EventAttachmentTests {
     /// The two events that mean "the agent is not working right now" draw the
     /// same nodes; the ring is the whole of what tells them apart, and losing it
     /// would leave two squares differing only in hue.
-    @Test("Finished is the enclosed figure and nothing else is")
+    @Test("Finished has a ring and Approval has a shield")
     func onlyFinishedIsEnclosed() {
-        for verb in NotificationVerb.allCases {
-            #expect(verb.attachmentIsEnclosed == (verb == .finished), "\(verb)")
-        }
+        #expect(NotificationVerb.finished.attachmentEnclosure == .circle)
+        #expect(NotificationVerb.approval.attachmentEnclosure == .shield)
+        #expect(
+            NotificationVerb.allCases.filter { $0.attachmentEnclosure == .none }
+                == [.question, .waiting, .failed])
         #expect(NotificationVerb.waiting.attachmentFigure == .working)
+        #expect(NotificationVerb.approval.attachmentFigure == .working)
         #expect(NotificationVerb.finished.attachmentFigure == .working)
         #expect(NotificationVerb.question.attachmentFigure == .waiting)
         #expect(NotificationVerb.failed.attachmentFigure == .failed)
@@ -66,9 +69,8 @@ struct EventAttachmentTests {
         #expect(rep.pixelsHigh == rep.pixelsWide)
     }
 
-    /// No new base token: every stop is a derivation of one that already exists,
-    /// so an event square and the row tint for the state it announces are
-    /// visibly the same colour.
+    /// Every stop is a derivation of a semantic token, so an event square and
+    /// the settings indicator are visibly the same colour.
     @Test("Every ramp derives from an existing token, and its stops differ")
     func rampsDeriveFromTokens() {
         var bases: Set<ColorToken> = []

@@ -257,11 +257,15 @@ public enum StandardInput {
     /// Silence alone is not enough: a writer trickling one byte every hundred
     /// milliseconds resets the quiet period for ever and would hold the helper
     /// open exactly as the unbounded read did. This is what closes that, and it
-    /// is chosen against the **whole** helper run rather than against this
-    /// stage — Codex caps a `SessionEnd` hook at one second and runs it
-    /// synchronously whatever `async` says, and the relay that follows carries
-    /// its own 500 ms total, so 400 here keeps the worst path inside 900 ms.
-    public static let defaultCeiling: Duration = .milliseconds(400)
+    /// is chosen against the **whole helper process** rather than against this
+    /// stage — see `CodexHookHandler.worstCaseHelperRun`, which adds this to the
+    /// relay's own total *and to the process spawn this stage cannot measure*,
+    /// and which `CodexHooks` pins against the one second Codex gives a
+    /// `SessionEnd` hook.
+    ///
+    /// 300 ms is still about three times the worst legitimate drain measured —
+    /// 93–105 ms for a 4 MB payload through a 64 KB pipe on a loaded machine.
+    public static let defaultCeiling: Duration = .milliseconds(300)
 
     /// How a read ended, which is what decides whether the payload is worth
     /// relaying.

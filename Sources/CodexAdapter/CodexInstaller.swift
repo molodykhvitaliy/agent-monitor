@@ -222,7 +222,28 @@ public struct CodexInstaller {
     }
 
     @discardableResult
-    public func uninstall() throws -> CodexInstallOutcome {
+    public func uninstall(
+        agentBarApplicationSupportDirectory: URL? = nil
+    ) throws -> CodexInstallOutcome {
+        var outcome = try uninstallHooks()
+        // Hooks go first: if their merge or backup fails, the executable they
+        // still name must remain available. The deployment type derives the
+        // exact owned path from the expected Application Support directory.
+        if let agentBarApplicationSupportDirectory,
+            try CodexHelperDeployment.removeOwnedHelper(
+                in: agentBarApplicationSupportDirectory, fileManager: fileManager)
+        {
+            outcome = CodexInstallOutcome(
+                changed: true,
+                backupURL: outcome.backupURL,
+                requiresTrust: false,
+                overlaps: outcome.overlaps,
+                warnings: outcome.warnings)
+        }
+        return outcome
+    }
+
+    private func uninstallHooks() throws -> CodexInstallOutcome {
         guard fileManager.fileExists(atPath: hooksURL.path(percentEncoded: false)) else {
             return CodexInstallOutcome(
                 changed: false, backupURL: nil, requiresTrust: false, overlaps: [], warnings: [])

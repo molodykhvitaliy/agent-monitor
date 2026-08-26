@@ -117,6 +117,10 @@ struct SettingsPreviewView: View {
             String(
                 localized: "ModuleNotFoundError: pandas",
                 comment: "Example failure line in the settings preview")
+        case .approval:
+            String(
+                localized: "Run a command outside the sandbox?",
+                comment: "Example approval line in the settings preview")
         case .waiting, .finished:
             nil
         }

@@ -50,7 +50,8 @@ public struct ProjectID: DomainIdentifier {
     public init(_ value: String) { self.value = value }
 }
 
-/// A pending permission request. Reserved for the Approve/Deny backlog item.
+/// Local identity for an observed pending permission request.
+/// It is not necessarily a provider reply handle.
 public struct PermissionRequestID: DomainIdentifier {
     public let value: String
     public init(_ value: String) { self.value = value }

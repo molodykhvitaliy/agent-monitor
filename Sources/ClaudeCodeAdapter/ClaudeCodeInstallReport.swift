@@ -98,6 +98,35 @@ public struct ClaudeCodeInstallReport: Sendable, Hashable {
         case .installed, .needsRepair, .endpointUnavailable: true
         }
     }
+
+    /// The drift as one sentence: the first, and a count of the rest.
+    ///
+    /// Every drift case already carries a finished English sentence, so this
+    /// picks and counts rather than composing. `nil` when there is no drift.
+    ///
+    /// > **Here rather than in the app target**, which is where it used to live.
+    /// > It is a statement about this provider's install report and nothing
+    /// > else, and where it sat before, `swift test` could not reach it — the
+    /// > app bundle has no test target. The *presentation* decision it feeds
+    /// > cannot follow it here: `IntegrationStatus` lives in `AgentBarUI`, which
+    /// > no adapter may import.
+    public var driftSummary: String? {
+        guard case .needsRepair(let drift) = state, let first = drift.first else { return nil }
+        return drift.count > 1
+            ? "\(first.description) and \(drift.count - 1) more" : first.description
+    }
+
+    /// Whether what is on disk means **no** event can arrive.
+    ///
+    /// A repairable drift usually does not: a stale token or a moved port still
+    /// leaves handlers that run and are refused, which is a different fact from
+    /// handlers that never run at all. `urlNotAllowed` is the exception, and the
+    /// distinction decides whether an empty panel says `All quiet` or shows the
+    /// onboarding card.
+    public var silencesEveryHandler: Bool {
+        guard case .needsRepair(let drift) = state else { return false }
+        return drift.contains(.urlNotAllowed)
+    }
 }
 
 /// What a write actually did.

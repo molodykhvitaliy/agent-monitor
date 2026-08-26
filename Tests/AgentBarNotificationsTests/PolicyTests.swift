@@ -75,15 +75,14 @@ struct PolicyTests {
         }
     }
 
-    /// Reserved, and correct in the meantime: a permission prompt's own summary
-    /// is not the question line, so it produces a bare Waiting.
-    @Test("A permission wait is a bare Waiting")
+    @Test("A permission wait is a distinct Approval with its safe summary")
     func permissionIsWaiting() throws {
         let request = PermissionRequestRef(id: PermissionRequestID("p1"), summary: "Run Bash")
         let draft = try #require(
             NotificationPolicy.draft(for: Fixture.change(to: .waitingPermission(request))))
-        #expect(draft.event == .waiting)
-        #expect(draft.body == nil)
+        #expect(draft.event == .approval)
+        #expect(draft.body == "Run Bash")
+        #expect(draft.fingerprint == "p1")
     }
 
     @Test("A failure carries its reason")
@@ -197,13 +196,14 @@ struct TitleTests {
         #expect(Set(identifiers).count == NotificationEvent.allCases.count)
     }
 
-    /// Three of the four are "an agent stopped and needs you". Marking the
-    /// fourth time-sensitive too would spend the privilege on the one event that
+    /// Four of the five are "an agent stopped and needs you". Marking the
+    /// fifth time-sensitive too would spend the privilege on the one event that
     /// does not need it.
     @Test("Only finishing is not time-sensitive")
     func timeSensitivity() {
         #expect(NotificationEvent.question.isTimeSensitive)
         #expect(NotificationEvent.waiting.isTimeSensitive)
+        #expect(NotificationEvent.approval.isTimeSensitive)
         #expect(NotificationEvent.failed.isTimeSensitive)
         #expect(!NotificationEvent.finished.isTimeSensitive)
     }

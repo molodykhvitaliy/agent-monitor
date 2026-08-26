@@ -40,7 +40,9 @@ extension RenderProof {
             try await Self.shootWindow(window, named: "settings-window-\(dark ? "dark" : "light")")
 
             // The sidebar's whole claim, asserted rather than described: asking
-            // for the last section has to actually move the content pane. The
+            // for the last section has to actually move the content pane. Both
+            // step-11 sections are shot on the way, because neither has been
+            // seen anywhere but here. The
             // anchors live on the section headings, which is where a
             // `ScrollViewReader` can find them — see `sectionHeader`. A missing
             // anchor makes `scrollTo` a silent no-op, so an unmoved scroller is
@@ -51,9 +53,18 @@ extension RenderProof {
             // > alternative was an `NSWindow` shown from the main suite on every
             // > run, which is a heavier dependency than the claim is worth.
             let before = try #require(Self.scrollOffset(in: window), "no scroll view in the window")
-            model.show(.about)
+            model.show(.diagnostics)
             try await Self.shootWindow(
-                window, named: "settings-window-about-\(dark ? "dark" : "light")")
+                window, named: "settings-window-diagnostics-\(dark ? "dark" : "light")")
+            // The **last** section, so the assertion covers the whole scroll
+            // rather than a section that happens to be near the top.
+            model.show(.removal)
+            // With a report on screen, because the section at rest is one button
+            // and the part worth looking at is the four verdicts.
+            await model.removeEverything()
+            model.show(.removal)
+            try await Self.shootWindow(
+                window, named: "settings-window-removal-\(dark ? "dark" : "light")")
             let after = try #require(Self.scrollOffset(in: window))
             // Not `after > before`: whether a scroll offset grows or shrinks
             // depends on the flippedness of the document view SwiftUI builds
@@ -61,7 +72,8 @@ extension RenderProof {
             // is only that the request moved the scroller at all.
             #expect(
                 after != before,
-                "asking for .about left the content pane where it was — is the anchor registered?")
+                "asking for .removal left the content pane where it was — is the anchor registered?"
+            )
         }
     }
 
@@ -117,11 +129,99 @@ extension RenderProof {
                 NotificationVerb.allCases.map { verb in
                     NotificationCell(
                         provider: provider, verb: verb, isEnabled: provider == .claudeCode,
-                        soundID: "AgentBar \(verb.title).aiff")
+                        soundID: StubSettingsServices.defaultSoundID(for: verb))
                 }
             })
         services.caffeineIndicator = CaffeineIndicator(
             setting: .whileWorking, isHolding: true, workingSessionCount: 2)
+        services.diagnosticsReport = Self.diagnostics
+        services.removalReport = Self.removal
         return services
+    }
+
+    /// A self-test with one of each verdict in it. The point of shooting this
+    /// section at all is that a warning and a fault are legible as *different*
+    /// things from three feet away, and a report with three passes in it proves
+    /// nothing about that.
+    private static var diagnostics: DiagnosticsReport {
+        DiagnosticsReport(
+            checks: [
+                DiagnosticsCheck(
+                    id: "endpoint", title: "Loopback endpoint", verdict: .pass,
+                    detail: "127.0.0.1:47821 · ingest.sock"),
+                DiagnosticsCheck(
+                    id: "claude", title: "Claude Code hooks", verdict: .pass,
+                    detail: "Connected"),
+                DiagnosticsCheck(
+                    id: "codex", title: "Codex hooks", verdict: .warn,
+                    detail: "Installed, not trusted",
+                    remedy: "Codex has no record of these hooks. Review them in /hooks."),
+                DiagnosticsCheck(
+                    id: "notifications", title: "Notification permission", verdict: .fail,
+                    detail: "refused",
+                    remedy: """
+                        Turn AgentBar on in System Settings › Notifications. Nothing AgentBar \
+                        sends will be shown until you do.
+                        """),
+            ],
+            counters: [
+                DiagnosticsCounter(id: "deliveries", label: "deliveries", value: 412),
+                DiagnosticsCounter(id: "applied", label: "applied", value: 388),
+                DiagnosticsCounter(id: "ignored", label: "ignored", value: 24),
+                DiagnosticsCounter(
+                    id: "rejected", label: "could not decode", value: 2, isFault: true),
+                DiagnosticsCounter(
+                    id: "unauthorized", label: "unauthorised", value: 0, isFault: true),
+                DiagnosticsCounter(
+                    id: "malformed", label: "malformed", value: 0, isFault: true),
+            ],
+            recent: [
+                DiagnosticsEntry(
+                    id: 3, at: Date(timeIntervalSince1970: 1_700_000_100), severity: .fault,
+                    message: "handler for /v1/hooks/codex overran its deadline"),
+                DiagnosticsEntry(
+                    id: 2, at: Date(timeIntervalSince1970: 1_700_000_060), severity: .notice,
+                    message: "could not decode 118 bytes posted to /v1/hooks/codex"),
+                DiagnosticsEntry(
+                    id: 1, at: Date(timeIntervalSince1970: 1_700_000_000), severity: .info,
+                    message: "ingest listening on 127.0.0.1:47821, socket ingest.sock"),
+            ],
+            resources: "71 MB resident · 2.4 s of processor time in 1 h 12 m · 0.06 % of a core",
+            takenAt: Date(timeIntervalSince1970: 1_700_000_120))
+    }
+
+    /// A removal that went mostly right, which is the only version of this
+    /// report worth looking at: it is the one that has to make a refusal and a
+    /// deliberate omission tell themselves apart at a glance.
+    private static var removal: RemovalReport {
+        RemovalReport(steps: [
+            RemovalStep(
+                id: "endpoint", title: "Event endpoint", location: "127.0.0.1",
+                outcome: .removed(detail: "Stopped listening.")),
+            RemovalStep(
+                id: "claude-hooks", title: "Claude Code hooks",
+                location: "~/.claude/settings.json",
+                outcome: .removed(
+                    detail: "The file as it was is at ~/.claude/settings.json.bak.20260826.")),
+            RemovalStep(
+                id: "codex-hooks", title: "Codex hooks", location: "~/.codex/hooks.json",
+                outcome: .nothingToRemove),
+            RemovalStep(
+                id: "codex-trust", title: "Codex trust record", location: "~/.codex/config.toml",
+                outcome: .leftAlone(
+                    reason: "AgentBar never writes this file, so Codex's record stays where it is.",
+                    remedy: """
+                        To clear it anyway, delete the [hooks.state] entries whose key contains \
+                        hooks.json and agentbar-helper.
+                        """)),
+            RemovalStep(
+                id: "codex-helper", title: "Codex helper",
+                location: "~/Library/Application Support/AgentBar/bin/agentbar-helper",
+                outcome: .failed(
+                    reason: "permission denied",
+                    remedy: """
+                        Delete ~/Library/Application Support/AgentBar/bin/agentbar-helper by hand.
+                        """)),
+        ])
     }
 }

@@ -183,3 +183,32 @@ jobs:
       # is asserted rather than assumed. See docs/dev/platform-integration.md §2.5.
       - name: Verify app bundle layout
         run: make verify-bundle
+
+      # `make test` runs 831 tests concurrently in one process, which is the
+      # right trade for everything except a stopwatch: over twenty-two runs the
+      # ingest median held near 0.3 ms while its p99 walked from 8 ms to 120 ms
+      # as the suite grew around it, and PR #14 failed on that tail without
+      # having touched the module. The loaded run asserts medians; this step
+      # runs the same measurements alone and serially, where the numbers belong
+      # to the code, and asserts the strict bounds.
+      #
+      # It is also the only place two of the three are measured at all. Both
+      # need something the package alone cannot give them — a built helper, an
+      # environment variable — and both sat dark in CI until this step existed.
+      # Placed after `verify-bundle` because that step is what proves the helper
+      # is where `make timing-proofs` will look for it — though the target now
+      # depends on `verify-bundle` itself, so that ordering is a convenience
+      # rather than the guarantee. It fails rather than passing quietly if any
+      # of the four measurements did not run, or ran without its strict bound.
+      #
+      # That dependency means the bundle is built and verified a third time in
+      # this job, which in a workflow this frugal deserves a justification
+      # rather than a shrug. The rebuild is incremental and the re-verification
+      # re-reads settings it already has: 2.7 s together on a developer Mac,
+      # against a job that bills at 10x and already spends minutes on
+      # xcodebuild. What it buys is failure attribution — a red
+      # `Verify app bundle layout` means the bundle is wrong and a red
+      # `Timing proofs` means the timing is — and a `timing-proofs` that cannot
+      # measure a stale bundle no matter how these steps are later reordered.
+      - name: Timing proofs, measured in isolation
+        run: make timing-proofs

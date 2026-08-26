@@ -43,6 +43,28 @@ struct CoalescingTests {
         #expect(coalescer.drain().count == 2)
     }
 
+    @Test("New urgent news invalidates an older deferred draft for the same session")
+    func urgentNewsDiscardsStaleDeferredDraft() {
+        var coalescer = NotificationCoalescer()
+        coalescer.enqueue(Fixture.draft(event: .finished, at: Fixture.epoch))
+
+        coalescer.discardPending(
+            through: Fixture.epoch.addingTimeInterval(0.1), for: SessionID("s1"))
+
+        #expect(coalescer.drain().isEmpty)
+    }
+
+    @Test("An out-of-order older urgent event does not discard newer Finished news")
+    func olderUrgentNewsKeepsNewerDeferredDraft() {
+        var coalescer = NotificationCoalescer()
+        let finishedAt = Fixture.epoch.addingTimeInterval(1)
+        coalescer.enqueue(Fixture.draft(event: .finished, at: finishedAt))
+
+        coalescer.discardPending(through: Fixture.epoch, for: SessionID("s1"))
+
+        #expect(coalescer.drain().first?.at == finishedAt)
+    }
+
     /// A dictionary has no order, and two banners appearing in a different order
     /// on two runs is what makes a user distrust the app.
     @Test("Delivery is ordered by observation time, then by session")
@@ -81,7 +103,7 @@ struct CoalescingTests {
         var coalescer = NotificationCoalescer()
         let draft = Fixture.draft(event: .waiting)
         coalescer.recordDelivery(of: draft, at: start)
-        #expect(coalescer.isRepeat(draft, now: start.advanced(by: .seconds(5))))
+        #expect(coalescer.isRepeat(draft, now: start.advanced(by: .seconds(1))))
     }
 
     @Test("The same notification is news again once the window has passed")
@@ -89,7 +111,7 @@ struct CoalescingTests {
         var coalescer = NotificationCoalescer()
         let draft = Fixture.draft(event: .waiting)
         coalescer.recordDelivery(of: draft, at: start)
-        let later = start.advanced(by: NotificationCoalescer.repeatWindow + .seconds(1))
+        let later = start.advanced(by: NotificationCoalescer.urgentRepeatWindow + .seconds(1))
         #expect(!coalescer.isRepeat(draft, now: later))
     }
 
@@ -104,6 +126,38 @@ struct CoalescingTests {
             !coalescer.isRepeat(
                 Fixture.draft(event: .question, body: "Overwrite the file?"),
                 now: start.advanced(by: .seconds(2))))
+    }
+
+    @Test("Only the same approval fingerprint is a repeat")
+    func approvalFingerprintDistinguishesRequests() {
+        var coalescer = NotificationCoalescer()
+        let delivered = Fixture.draft(
+            event: .approval, body: "Run command", fingerprint: "codex:one")
+        coalescer.recordDelivery(of: delivered, at: start)
+
+        #expect(
+            coalescer.isRepeat(
+                delivered, now: start.advanced(by: .milliseconds(100))))
+        #expect(
+            !coalescer.isRepeat(
+                Fixture.draft(
+                    event: .approval, body: "Run command", fingerprint: "codex:two"),
+                now: start.advanced(by: .milliseconds(100))))
+    }
+
+    @Test("An intervening approval does not make an earlier fingerprint new again")
+    func remembersMultipleRecentFingerprintsPerSession() {
+        var coalescer = NotificationCoalescer()
+        let first = Fixture.draft(
+            event: .approval, body: "Run command", fingerprint: "codex:one")
+        let second = Fixture.draft(
+            event: .approval, body: "Run command", fingerprint: "codex:two")
+        coalescer.recordDelivery(of: first, at: start)
+        coalescer.recordDelivery(of: second, at: start.advanced(by: .milliseconds(50)))
+
+        #expect(
+            coalescer.isRepeat(
+                first, now: start.advanced(by: .milliseconds(100))))
     }
 
     @Test("A different verb for the same session is not a repeat")

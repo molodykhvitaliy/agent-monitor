@@ -321,6 +321,7 @@ public enum BundledSound: String, Sendable, Hashable, CaseIterable {
         switch event {
         case .question: .question
         case .waiting: .waiting
+        case .approval: .waiting
         case .finished: .finished
         case .failed: .failed
         }

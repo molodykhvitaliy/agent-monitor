@@ -32,6 +32,42 @@ final class RecordingPresenter: NotificationPresenting {
         posted.append(notification)
         return failure
     }
+
+    // MARK: - Waiting for a delivery
+
+    /// Waits until at least `count` notifications have been posted, **with no
+    /// deadline of its own**.
+    ///
+    /// > **A wall clock cannot bound this, and trying was what made one test
+    /// > red.** The claim these callers make is that the router's own timer
+    /// > closes its window and delivers with nobody driving it — a liveness
+    /// > claim, not a latency one. Under `swift test --parallel` the whole
+    /// > suite shares one cooperative pool, so on a three-core runner the task
+    /// > that closes a forty-millisecond window can be seconds of wall time from
+    /// > its turn while being entirely correct. A five-second poll expressed
+    /// > that as a failure; adding fifty-eight tests to the pool was all it took
+    /// > to tip it over.
+    /// >
+    /// > So there is no deadline here at all: the bound is the suite's
+    /// > `.timeLimit`, which is the harness's job. Same reasoning as
+    /// > `make timing-proofs` — a number that belongs to the runner's scheduler
+    /// > is not asserted where the runner is loaded.
+    ///
+    /// > **`Task.sleep`, and not a continuation resumed by `post`.** A signal
+    /// > would be tidier and is the wrong tool: `withCheckedContinuation` is not
+    /// > cancellation-aware, so a router that never delivers would park this
+    /// > wait for ever and `.timeLimit` could not stop it — trading a flaky
+    /// > failure for a hung job, which is the worse of the two. `Task.sleep`
+    /// > throws on cancellation, so the time limit can do its work.
+    func untilPosted(atLeast count: Int = 1) async throws {
+        while posted.count < count {
+            try await Task.sleep(for: Self.pollInterval)
+        }
+    }
+
+    /// Short enough that the wait adds nothing measurable, and irrelevant to
+    /// what is being asserted: this is a liveness check, not a latency one.
+    private static let pollInterval: Duration = .milliseconds(5)
 }
 
 @MainActor
@@ -105,6 +141,7 @@ enum Fixture {
         provider: Provider = .claudeCode,
         event: NotificationEvent = .finished,
         body: String? = nil,
+        fingerprint: String? = nil,
         at: Date = epoch
     ) -> NotificationDraft {
         NotificationDraft(
@@ -113,6 +150,7 @@ enum Fixture {
             project: Self.project(),
             event: event,
             body: body,
+            fingerprint: fingerprint,
             at: at)
     }
 }

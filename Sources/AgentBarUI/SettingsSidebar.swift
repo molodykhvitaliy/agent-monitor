@@ -26,7 +26,9 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Sendable {
     case sounds
     case caffeine
     case general
+    case diagnostics
     case about
+    case removal
 
     public var id: String { rawValue }
 
@@ -48,8 +50,12 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Sendable {
             String(localized: "Caffeine", comment: "Settings section")
         case .general:
             String(localized: "General", comment: "Settings section")
+        case .diagnostics:
+            String(localized: "Diagnostics", comment: "Settings section")
         case .about:
             String(localized: "About", comment: "Settings section")
+        case .removal:
+            String(localized: "Remove AgentBar", comment: "Settings section")
         }
     }
 
@@ -66,7 +72,9 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Sendable {
         case .sounds: "speaker.wave.2"
         case .caffeine: "cup.and.saucer"
         case .general: "gearshape"
+        case .diagnostics: "stethoscope"
         case .about: "info.circle"
+        case .removal: "trash"
         }
     }
 }

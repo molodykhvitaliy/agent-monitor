@@ -34,9 +34,12 @@ final class CodexIntegration: ProviderIntegration {
     /// still reports what is on disk, which is the difference between a panel
     /// that says `Not receiving events` and a panel with nothing in it.
     private let ingest: IngestService?
-    /// The helper this build of AgentBar would install, or `nil` when the app is
-    /// not running from a bundle that contains one.
-    private let helperURL: URL?
+    /// The helper embedded in this build, used only as the source of an atomic
+    /// deployment into Application Support.
+    private let bundledHelperURL: URL?
+    /// The command-stable path every installed Codex hook names. Moving or
+    /// rebuilding `AgentBar.app` cannot change this URL.
+    private let stableHelperURL: URL?
 
     /// Whether a Codex event has actually arrived since this launch.
     ///
@@ -71,14 +74,43 @@ final class CodexIntegration: ProviderIntegration {
     ) {
         self.ingest = ingest
         self.home = home ?? CodexConfigFile.defaultHome()
-        self.helperURL = helperURL ?? CodexHookCommand.bundledHelperURL()
+        bundledHelperURL = helperURL ?? CodexHookCommand.bundledHelperURL()
+        let applicationSupport = (try? IngestPaths.applicationSupport())?.directory
+        stableHelperURL = applicationSupport.map(CodexHelperDeployment.destination(in:))
         self.trustBaselineURL =
             trustBaselineURL
-            ?? (try? IngestPaths.applicationSupport())?.directory
-            .appending(path: "codex-trust-baseline.json")
+            ?? applicationSupport?.appending(path: "codex-trust-baseline.json")
     }
 
     var provider: Provider { .codex }
+
+    /// The last deployment failure, or `nil` when the helper is where it should
+    /// be. Held rather than recomputed, because deployment no longer happens on
+    /// every status read — see `prepare()`.
+    private var deploymentFailure: String?
+
+    /// Refreshes the deployed helper. Called once, at launch, before any report
+    /// is read.
+    ///
+    /// > **A status read used to do this, and that was two defects in one.** It
+    /// > made reading a report write to `~/Library/Application Support`, and it
+    /// > compared 2.2 MB byte for byte every time the panel opened. Worse, it
+    /// > meant the *uninstaller* could not win: the next panel open put the
+    /// > helper straight back. Deployment now happens where a deployment
+    /// > belongs — at launch, and when the user presses `Connect` or `Repair`.
+    /// > A helper that goes missing in between is not hidden by this change; it
+    /// > surfaces as `helperMissing` drift, which is what the `Repair` button is
+    /// > for.
+    func prepare() async {
+        do {
+            _ = try await deployedHelperURL()
+            deploymentFailure = nil
+        } catch {
+            deploymentFailure = "\(error)"
+            Self.logger.error(
+                "codex helper could not be deployed: \(error, privacy: .public)")
+        }
+    }
 
     /// Called from the push leg when a change carrying `.codex` arrives.
     func noteDelivery() {
@@ -97,22 +129,27 @@ final class CodexIntegration: ProviderIntegration {
         let report = await Self.readReport(
             home: home, baselineURL: trustBaselineURL, endpoint: endpoint,
             hasDelivered: hasDelivered, trustPending: trustPending)
-        var status = Self.status(from: report)
-        // A bundle with no helper in it cannot install anything, and the report
-        // has no way to say so — it is a fact about this build, not about the
-        // user's configuration.
-        if helperURL == nil {
-            status = IntegrationStatus(
-                provider: .codex,
-                condition: status.condition == .connected ? .notReceiving : status.condition,
-                detail: String(
-                    localized: "This build of AgentBar has no helper to install",
-                    comment: "The app bundle is missing agentbar-helper"),
-                notes: status.notes,
-                coexistence: status.coexistence,
-                preventsEvents: true)
-        }
-        return status
+        let status = Self.status(from: report)
+        guard let deploymentFailure else { return status }
+        // Deployment is deliberately outside `hooks.json`: a failure here leaves
+        // the user's existing definitions untouched, so it degrades nothing on
+        // its own.
+        //
+        // > **It is a note, not a verdict, and that is a correction.** It used
+        // > to force the row to `Not receiving` and `preventsEvents`, which was
+        // > right only when the failure had actually left the hooks without a
+        // > helper — and wrong whenever an earlier launch had already deployed
+        // > one, where the integration goes on working. The installer answers
+        // > that question properly: a helper that is not there is `helperMissing`
+        // > drift, which already sets both. So this adds the reason and lets the
+        // > report keep the verdict.
+        return IntegrationStatus(
+            provider: .codex,
+            condition: status.condition,
+            detail: status.detail ?? deploymentFailure,
+            notes: status.notes + [deploymentFailure],
+            coexistence: status.coexistence,
+            preventsEvents: status.preventsEvents)
     }
 
     /// Reads both files **off the main actor**, for the same reason the Claude
@@ -157,24 +194,14 @@ final class CodexIntegration: ProviderIntegration {
         case .hooksUnreadable(let reason):
             condition = .settingsUnreadable
             detail = reason
-        case .needsRepair(let drift):
+        case .needsRepair:
             condition = .needsRepair
-            // Every drift case already carries a finished English sentence.
-            // Show the first and count the rest; the card formats nothing.
-            detail = drift.first.map { first in
-                drift.count > 1
-                    ? "\(first.description) and \(drift.count - 1) more"
-                    : first.description
-            }
-            // Most drift degrades the integration. These two stop it dead: the
-            // hooks name a helper that is not where Codex will look, so every
-            // one of them fails in the user's own session.
-            preventsEvents = drift.contains {
-                switch $0 {
-                case .helperMissing, .helperMoved: true
-                default: false
-                }
-            }
+            // Both sentences come from the report itself, in `CodexAdapter`
+            // where a suite reaches them. What is left here is the join onto the
+            // UI's vocabulary, which is the one thing that cannot move: no
+            // adapter may import `AgentBarUI`.
+            detail = report.driftSummary
+            preventsEvents = report.silencesEveryHandler
         }
 
         return IntegrationStatus(
@@ -218,14 +245,13 @@ final class CodexIntegration: ProviderIntegration {
     }
 
     private func write() async -> IntegrationActionResult {
-        guard let helperURL else {
-            return .failed(
-                String(
-                    localized: """
-                        AgentBar cannot find its own helper, so there is nothing to point \
-                        Codex's hooks at.
-                        """,
-                    comment: "Install refused because the bundle has no helper"))
+        let helperURL: URL
+        do {
+            helperURL = try await deployedHelperURL()
+            deploymentFailure = nil
+        } catch {
+            deploymentFailure = "\(error)"
+            return .failed("\(error)")
         }
         let (result, requiresTrust) = await Self.install(
             home: home, baselineURL: trustBaselineURL,
@@ -326,8 +352,38 @@ final class CodexIntegration: ProviderIntegration {
     /// Unlike the Claude Code endpoint this carries no port and no token: the
     /// helper reads the discovery file when it runs. What the binding decides
     /// here is only whether the hooks have anywhere to deliver to.
+    ///
+    /// **Reads nothing and writes nothing.** The stable path is derived once, in
+    /// `init`, and whether a file is actually there is the installer's question
+    /// to answer — it already reports `helperMissing` when it is not.
     private func currentEndpoint() async -> CodexEndpoint? {
-        guard let helperURL, let ingest, await ingest.boundEndpoint != nil else { return nil }
-        return CodexEndpoint(helperURL: helperURL)
+        guard let stableHelperURL, let ingest, await ingest.boundEndpoint != nil else {
+            return nil
+        }
+        return CodexEndpoint(helperURL: stableHelperURL)
+    }
+
+    /// Refreshes the stable helper off the main actor before any report or
+    /// install can point Codex at it. This operation changes only AgentBar's own
+    /// Application Support directory; a failure never reaches `hooks.json`.
+    private func deployedHelperURL() async throws -> URL {
+        guard let bundledHelperURL else {
+            throw CodexHelperDeploymentError.deploymentFailed(
+                "this build of AgentBar has no bundled helper")
+        }
+        guard let stableHelperURL else {
+            throw CodexHelperDeploymentError.deploymentFailed(
+                "the Application Support directory is unavailable")
+        }
+        return try await Self.deployHelper(
+            source: bundledHelperURL, destination: stableHelperURL)
+    }
+
+    nonisolated private static func deployHelper(source: URL, destination: URL) async throws -> URL
+    {
+        try await Task.detached {
+            try CodexHelperDeployment(sourceURL: source, destinationURL: destination).deploy()
+            return destination
+        }.value
     }
 }

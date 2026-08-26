@@ -67,7 +67,12 @@ Never used alone — see [state-shape language](#state-shape-language).
 | `stateWaiting` | `oklch(0.72 0.15 75)` · `#da950b` | `oklch(0.78 0.14 78)` · `#e8ab3e` |
 | `stateFailed` | `oklch(0.58 0.18 25)` · `#cf4040` | `oklch(0.68 0.17 25)` · `#ef6661` |
 | `stateUnknown` | `oklch(0.58 0.10 310)` · `#8c69a7` | `oklch(0.70 0.10 310)` · `#b18dcd` |
+| `eventApproval` | `oklch(0.58 0.10 310)` · `#8c69a7` | `oklch(0.70 0.10 310)` · `#b18dcd` |
 | `stateIdle` | `ink400` | `ink400` |
+
+`eventApproval` is a separate semantic role even while it shares the current
+purple values with `stateUnknown`. Approval is always paired with its label and
+shield silhouette; Unknown remains a session state and never produces a banner.
 
 Idle has no accent of its own on purpose: it is the resting state and must not
 draw the eye.
@@ -514,7 +519,7 @@ carry state is decoration.**
 
 Step 06 landed the tokens as:
 
-- a `ColorToken` enum in `AgentBarUI` holding all twenty colours by the names in
+- a `ColorToken` enum in `AgentBarUI` holding all twenty-one colours by the names in
   the tables above, each a dynamic `NSColor` with a light and a dark value;
 - a `DesignTokens` enum exposing spacing, radii and the type roles, so no view
   carries a bare number.
@@ -533,12 +538,10 @@ purpose: they sit on glass, whose backdrop is whatever is behind the panel, and 
 solid neutral would band against it. Store them as white with the alpha, not as
 the colour they happen to resolve to over any particular background.
 
-v2 adds **no base token**. The notification attachment art needs a gradient per
-event, and those eight stops are *derived* — each is an existing token's light
-value moved ±12 % in OKLCH lightness, hue and chroma untouched, so an event
-square and the row tint for the state it announces are visibly the same colour.
-They live in `AttachmentRamp` beside `ColorToken`, with the rule that generated
-them in the comment, so they can be regenerated when a base token moves.
+The notification attachment art needs a gradient per event. Question, Waiting,
+Finished and Failed keep their derived stops; Approval derives its two stops
+from the semantic `eventApproval` token. All ten stops are held in
+`AttachmentRamp`, so the settings matrix and banner share one accent source.
 
 Two rules for anyone extending this:
 

@@ -2,8 +2,8 @@
 ///
 /// The vocabulary is fixed by the design system — Working, Waiting, Idle,
 /// Failed, Unknown — with `waiting` split in two because the domain must
-/// distinguish a prompt the human answers in the agent's own UI from one
-/// AgentBar could answer itself.
+/// distinguish a question from an observed permission prompt. Both are answered
+/// in the provider's own UI; AgentBar never decides either one.
 public enum SessionState: Sendable, Hashable {
     /// Registered and alive, with no turn in flight.
     case idle
@@ -11,8 +11,8 @@ public enum SessionState: Sendable, Hashable {
     /// Blocked on the human, answered elsewhere. Carries the question when the
     /// agent asked one — see `EventKind.waitingInput` and ADR-0005.
     case waitingInput(question: String?)
-    /// Blocked on a permission decision. Reachable and unused by the MVP; the
-    /// Approve/Deny backlog item turns it on without reshaping anything.
+    /// Blocked on a permission decision in the provider's UI. The request id is
+    /// observation state and is never used to answer the provider.
     case waitingPermission(PermissionRequestRef)
     case failed(reason: String)
     /// Silent for longer than the watchdog tolerates. Never a resting place a

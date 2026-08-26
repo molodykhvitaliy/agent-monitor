@@ -95,10 +95,9 @@ struct NativeEventDecoderTests {
         }
     }
 
-    /// Reserved for the Approve/Deny backlog item and unused by the MVP; it
-    /// decodes so that turning the feature on is not a decoder change.
+    /// Observation-only: decoding this state never creates a decision channel.
     @Test("A permission request decodes, and is refused without its identifier")
-    func decodesReservedPermissionKind() throws {
+    func decodesPermissionKind() throws {
         let json = EventPayload.json(
             kind: "waitingPermission",
             extra: ["permissionRequest": #"{"id": "perm-1", "summary": "rm -rf"}"#])

@@ -456,8 +456,9 @@ blank line. Idle rows, which never have a detail line, are one line tall.
 not by the view.
 
 **The Waiting row carries the question when there is one, and is complete
-without it.** Only the `AskUserQuestion` path produces a line; a permission or
-elicitation prompt renders as tint, state and duration with nothing beneath, and
+without it.** Claude Code's `AskUserQuestion` and Codex's exact
+`request_user_input` path produce a line; a permission or elicitation prompt
+renders as tint, state and duration with nothing beneath, and
 that is not a degraded row — the canvas's own dense variant draws it that way,
 and its closing note credits the full-row wash, not a detail line, with making
 the row catch the eye. The wash is what makes it unmissable; the question is
@@ -1036,23 +1037,20 @@ and hierarchy: **what needs me → which agent → where →** one line of detai
 > decisions in a banner that are ours: this image, the three text slots, the
 > actions, and the grouping.
 
-The four verbs: **Question · Waiting · Finished · Failed**. Each is the first
-word, so a banner truncated at ~30 characters still delivers the meaning. The
+The five verbs: **Question · Approval · Waiting · Finished · Failed**. Each is
+the first word, so a banner truncated at ~30 characters still delivers the meaning. The
 longest realistic title, `Finished · agentbar-web`, is 23.
 
-**`Question` is not selectable until the question line exists.** Both waiting
-paths — `PreToolUse(AskUserQuestion)` and `Notification(permission_prompt |
-elicitation_*)` — decode to the same `EventKind.waitingInput`, and the push
-signal this design specifies, `StateChange`, carries only session, provider,
-project, from, to and time. Nothing distinguishes them. The one available hint,
-`tool?.name == "AskUserQuestion"`, is a provider tool name that nothing above the
-adapter may branch on.
+**`Question` is selected only when the question line exists.** Question paths —
+Claude Code's `PreToolUse(AskUserQuestion)` and Codex's
+`PreToolUse(request_user_input)` — decode to `EventKind.waitingInput`. The push
+signal carries the domain question line, never either provider-specific tool
+name.
 
-So the verb is chosen by **the presence of the question line, not by the event**:
-a waiting notification that has a line is titled `Question`, one without is
-titled `Waiting`. Until the line lands, every waiting event is titled `Waiting` —
-which is true, and is the whole of what AgentBar knows. This is folded into the
-question-line obligation rather than left as a separate problem.
+So Question is chosen by **the presence of the question line, not by a provider
+tool name**: a `waitingInput` notification that has a line is titled `Question`,
+one without is titled `Waiting`. `waitingPermission` is independently titled
+`Approval`, with its bounded safe summary when one exists.
 
 Each verb is a predicate on the `StateChange`, not a vibe. `from` and `to` are
 both optional and both nils are reachable, so they are named explicitly:
@@ -1061,8 +1059,18 @@ both optional and both nils are reachable, so they are named explicitly:
 |---|---|---|
 | `Question` | `to.kind == .waiting` **and** a question line is present | the question line |
 | `Waiting` | `to.kind == .waiting` and no line | none — the title is the whole message |
+| `Approval` | `to` is `.waitingPermission` | the safe permission summary |
 | `Finished` | `from != nil` **and** `to == .idle` | none — nothing counts what a turn changed |
 | `Failed` | `to` is `.failed` | the reason |
+
+Question, Approval, Waiting and Failed are urgent: the presenter is called on
+the next main-actor turn, with no 1.5-second timer. The first fingerprint is
+delivered immediately and an exact repeat within 1.5 seconds is suppressed.
+Finished remains deferred through the existing 1.5-second coalescing window.
+A newer urgent state cancels an older pending Finished draft for the same
+session, preventing stale completion news from replacing the actionable banner.
+The implementation budget from accepted hook event to queuing an urgent banner
+is 100 ms on an otherwise local machine; macOS banner presentation is outside it.
 
 Two `StateChange` shapes fire **nothing**, and both are reachable:
 
@@ -1102,15 +1110,16 @@ subtle and it is correct; do not simplify it.
 
 ### Attachment art
 
-Four squares, one per verb, each carrying the same three-node figure as the menu
+Five squares, one per verb, each carrying the same three-node figure as the menu
 bar so the banner, the status item and the app icon are visibly one family.
-**Silhouette first, colour second** — verified by desaturating all four and
-comparing them, because four gradients are trivially distinguishable and prove
+**Silhouette first, colour second** — verified by desaturating all five and
+comparing them, because five gradients are trivially distinguishable and prove
 nothing.
 
 | Event | Figure | Base token |
 |---|---|---|
 | Question | apex filled, ring leaving it | `stateWaiting` |
+| Approval | waiting agent inside a shield outline | `eventApproval` |
 | Waiting | all three nodes filled | `stateWorking` |
 | Finished | all three filled, enclosed in a closed ring | `connected` |
 | Failed | apex is a rounded square | `stateFailed` |
@@ -1126,13 +1135,15 @@ top sheen    radial white, 45 % → transparent, centred 22 % / 8 %
 figure       the three-node glyph at 56 % of the canvas, in onAccent white
 ```
 
-Each gradient is two stops derived from an existing `ColorToken` at ±12 % OKLCH
-lightness — **no new base token** — held in `AttachmentRamp`. Rendered in the
+Each gradient is two stops derived from its semantic `ColorToken` at ±12 % OKLCH
+lightness, held in `AttachmentRamp`. Approval introduces `eventApproval`, a
+semantic purple role distinct from `stateUnknown` even while their current values
+match. Rendered in the
 **light appearance always**: an attachment is not re-rendered when the system
 theme changes, so a dark-appearance square would be wrong half the time.
 
-There is deliberately **no fifth square for `unknown`**. `NotificationPolicy`
-returns `nil` for it and that stays true, so a fifth ramp would be a colour pair
+There is deliberately **no sixth square for `unknown`**. `NotificationPolicy`
+returns `nil` for it and that stays true, so a sixth ramp would be a colour pair
 nothing can ever ask for.
 
 **No actions ship.** A `Reply` field on the banner needs a channel from AgentBar
@@ -1178,20 +1189,20 @@ static PNG per provider, rendered once.
 > consumed by its first use. When it cannot be produced at all the title becomes
 > `Question · Claude Code · agentbar-web`, as specified above.
 
-**Reserved.** Two `UNNotificationAction`s — `Approve` and `Deny` — are planned
-and out of scope. One category per event type exists so they can be added
-without restructuring. Nothing in the layout may assume they exist, and nothing
-may break when they appear.
+Approval has its own registered category, with `actions: []`. Approve/Deny remain
+out of scope: the hook fingerprint is observation state, not a reply handle, and
+the user answers only in Codex.
 
 **Never auto-approve.** No notification path — timeout, dismissal, dropped
 delivery, failure to render — may ever resolve into granting a permission. This
-applies pre-emptively to those reserved buttons.
+applies pre-emptively to any future buttons.
 
 ### The sound set
 
-Four files in the bundle root, one per verb, and they are the defaults the matrix
-ships with. They are a designed set rather than four unrelated chimes: one voice,
-one register, and an interval that carries the meaning.
+Four files in the bundle root serve five verbs and are the defaults the matrix
+ships with. Approval reuses `AgentBar Waiting.aiff` by default but remains a
+separate matrix row, so the user can choose another sound for it without changing
+Waiting. A fifth authored file is not part of this stage.
 
 | File | Interval | Length | Verb |
 |---|---|---|---|
@@ -1294,14 +1305,14 @@ it never scrolls horizontally.
 
 **Added in v2**, and the one part of the mock this window had refused. The
 argument for refusing it was that there was no split view to give a selection
-fill to; the answer is that there is one now, because a settings window with
-seven sections and no navigation is a window you scroll to find things in.
+fill to; the answer is that there is one now, because a settings window with nine
+sections and no navigation is a window you scroll to find things in.
 
 A fixed 212 pt column: the app's mark and name, a hairline, then one row per
 section. The rows are `Notifications`, `Quiet Hours`, `While You're Working`,
-`Sounds`, `Caffeine`, `General` and `About` — the last two beyond what the mock
-drew, because the mock did not know about them and dropping either would have
-hidden a real setting. The mock's width is 200; the extra twelve points are what
+`Sounds`, `Caffeine`, `General`, `Diagnostics`, `About` and `Remove AgentBar` —
+the last four beyond what the mock drew, because the mock did not know about them
+and dropping any of them would have hidden a real surface. The mock's width is 200; the extra twelve points are what
 *While You're Working* needs at the system's own sidebar text size, and shrinking
 the text to fit a mock is the wrong way round.
 
@@ -1399,7 +1410,9 @@ begin rather than running under them.
 | `Sounds` | **Add Sound File…**, **Reveal Sounds Folder**, and every current sound problem |
 | `Caffeine` | The three-state setting, a live status line, and the limitation |
 | `General` | Launch at login, and its last error if it has one |
+| `Diagnostics` | The self-test, the endpoint's counters, this process's own resources, and the last hundred lines the endpoint reported — see below |
 | `About` | The running version, and the one claim about this app worth making in the interface: it reads what the two tools already tell it, on this Mac only, and makes no network request to Anthropic or OpenAI. Added in v2 so the sidebar's last row leads somewhere |
+| `Remove AgentBar` | The uninstaller, and the report it leaves — see below |
 
 Section headers use the panel's `sectionLabel` — 11 pt semibold, uppercase,
 tracked — in `ink400`. Every section has a footnote in Caption explaining the one
@@ -1458,15 +1471,16 @@ event actually is — the settings window is the one surface with room for it:
 | Verb | Shape | Colour | Explanation |
 |---|---|---|---|
 | Question | waiting triangle | `stateWaiting` | An agent asked you something |
+| Approval | waiting agent in a shield | `eventApproval` | An agent requested access |
 | Waiting | waiting triangle | `stateWorking` | An agent is blocked and needs you |
 | Finished | idle hollow ring | `connected` | An agent finished its turn |
 | Failed | failed rounded square | `stateFailed` | A turn ended in an error |
 
 **The colour is the event's `AttachmentRamp` base, not the state's accent**, so
 the matrix, the banner and the preview block agree about what colour an event is.
-The two disagree in exactly one place and it is the place that matters:
-`Finished` announces the *idle* state, which is the one state with no accent at
-all, so a matrix reading the accent drew it grey while the banner drew it green.
+They deliberately differ from row-state accents where event semantics need more
+precision: bare Waiting is blue, Approval is purple, and Finished announces the
+accent-less idle state with a green resolution tile.
 
 Each cell is a **Notify** checkbox, a sound picker, and a play button that
 auditions the selection. The picker is grouped — Standard (Default, None),
@@ -1477,7 +1491,7 @@ underneath it in `stateFailed`, in the sentence the sound library wrote.
 real delivery path. It is the step's own validation criterion handed to the user
 rather than kept for a developer: nothing short of a real banner confirms that a
 chosen sound plays, because `UNNotificationSound` falls back to the default
-without saying so. It bypasses the coalescer and quiet hours — four notifications
+without saying so. It bypasses the coalescer and quiet hours — five notifications
 a millisecond apart would collapse into one, and the settings window is frontmost
 by definition — but **not** the matrix, so a disabled event sends nothing and the
 test shows what the user will actually get.
@@ -1518,6 +1532,96 @@ Beneath it, one live status line carrying the state shape as well as the sentenc
 **every** setting, including `Never`: a Caffeine switched off beside three working
 agents is exactly the situation a user opens this window to understand.
 
+### The Diagnostics section
+
+**Added in step 11.** The surface a user reaches when nothing is happening, and
+the reason it exists is a consequence of a rule rather than a feature request:
+AgentBar answers every hook with success whatever happens, so a payload it could
+not decode is invisible to the agent that sent it. Before this the only record
+was Console.app, which is not an answer to give a user.
+
+Three blocks, in the order the question gets answered.
+
+**The self-test.** One summary line carrying the worst verdict — pass, warn or
+fail, each with its own shape as well as its own ink, the same rule every row in
+this app follows — then one row per check: the loopback endpoint, each
+provider's hooks, the Codex helper, notification authorisation, and the power
+assertion. Each row is `title · detail`, with a remedy beneath it in the
+verdict's colour **when there is one to give**. A check that failed with invented
+advice would be worse than one that says only what it found. The provider rows
+read the same `IntegrationStatus` the panel's card does, so the two surfaces
+cannot disagree.
+
+**Warn is a real rung, not a soft fail.** `Not connected` is a choice as often as
+a fault, and `Installed, not trusted` is neither working nor broken. Painting
+either red would make the surface that exists to explain silence the thing that
+misexplains it. The two rungs that *are* failures are the ones where AgentBar
+itself is the problem: it is not listening, or it cannot read the file it would
+have to write.
+
+**Every rung but `Connected` ends with something to do.** A provider's second
+line is a diagnosis on some rungs and already an instruction on others, so the
+button on the panel's card is appended where it is missing rather than assumed —
+a diagnostics row with no next step is a row telling the user they are stuck.
+
+**The counters.** Ten numbers in monospaced digits: deliveries, applied, ignored,
+and the seven ways a request can be turned away. The seven are drawn in
+`stateFailed` when non-zero. They are not errors on their own — one unauthorised
+request is a hook still carrying an old token, which the panel offers to repair —
+but they are what a person scanning this block should see first.
+
+**The log.** The last hundred lines the endpoint reported, newest first, with the
+time in monospaced digits and the message in its severity's ink. Selectable.
+Empty is a sentence rather than an absence.
+
+`Run Again` re-takes the reading; `Copy` puts the whole report on the clipboard
+as plain text, which is what a bug report needs. The window takes one reading on
+appearance and never on a timer: it reads both providers' configuration files.
+
+### The Remove AgentBar section
+
+**Added in step 11**, and it is the one place the safe-superset rule was not
+actually being held: a deleted app left nine hooks in each provider's
+configuration, calling an endpoint that no longer answers.
+
+At rest: one destructive button, **Remove AgentBar's Hooks and Files…**, and a
+footnote saying why it exists — moving the app to the Trash does not remove its
+hooks. The confirmation dialog lists exactly what will be removed and states that
+each configuration file is backed up beside itself and that nothing anyone else
+put there is touched.
+
+Afterwards, the report replaces nothing and is added beneath: a summary line, then
+one row per step carrying `title · location · verdict`. Four verdicts, each with
+its own shape:
+
+| Verdict | Shape and ink | Means |
+|---|---|---|
+| `Removed` | working disc, `connected` | Something was actually removed. The detail names the backup **and its pattern**, because each installer keeps five |
+| `Nothing there` | idle ring, `ink400` | Nothing of AgentBar's was there. Never drawn as a fault: it is the outcome of removing twice |
+| `Left alone` | unknown shape, `stateUnknown` | AgentBar found something of its own and is not allowed to touch it. Carries a remedy. `~/.codex/config.toml` is the case this exists for |
+| `Still there` | failed shape, `stateFailed` | The removal did not happen. Carries the reason **and** a remedy naming the exact file and what to look for in it |
+
+Both remedy lines are selectable, because they are lines a person acts on.
+
+**`Nothing there` is the answer this section may never guess at.** Three rungs
+could have given it about something they had not checked — a system directory
+that would not resolve, a path the ownership guard refused, a login item in
+`.requiresApproval` — and all three report a failure with somewhere to go
+instead.
+
+**The Diagnostics section goes quiet after a removal.** The self-test taken
+afterwards would necessarily report the endpoint as `not listening` and the Codex
+helper as `not deployed`, with remedies that undo the removal, beside a summary
+saying nothing is left. It says *not checked*, and why, until the user asks.
+
+The section ends where AgentBar's authority does: *"AgentBar itself is still
+where you put it. Quit it, then move it to the Trash,"* with one caption beneath
+it — *sessions that are already running keep the old configuration until they
+end*, because both tools read their hook configuration at session start — and
+**Reveal AgentBar in Finder** and **Quit AgentBar**. The app does not delete itself — a running
+application unlinking its own bundle is a trick, and the last step of an
+uninstall belongs to the person doing it.
+
 ---
 
 ## Domain coverage
@@ -1533,7 +1637,7 @@ representation. Everything `AgentBarCore`, `AgentBarIngest` and
 | `SessionState.idle` | hollow-ring row, no tint, no detail line |
 | `SessionState.working` | filled-dot row, mono detail line |
 | `SessionState.waitingInput` | triangle row, waiting wash |
-| `SessionState.waitingPermission(_)` | **the same row.** Both collapse to `SessionStateKind.waiting`, and that is right: from the user's side both mean "go look at that agent". The distinction earns a visual only when it becomes actionable — `waitingPermission` is what grows the Approve/Deny affordance and the `summary` detail line |
+| `SessionState.waitingPermission(_)` | the same waiting row and wash, because the action remains in the provider. Its distinction appears in the Approval notification label, shield and optional safe summary; there is no Approve/Deny affordance |
 | `SessionState.failed(reason:)` | rounded-square row, failed wash, reason in the detail line |
 | `SessionState.unknown` | dashed-ring row, unknown wash, silence in the detail line |
 | `SessionStateKind` | the five row shapes, the five status glyphs, the notification verbs |
@@ -1793,6 +1897,23 @@ the settings window and does not include a stats block, and §3.3 makes "not
 overloaded" an explicit product requirement. The call is implemented and tested;
 nothing renders it.
 
+### Step 11f — Codex notification reliability — delivered
+
+Codex now observes `PermissionRequest` without answering it and recognises the
+exact `request_user_input` tool inside `PreToolUse`. Their domain states become
+separate Approval and Question notifications. Approval has its own settings row,
+category, purple semantic accent and shield silhouette, but no action buttons;
+its default sound reuses the authored Waiting file.
+
+Urgent notifications no longer wait behind the 1.5-second Finished coalescer.
+The first Question, Approval, Waiting or Failed draft is queued immediately and
+only an exact repeat is suppressed during the next 1.5 seconds. Finished keeps
+the existing delay.
+
+The Codex helper is deployed from the bundle to the stable AgentBar-owned path
+specified by ADR-0014. One explicit Repair migrates older DerivedData or bundle
+commands; moving among app copies afterwards changes no hook definition.
+
 ### Whenever the dashboard is built
 
 `FinishedSession.finalState` is the last state actually *observed* and is never
@@ -1807,7 +1928,7 @@ contradiction. Recorded here so it is not rediscovered as a bug.
 | Deferred | What step 05 leaves for it |
 |---|---|
 | Dashboard window | a footer entry point; `StoreSnapshot.finished` already carries the history |
-| Approve / Deny in notifications | one notification category per event type, registered by step 07 with no actions attached |
+| Approve / Deny in notifications | the Approval category is registered with no actions; implementation requires a supported provider reply handle, never the hook fingerprint |
 
 Settings was the third row here until step 07. It is now a real surface — see
 [Settings window](#settings-window) — and the footer gear opens it. Caffeine

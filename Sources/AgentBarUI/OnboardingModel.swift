@@ -12,7 +12,11 @@ import Observation
 /// terminal, and would be a second, worse source of truth beside the reports.
 @MainActor
 public final class OnboardingState {
-    static let key = "onboarding.hasCompletedFirstRun"
+    /// Public because the uninstaller checks it: the list of keys AgentBar owns
+    /// is spelled from the constants that write them, so a rename breaks that
+    /// list at compile time rather than leaving it looking for something nothing
+    /// stores.
+    public static let defaultsKey = "onboarding.hasCompletedFirstRun"
 
     private let defaults: UserDefaults
 
@@ -23,8 +27,8 @@ public final class OnboardingState {
     }
 
     public var hasCompletedFirstRun: Bool {
-        get { defaults.bool(forKey: Self.key) }
-        set { defaults.set(newValue, forKey: Self.key) }
+        get { defaults.bool(forKey: Self.defaultsKey) }
+        set { defaults.set(newValue, forKey: Self.defaultsKey) }
     }
 }
 

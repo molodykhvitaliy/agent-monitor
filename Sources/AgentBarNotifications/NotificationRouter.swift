@@ -34,6 +34,9 @@ public final class NotificationRouter {
     @ObservationIgnored private let coalescingWindow: Duration
     @ObservationIgnored private var coalescer = NotificationCoalescer()
     @ObservationIgnored private var flushTask: Task<Void, Never>?
+    @ObservationIgnored private var immediateQueue: [NotificationDraft] = []
+    @ObservationIgnored private var immediateTask: Task<Void, Never>?
+    @ObservationIgnored private var immediateGeneration = 0
     /// So the one suppression nobody can diagnose is shouted once, not per
     /// event. Reset whenever the answer changes.
     @ObservationIgnored private var hasReportedMissingAuthorization = false
@@ -115,13 +118,50 @@ public final class NotificationRouter {
     /// The landing point for the ingest boundary's state changes.
     ///
     /// Returns immediately: a sink that waits is a hook handler that waits, and
-    /// nothing AgentBar installs may delay an agent. The work happens when the
-    /// coalescing window closes.
+    /// nothing AgentBar installs may delay an agent. Human-required drafts are
+    /// scheduled on the main actor with no timer; only `Finished` waits for the
+    /// coalescing window.
     public func record(_ changes: [StateChange]) {
         let drafts = changes.compactMap(NotificationPolicy.draft(for:))
         guard !drafts.isEmpty else { return }
-        for draft in drafts { coalescer.enqueue(draft) }
-        scheduleFlush()
+        for draft in drafts {
+            if draft.event.isTimeSensitive {
+                coalescer.discardPending(through: draft.at, for: draft.sessionId)
+                immediateQueue.append(draft)
+            } else {
+                coalescer.enqueue(draft)
+            }
+        }
+        if !immediateQueue.isEmpty { scheduleImmediateDelivery() }
+        if !coalescer.isEmpty { scheduleFlush() }
+    }
+
+    private func scheduleImmediateDelivery() {
+        guard immediateTask == nil else { return }
+        let generation = immediateGeneration
+        immediateTask = Task {
+            // Yield once so `record` still returns before any notification
+            // centre call. There is deliberately no clock-based delay here.
+            await Task.yield()
+            await flushImmediate(generation: generation)
+        }
+    }
+
+    /// Delivers the urgent queue, re-reading the frontmost application per draft.
+    ///
+    /// > `flush()` reads it once for a batch drained in one turn, which is sound
+    /// > because the answer cannot change without a suspension. This loop
+    /// > suspends and `record()` appends while it runs, so a draft added after
+    /// > the user switched applications would be judged against the one they
+    /// > left — exactly the case focus suppression exists for.
+    private func flushImmediate(generation: Int) async {
+        while generation == immediateGeneration, !Task.isCancelled, !immediateQueue.isEmpty {
+            let draft = immediateQueue.removeFirst()
+            await deliver(
+                draft, frontmostBundleIdentifier: frontmost.frontmostBundleIdentifier())
+        }
+        guard generation == immediateGeneration else { return }
+        immediateTask = nil
     }
 
     private func scheduleFlush() {
@@ -148,7 +188,16 @@ public final class NotificationRouter {
     /// Exposed so a test can drive the decision path without waiting out a real
     /// window, and so a caller that is shutting down can drain what it has.
     public func flush() async {
-        let ready = coalescer.drain()
+        // An explicit drain includes urgent work that was scheduled but has not
+        // had its actor turn yet. Tests and clean shutdown therefore retain the
+        // old guarantee that `stop(); flush()` loses nothing.
+        immediateTask?.cancel()
+        immediateTask = nil
+        immediateGeneration += 1
+        let ready = (immediateQueue + coalescer.drain()).sorted {
+            ($0.at, $0.sessionId) < ($1.at, $1.sessionId)
+        }
+        immediateQueue.removeAll(keepingCapacity: true)
         guard !ready.isEmpty else { return }
         // Re-read once for the whole batch rather than per draft: the answer
         // cannot change between two notifications posted in the same turn, and
@@ -159,10 +208,19 @@ public final class NotificationRouter {
         }
     }
 
-    /// Cancels a scheduled flush. For a clean shutdown.
+    /// Cancels the scheduled deliveries. For a clean shutdown.
+    ///
+    /// > **Both queues deliberately survive it**, because `flush()` promises
+    /// > that `stop(); flush()` loses nothing. The consequence is worth naming
+    /// > rather than removing: a `record()` after a `stop()` schedules a
+    /// > delivery carrying the drafts from before it. Nothing in the app does
+    /// > that, and emptying the queue here would make the drain lossy instead.
     public func stop() {
         flushTask?.cancel()
         flushTask = nil
+        immediateTask?.cancel()
+        immediateTask = nil
+        immediateGeneration += 1
     }
 
     // MARK: - Testing against the real path
@@ -189,7 +247,7 @@ public final class NotificationRouter {
     /// falls back to the default without saying so.
     ///
     /// Two deliberate differences from a real delivery. The coalescer is
-    /// bypassed, or four notifications a millisecond apart would collapse into
+    /// bypassed, or five notifications a millisecond apart would collapse into
     /// one. And quiet hours and focus suppression are bypassed, because the
     /// settings window is frontmost by definition and may well be on the
     /// suppression list. **The global switch and the matrix are not**: an event
@@ -215,7 +273,7 @@ public final class NotificationRouter {
                 // The real shapes: the two events that carry a line get one,
                 // and it says what it is rather than pretending to be an
                 // agent's question or a provider's error.
-                body: event == .question || event == .failed
+                body: event == .question || event == .approval || event == .failed
                     ? String(
                         localized: "Test notification from AgentBar",
                         comment: "Body of a notification sent by the settings window")

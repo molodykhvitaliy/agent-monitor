@@ -4,106 +4,6 @@ import Testing
 
 @testable import AgentBarUI
 
-/// A settings back end that records what the window asked it to do.
-@MainActor
-final class StubSettingsServices: SettingsServices {
-    var providers: [Provider] = [.claudeCode]
-    var stored: NotificationPreferences
-    private(set) var writes: [NotificationPreferences] = []
-    private(set) var previewed: [String] = []
-    private(set) var tested: [Provider] = []
-    var permissionState: NotificationPermission = .granted
-    var importResult: SoundImportResult?
-    var chosenApplication: FocusApplication?
-    /// Applied to every value handed back, so a test can make a chosen sound
-    /// come back carrying a problem the way a real library would.
-    var decorate: (@MainActor (NotificationPreferences) -> NotificationPreferences)?
-
-    /// Constructed on demand: `SMAppService` is an app-level service and this
-    /// suite has no reason to touch it.
-    private var login: LaunchAtLogin?
-
-    init(preferences: NotificationPreferences? = nil) {
-        stored =
-            preferences
-            ?? NotificationPreferences(
-                cells: NotificationVerb.allCases.map {
-                    NotificationCell(
-                        provider: .claudeCode, verb: $0, isEnabled: true,
-                        soundID: "AgentBar \($0.title).aiff")
-                })
-    }
-
-    func preferences() -> NotificationPreferences {
-        decorate?(stored) ?? stored
-    }
-
-    func update(_ preferences: NotificationPreferences) {
-        stored = preferences
-        writes.append(preferences)
-    }
-
-    /// Whatever the user has dropped into `~/Library/Sounds`, which is the one
-    /// input to this window that AgentBar does not control the length of.
-    var userSoundChoices: [SoundChoice] = []
-
-    func soundChoices() -> [SoundChoice] {
-        [
-            SoundChoice(
-                id: "agentbar.sound.default", name: "Default", group: .standard, isPlayable: false)
-        ]
-            + NotificationVerb.allCases.map {
-                SoundChoice(
-                    id: "AgentBar \($0.title).aiff", name: "AgentBar \($0.title)",
-                    group: .bundled, isPlayable: true)
-            } + userSoundChoices
-    }
-
-    func previewSound(id: String) { previewed.append(id) }
-    func addSoundFile() async -> SoundImportResult? { importResult }
-    func revealSoundsFolder() {}
-    func permission() async -> NotificationPermission { permissionState }
-    /// Counted, because "never re-prompt after a refusal" is a rule about how
-    /// many times this is called and not about what it returns.
-    private(set) var permissionRequests = 0
-    func requestPermission() async -> NotificationPermission {
-        permissionRequests += 1
-        permissionState = .granted
-        return permissionState
-    }
-    func openSystemNotificationSettings() {}
-    func chooseApplication() async -> FocusApplication? { chosenApplication }
-    var testResult = TestNotificationResult(text: "Sent 4 test notifications", isFault: false)
-
-    func sendTestNotifications(for provider: Provider) async -> TestNotificationResult {
-        tested.append(provider)
-        return testResult
-    }
-
-    var caffeineIndicator = CaffeineIndicator()
-    private(set) var caffeineWrites: [CaffeineSetting] = []
-
-    func caffeine() -> CaffeineIndicator { caffeineIndicator }
-
-    func setCaffeine(_ setting: CaffeineSetting) {
-        caffeineWrites.append(setting)
-        caffeineIndicator = CaffeineIndicator(
-            setting: setting,
-            isHolding: setting.isActive && caffeineIndicator.workingSessionCount > 0,
-            workingSessionCount: caffeineIndicator.workingSessionCount)
-    }
-
-    private(set) var launchRefreshes = 0
-
-    var launchAtLogin: LaunchAtLogin {
-        launchRefreshes += 1
-        if let login { return login }
-        let created = LaunchAtLogin()
-        login = created
-        return created
-    }
-}
-
 /// The settings window edits a copy and hands the whole value back, so the two
 /// things worth asserting are that every edit is written and that what comes
 /// back is what is shown.
@@ -287,6 +187,7 @@ struct NotificationVerbTests {
     func shapesMatchTheStates() {
         #expect(NotificationVerb.question.shape == .waiting)
         #expect(NotificationVerb.waiting.shape == .waiting)
+        #expect(NotificationVerb.approval.shape == .waiting)
         #expect(NotificationVerb.finished.shape == .idle)
         #expect(NotificationVerb.failed.shape == .failed)
     }
@@ -317,6 +218,9 @@ struct SettingsPreviewTests {
         #expect(model.preview?.verb == .question)
 
         model.setCellEnabled(false, provider: .claudeCode, verb: .question)
+        #expect(model.preview?.verb == .approval)
+
+        model.setCellEnabled(false, provider: .claudeCode, verb: .approval)
         #expect(model.preview?.verb == .waiting)
 
         model.setCellEnabled(false, provider: .claudeCode, verb: .waiting)

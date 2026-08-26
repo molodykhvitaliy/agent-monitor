@@ -12,7 +12,7 @@ import os
 /// only `AgentBarCore`, so every notification type is translated here, where
 /// both modules are already linked.
 ///
-/// The translation is deliberately dumb — two vocabularies for the same four
+/// The translation is deliberately dumb — two vocabularies for the same five
 /// verbs, mapped one for one. That is the price of the module boundary, and it
 /// is a price worth paying: it is what stops a view importing a sound library.
 @MainActor
@@ -27,30 +27,42 @@ final class NotificationSettingsBridge: SettingsServices {
     }
 
     let providers: [Provider]
-    let launchAtLogin = LaunchAtLogin()
+    let launchAtLogin: LaunchAtLogin
 
     private let router: NotificationRouter
     private let preview = SoundPreview()
-    private let caffeineBridge: CaffeineBridge
+    let caffeineBridge: CaffeineBridge
+    /// The uninstaller behind the settings window's last section. Optional for
+    /// the same reason the quota service is optional in `AppServices`: a render
+    /// proof builds this bridge without one, and a `Remove` button that reported
+    /// a refusal is a better failure than one that pretends.
+    let removal: AgentBarRemoval?
+    /// The self-test behind the diagnostics section. Optional for the same
+    /// reason `removal` is: a render proof builds this bridge without one.
+    let diagnostics: AgentBarDiagnostics?
 
-    init(router: NotificationRouter, providers: [Provider], caffeine: CaffeineBridge) {
+    init(
+        router: NotificationRouter,
+        providers: [Provider],
+        caffeine: CaffeineBridge,
+        launchAtLogin: LaunchAtLogin = LaunchAtLogin(),
+        removal: AgentBarRemoval? = nil,
+        diagnostics: AgentBarDiagnostics? = nil
+    ) {
         self.router = router
         self.providers = providers
         caffeineBridge = caffeine
+        self.launchAtLogin = launchAtLogin
+        self.removal = removal
+        self.diagnostics = diagnostics
     }
-
-    // MARK: - Caffeine
-
-    func caffeine() -> CaffeineIndicator { caffeineBridge.indicator() }
-
-    func setCaffeine(_ setting: CaffeineSetting) { caffeineBridge.set(setting) }
 
     // MARK: - Preferences
 
     func preferences() -> NotificationPreferences {
         let settings = router.settings
         // One reading of both sound directories for the whole matrix. Asking
-        // per cell would re-enumerate `~/Library/Sounds` eight times — sixteen
+        // per cell would re-enumerate `~/Library/Sounds` ten times
         // once Codex has a column — for an answer that cannot change between
         // them, on every toggle the user flips.
         let catalogue = router.sounds.catalogue()
@@ -255,6 +267,7 @@ final class NotificationSettingsBridge: SettingsServices {
         switch verb {
         case .question: .question
         case .waiting: .waiting
+        case .approval: .approval
         case .finished: .finished
         case .failed: .failed
         }
@@ -269,6 +282,7 @@ final class NotificationSettingsBridge: SettingsServices {
         switch event {
         case .question: .question
         case .waiting: .waiting
+        case .approval: .approval
         case .finished: .finished
         case .failed: .failed
         }

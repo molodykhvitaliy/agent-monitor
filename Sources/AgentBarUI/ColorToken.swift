@@ -36,6 +36,7 @@ nonisolated public enum ColorToken: String, CaseIterable, Sendable {
     case stateWaiting
     case stateFailed
     case stateUnknown
+    case eventApproval
     case onAccent
     case providerClaudeCode
     case providerCodex
@@ -73,6 +74,10 @@ nonisolated public enum ColorToken: String, CaseIterable, Sendable {
         .stateWaiting: (srgb(0xDA_95_0B), srgb(0xE8_AB_3E)),
         .stateFailed: (srgb(0xCF_40_40), srgb(0xEF_66_61)),
         .stateUnknown: (srgb(0x8C_69_A7), srgb(0xB1_8D_CD)),
+        // A separate semantic role even though it intentionally shares the
+        // current purple values with Unknown. Approval is always paired with a
+        // shield and a label; Unknown remains a session state.
+        .eventApproval: (srgb(0x8C_69_A7), srgb(0xB1_8D_CD)),
         .onAccent: (srgb(0xFF_FF_FF), srgb(0x0A_0E_11)),
         .providerClaudeCode: (srgb(0xC1_6D_45), srgb(0xE1_8C_5F)),
         .providerCodex: (srgb(0x29_2E_34), srgb(0xCB_CE_D2)),
@@ -111,7 +116,7 @@ nonisolated public enum ColorToken: String, CaseIterable, Sendable {
 /// **No new base token.** Each pair is one existing `ColorToken`'s *light*
 /// value moved ±12 % in OKLCH lightness, hue and chroma untouched. The rule is
 /// written down here rather than left in a design document because it is what
-/// makes these regenerable: move a base token and these four pairs move with it,
+/// makes these regenerable: move a base token and these five pairs move with it,
 /// by applying that one transformation again.
 ///
 /// > **The colour is the event's, not the announced state's.** An event square
@@ -139,16 +144,15 @@ nonisolated public struct AttachmentRamp: Sendable, Hashable {
 
     /// The ramp for a notification verb.
     ///
-    /// > **Four, not five.** The handoff also specifies an `Unknown` square,
-    /// > "for completeness". `NotificationPolicy.classify` returns `nil` for
-    /// > `unknown` and that stays true — the absence of information is not worth
-    /// > an interruption — so a fifth ramp would be a colour pair nothing can
-    /// > ever ask for. The row tint and the menu-bar glyph carry `unknown`,
-    /// > which is where a user actually meets it.
+    /// There is still no `Unknown` square: the absence of information is not a
+    /// notification. Approval is the fifth ramp because a permission request is
+    /// concrete news and has its own category and silhouette.
     public static func ramp(for verb: NotificationVerb) -> AttachmentRamp {
         switch verb {
         case .question:
             AttachmentRamp(base: .stateWaiting, start: srgb(0xEF_AF_2E), end: srgb(0xA8_70_0A))
+        case .approval:
+            AttachmentRamp(base: .eventApproval, start: srgb(0xA7_88_BF), end: srgb(0x6C_4C_84))
         case .failed:
             AttachmentRamp(base: .stateFailed, start: srgb(0xE3_5C_5C), end: srgb(0x9E_2C_2C))
         case .finished:

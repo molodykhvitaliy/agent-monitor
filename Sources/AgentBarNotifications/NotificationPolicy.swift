@@ -14,6 +14,7 @@ import Foundation
 /// |---|---|---|
 /// | `Question` | `to.kind == .waiting` **and** a question line is present | the question line |
 /// | `Waiting` | `to.kind == .waiting` and no line | none |
+/// | `Approval` | `to` is `.waitingPermission` | permission summary |
 /// | `Finished` | `from != nil` **and** `to == .idle` | none |
 /// | `Failed` | `to` is `.failed` | the reason |
 ///
@@ -21,6 +22,11 @@ import Foundation
 /// the predicates as conditions on `from` and `to` rather than as a feeling
 /// about the event.
 public enum NotificationPolicy {
+    private struct Classification {
+        let event: NotificationEvent
+        let body: String?
+        let fingerprint: String?
+    }
 
     /// How much of a body survives. The row truncates; a notification body would
     /// not, and `failureReason` passes an unrecognised provider error through
@@ -46,6 +52,7 @@ public enum NotificationPolicy {
             project: change.project,
             event: classified.event,
             body: classified.body,
+            fingerprint: classified.fingerprint,
             at: change.at)
     }
 
@@ -64,22 +71,24 @@ public enum NotificationPolicy {
     /// interruption; the row and the status glyph carry it. `working` selects
     /// nothing either — an agent that started working is the least surprising
     /// thing that can happen.
-    static func classify(_ state: SessionState) -> (event: NotificationEvent, body: String?)? {
+    private static func classify(_ state: SessionState) -> Classification? {
         switch state {
         case .idle:
-            (.finished, nil)
+            Classification(event: .finished, body: nil, fingerprint: nil)
         case .failed(let reason):
-            (.failed, clamped(reason))
+            Classification(event: .failed, body: clamped(reason), fingerprint: nil)
         // The verb is chosen by the presence of the question line, not by the
         // event: both waiting paths decode to the same `EventKind.waitingInput`
         // and `StateChange` carries no discriminator (ADR-0005).
         case .waitingInput(let question):
-            question.flatMap { clamped($0) }.map { (.question, $0) } ?? (.waiting, nil)
-        // Reserved and unreachable today: no adapter produces it. It is a wait
-        // with nothing extra to say until the Approve/Deny work gives its
-        // `summary` somewhere to go.
-        case .waitingPermission:
-            (.waiting, nil)
+            question.flatMap { clamped($0) }.map {
+                Classification(event: .question, body: $0, fingerprint: nil)
+            } ?? Classification(event: .waiting, body: nil, fingerprint: nil)
+        case .waitingPermission(let request):
+            Classification(
+                event: .approval,
+                body: request.summary.flatMap { clamped($0) },
+                fingerprint: request.id.value)
         case .working, .unknown:
             nil
         }

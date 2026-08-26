@@ -34,30 +34,42 @@ enum AgentBarMain {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private static let logger = Logger(
+    static let logger = Logger(
         subsystem: "com.molodykhvitalii.AgentBar", category: "lifecycle")
 
     /// Every provider the assembly registers. One list, so the footer's
     /// denominator, the settings matrix's columns and the integrations built
     /// below cannot disagree about what exists.
-    private static let providers: [Provider] = [.claudeCode, .codex]
+    static let providers: [Provider] = [.claudeCode, .codex]
 
-    private let store = SessionStore()
+    let store = SessionStore()
     /// Keeps the Mac awake while an agent works. Built here rather than lazily:
     /// it holds the only power assertion in the process, and one owner is what
     /// makes "released when the process dies" a guarantee rather than a hope.
-    private let caffeine = CaffeineController()
-    private lazy var caffeineBridge = CaffeineBridge(controller: caffeine)
+    let caffeine = CaffeineController()
+    lazy var caffeineBridge = CaffeineBridge(controller: caffeine)
     /// Codex's limits. Built here for the same reason the caffeine controller
     /// is: it owns the only thing in the process that spawns a child, and one
     /// owner is what makes "no process outlives the app" a guarantee.
-    private let quota = QuotaService(clientVersion: AppDelegate.marketingVersion)
-    private var menuBar: MenuBarController?
-    private var ingest: IngestService?
-    private var notifications: NotificationRouter?
+    let quota = QuotaService(clientVersion: AppDelegate.marketingVersion)
+    /// Whether macOS starts AgentBar at login. Built here rather than inside the
+    /// settings bridge because the uninstaller unregisters the very same
+    /// registration the toggle shows, and two instances would disagree about it
+    /// for as long as the window stayed open.
+    let launchAtLogin = LaunchAtLogin()
+    var menuBar: MenuBarController?
+    var ingest: IngestService?
+    var notifications: NotificationRouter?
     /// Held strongly: `UNUserNotificationCenter` keeps its delegate **weakly**,
     /// and a released one stops receiving responses with nothing to say so.
     private var notificationDelegate: NotificationDelegate?
+    /// Counts what the endpoint reports and keeps the last hundred lines, on the
+    /// way to the unified log it was already going to. The diagnostics section
+    /// reads it; nothing else does.
+    let ingestDiagnostics = IngestDiagnosticsRecorder()
+    /// Set when the system wakes, so a night's sleep does not leave the panel
+    /// showing rows the watchdog has already given up on.
+    private var wakeObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // LSUIElement in Info.plist already selects accessory activation. This
@@ -71,6 +83,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startIngest()
         startCaffeine()
         startQuota()
+        observeWake()
+    }
+
+    /// Sweeps and re-reads when the Mac comes back.
+    ///
+    /// > **`ContinuousClock` keeps counting across system sleep, so the watchdog
+    /// > is already right — what is missing is the nudge.** Nothing re-reads the
+    /// > store by itself: push carries state moves, and a machine that was
+    /// > asleep received none. Without this, a lid opened after a night shows
+    /// > yesterday's rows for up to the forty-five seconds of the closed-panel
+    /// > clock, and the power assertion is reconsidered no sooner. One
+    /// > notification closes both.
+    private func observeWake() {
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                Self.logger.info("system woke — sweeping")
+                self.menuBar?.systemDidWake()
+                // The lease may well have expired while the Mac was asleep, and
+                // an agent that was working before it slept is working now.
+                self.caffeine.stateDidChange()
+            }
+        }
     }
 
     /// Begins reading Codex's limits: once now, then on the interval.
@@ -122,6 +159,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        if let wakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
+            self.wakeObserver = nil
+        }
         notifications?.stop()
         // Releases the power assertion. The kernel would release it anyway when
         // this process goes — that is why AgentBar takes one instead of spawning
@@ -197,131 +238,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
         true
     }
-
-    /// Binds the loopback endpoint, registers the provider decoders, and brings
-    /// up the menu bar around them.
-    ///
-    /// A failure here leaves AgentBar running and blind rather than taking the
-    /// app down: an endpoint that cannot bind is a menu bar with an honest
-    /// `Not receiving events` in its footer, and Claude Code carries on exactly
-    /// as if AgentBar had never been installed.
-    private func startIngest() {
-        let paths: IngestPaths
-        do {
-            paths = try IngestPaths.applicationSupport()
-        } catch {
-            Self.logger.error(
-                "ingest not started, application support unavailable: \(error, privacy: .public)")
-            // Still register the integration: without an endpoint it reports
-            // what is on disk, which is the difference between a footer that
-            // says `Not receiving events` and a panel with nothing in it.
-            startMenuBar(with: [ClaudeCodeIntegration(ingest: nil), CodexIntegration(ingest: nil)])
-            return
-        }
-
-        // Declared before the service so the push leg can be handed in at
-        // construction: an observer attached afterwards would miss every event
-        // that arrived in between.
-        let relay = StateChangeRelay()
-        let service = IngestService(
-            paths: paths,
-            store: store,
-            decoders: [
-                ClaudeCodeEventDecoder.route: ClaudeCodeEventDecoder(),
-                CodexEventDecoder.route: CodexEventDecoder(),
-            ],
-            stateChanges: relay)
-        ingest = service
-
-        let codex = CodexIntegration(ingest: service)
-        let menuBar = startMenuBar(with: [ClaudeCodeIntegration(ingest: service), codex])
-        // The push leg fans out to four observers. The menu bar re-reads the
-        // store and redraws; the router decides whether anything is worth
-        // interrupting the user for; the caffeine controller decides whether the
-        // Mac should still be kept awake; and the Codex integration learns the
-        // one thing no file on disk can tell it. None of them knows the others
-        // exist.
-        // Held strongly by a local rather than in the capture list, which the
-        // caffeine controller has already filled: an actor is `Sendable`, and
-        // the service must outlive nothing in particular — it owns the only
-        // child process and has to be reachable for as long as events arrive.
-        let quota = quota
-        relay.destination = { [weak menuBar, weak notifications, caffeine, weak codex] changes in
-            menuBar?.stateDidChange(changes)
-            notifications?.record(changes)
-            // Held strongly, unlike the others: the assertion must be
-            // reconsidered on every move, and a caffeine controller released
-            // early would leave the Mac awake with nothing left to notice.
-            caffeine.stateDidChange()
-            // A Codex event can only come from a hook Codex actually ran, which
-            // is the proof of trust that `config.toml` can only hint at.
-            if changes.contains(where: { $0.provider == .codex }) { codex?.noteDelivery() }
-            // A Codex turn ending is the moment the quota has just moved, and
-            // the one moment worth reading it outside the interval. Throttled
-            // inside the service, so a burst of endings is one reading.
-            if changes.contains(where: Self.endsACodexTurn) { quota.turnFinished() }
-        }
-
-        Task {
-            do {
-                let bound = try await service.start()
-                Self.logger.notice(
-                    """
-                    ingest listening on \(bound.host, privacy: .public):\
-                    \(bound.port, privacy: .public)
-                    """)
-                // Binding is one of the two moments at which every install
-                // report can have changed — the other is a card action.
-                menuBar.endpointDidChange()
-            } catch IngestEndpointError.stoppedWhileStarting {
-                // Quit beat the bind. Nothing to report and nothing left behind.
-            } catch {
-                Self.logger.error("ingest failed to start: \(error, privacy: .public)")
-                menuBar.endpointDidChange()
-            }
-        }
-    }
-
-    /// Whether a state change is a Codex turn coming to an end.
-    ///
-    /// `idle` and `failed` both are: one is `Stop`, the other `TurnFailed`, and
-    /// tokens were spent either way. `unknown` deliberately is not — the
-    /// watchdog giving up says nothing about whether a turn finished, and
-    /// letting it trigger a read would spawn a child every time a session went
-    /// quiet.
-    private static func endsACodexTurn(_ change: StateChange) -> Bool {
-        guard change.provider == .codex, change.from != nil else { return false }
-        switch change.to?.kind {
-        case .idle, .failed: return true
-        default: return false
-        }
-    }
-
-    @discardableResult
-    private func startMenuBar(with integrations: [any ProviderIntegration]) -> MenuBarController {
-        let controller = MenuBarController(
-            services: AppServices(
-                store: store, integrations: integrations, caffeine: caffeineBridge,
-                quota: quota),
-            settings: NotificationSettingsBridge(
-                router: notifications ?? Self.unavailableRouter(),
-                providers: Self.providers,
-                caffeine: caffeineBridge))
-        menuBar = controller
-        controller.start()
-        return controller
-    }
-
-    /// A router that can be configured and will never deliver.
-    ///
-    /// Used only when the notification centre could not be reached at all. The
-    /// settings window still opens and still writes the matrix — the alternative
-    /// is a gear that does nothing, which reads as a broken app rather than as
-    /// an unavailable capability. Its permission row says notifications are not
-    /// authorised, which is true.
-    private static func unavailableRouter() -> NotificationRouter {
-        NotificationRouter(presenter: UnavailableNotificationCentre())
-    }
 }
 
 /// Carries the endpoint's state changes onto the main actor.
@@ -329,7 +245,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// `StateChangeSink` is called from the connection's own task and must not
 /// block, so this hands the batch to a `Task` and returns. The destination is
 /// settable because the menu bar is built after the service it observes.
-private final class StateChangeRelay: StateChangeSink {
+final class StateChangeRelay: StateChangeSink {
     /// Main-actor isolated, which is what lets this class be `Sendable` while
     /// still being mutable: it is written once during launch and read only
     /// after the hop below.

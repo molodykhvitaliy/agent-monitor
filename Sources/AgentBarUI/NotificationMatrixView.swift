@@ -77,10 +77,7 @@ struct NotificationMatrixView: View {
                 // agree about what colour a `Finished` is. They would not
                 // otherwise: `finished` announces the *idle* state, which is the
                 // one state with no accent at all.
-                StateShapeView(
-                    kind: verb.shape,
-                    size: StateShapeView.rowSize(for: verb.shape),
-                    color: AttachmentRamp.ramp(for: verb).accent)
+                verbShape(for: verb)
                 Text(verb.title)
                     .font(DesignTokens.Text.rowTitle)
             }
@@ -91,6 +88,31 @@ struct NotificationMatrixView: View {
         }
         .frame(width: Self.labelWidth, alignment: .leading)
         .accessibilityElement(children: .combine)
+    }
+
+    /// Approval keeps the waiting agent but encloses it in a shield, matching
+    /// its notification art and remaining distinct from Question and Waiting
+    /// when colour is unavailable. Other verbs keep their state silhouette.
+    @ViewBuilder
+    private func verbShape(for verb: NotificationVerb) -> some View {
+        let accent = AttachmentRamp.ramp(for: verb).accent
+        if verb == .approval {
+            ZStack {
+                ApprovalShield()
+                    .stroke(
+                        accent,
+                        style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round)
+                    )
+                    .frame(width: 16, height: 18)
+                AgentGlyphView(state: .working, size: 10, tint: accent)
+            }
+            .frame(width: 20, height: 20)
+        } else {
+            StateShapeView(
+                kind: verb.shape,
+                size: StateShapeView.rowSize(for: verb.shape),
+                color: accent)
+        }
     }
 
     @ViewBuilder

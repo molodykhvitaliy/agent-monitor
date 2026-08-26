@@ -32,6 +32,10 @@ public struct SettingsView: View {
     /// > first pass. Publishing a *wobbling* measurement out of layout is what
     /// > cost the panel 98 % of a core, and this one cannot wobble.
     @State private var titleBarHeight: CGFloat = 0
+    /// Whether the removal confirmation is up. Internal rather than private
+    /// because the section that presents it is an extension in another file, and
+    /// an extension cannot see a private member.
+    @State var isConfirmingRemoval = false
 
     public init(model: SettingsModel) {
         self.model = model
@@ -104,7 +108,9 @@ public struct SettingsView: View {
             soundsSection
             caffeineSection
             generalSection
+            diagnosticsSection
             aboutSection
+            removalSection
         }
         .formStyle(.grouped)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

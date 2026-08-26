@@ -22,6 +22,29 @@ public final class SettingsModel {
     /// Set while a file or application picker is open. `NSOpenPanel` does not
     /// refuse a second one, so without this a second press stacks two panels.
     public private(set) var isPicking = false
+    /// Set while a removal is running, so the button cannot be pressed twice
+    /// and the section can say what is happening.
+    public private(set) var isRemoving = false
+    /// The last self-test, or `nil` before the first one has finished.
+    public private(set) var diagnostics: DiagnosticsReport?
+    /// Whether the report on screen has been copied. Shown beside the button,
+    /// and **not** through `lastMessage`: that line is rendered next to the Test
+    /// buttons in `Events`, and a confirmation that appears three sections away
+    /// from the control that caused it reads as something else happening.
+    public private(set) var didCopyDiagnostics = false
+    /// Set while one is being taken, so the button cannot be pressed twice.
+    public private(set) var isDiagnosing = false
+    /// Whether a removal has run in this session. The diagnostics section says
+    /// so instead of reporting an app it has just disconnected as broken.
+    public private(set) var hasRemoved = false
+    /// What the last removal did, one line per thing it tried. `nil` until one
+    /// has been run — the section shows its explanation and its button, and
+    /// nothing else.
+    ///
+    /// Kept after the removal rather than cleared by the next action: a report
+    /// that names two files the user still has to open by hand is the one piece
+    /// of state in this window that must not disappear when they touch a toggle.
+    public private(set) var removal: RemovalReport?
     /// The last request to show a section, and how many have been made.
     ///
     /// On the model rather than in the view's own `@State` for two reasons. It
@@ -87,12 +110,23 @@ public final class SettingsModel {
     /// would still send nothing, and every real notification would still be
     /// suppressed for the life of the process.
     public func refresh() async {
+        await refresh(includingDiagnostics: true)
+    }
+
+    /// The same refresh, with the self-test optional. Only the removal path
+    /// passes `false`, and it says why.
+    private func refresh(includingDiagnostics: Bool) async {
         permission = await services.permission()
         soundChoices = services.soundChoices()
         preferences = services.preferences()
         // The user can revoke the login item in System Settings too, and the
         // service is the only honest source for its state.
         services.launchAtLogin.refresh()
+        // Last, because it is the slowest — two configuration files and a
+        // handful of `stat`s — and everything above it is what the window shows
+        // first.
+        guard includingDiagnostics else { return }
+        await runDiagnostics()
     }
 
     // MARK: - Editing
@@ -213,6 +247,69 @@ public final class SettingsModel {
         defer { isTesting = nil }
         let result = await services.sendTestNotifications(for: provider)
         lastMessage = Message(text: result.text, isFault: result.isFault)
+    }
+
+    // MARK: - Diagnostics
+
+    /// Runs the self-test and shows what it found.
+    ///
+    /// Not on a timer, and deliberately: it reads both providers' configuration
+    /// files, and a settings window that stats `~/.claude` every second would be
+    /// its own reason to open this section.
+    public func runDiagnostics() async {
+        guard !isDiagnosing else { return }
+        // A removal is what makes these checks meaningless, and the user asking
+        // for one anyway is what makes them meaningful again.
+        hasRemoved = false
+        isDiagnosing = true
+        defer { isDiagnosing = false }
+        // Cleared before the reading, not after it: what is on the clipboard is
+        // the report that has just been replaced.
+        didCopyDiagnostics = false
+        diagnostics = await services.diagnostics()
+    }
+
+    public func copyDiagnostics() {
+        guard let diagnostics else { return }
+        services.copyToPasteboard(diagnostics.plainText)
+        didCopyDiagnostics = true
+    }
+
+    // MARK: - Removal
+
+    /// Takes AgentBar out of both providers' configuration and deletes the files
+    /// it created.
+    ///
+    /// Deliberately does **not** quit afterwards. The report is the point of the
+    /// flow — it is where a step that could not be carried out says so — and an
+    /// app that removed its hooks and vanished would take that with it.
+    public func removeEverything() async {
+        guard !isRemoving else { return }
+        isRemoving = true
+        defer { isRemoving = false }
+        lastMessage = nil
+        removal = await services.removeEverything()
+        // > **The self-test is dropped rather than re-run, and that is the
+        // > point.** A clean removal stops the endpoint and deletes the helper,
+        // > so a fresh reading necessarily reports `not listening` as a fault
+        // > and `not deployed` as a warning, each with a remedy that would
+        // > *undo the removal* — beside a summary saying both tools now behave
+        // > as if AgentBar had never been installed. Two surfaces in one window
+        // > contradicting each other, on the one whose whole purpose is
+        // > explaining what is wrong.
+        hasRemoved = true
+        diagnostics = nil
+        // Everything else this window renders can have moved: the login item
+        // was unregistered, and the stored preferences are gone.
+        await refresh(includingDiagnostics: false)
+    }
+
+    public func revealApplication() {
+        services.revealApplication()
+    }
+
+    public func quitApplication() {
+        services.quitApplication()
     }
 
     /// What the preview block shows, or `nil` when the settings would deliver

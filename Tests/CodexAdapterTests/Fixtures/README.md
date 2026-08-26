@@ -2,7 +2,7 @@
 
 **Status: documented shape, not yet captured.** Unlike the Claude Code fixtures
 next door, these were written from the field lists in Codex's own hooks
-reference — read in full on 2026-08-19 against Codex CLI `0.147.0`, and cited
+reference — read in full on 2026-08-26 against Codex CLI `0.148.0`, and cited
 with its URL in `docs/dev/platform-integration.md` §2 — rather than recorded
 from a live session. Every field name, its type and its presence-per-event come
 from that page; the values are invented.
@@ -15,7 +15,7 @@ not a tool this project uses, even in a sandbox (ADR-0008).
 
 ## Capturing the real ones
 
-Install a recorder hook on each of the eight events AgentBar subscribes to —
+Install a recorder hook on each of the nine events AgentBar subscribes to —
 merged into `~/.codex/hooks.json`, never into `config.toml` — trust it in
 `/hooks`, and run one session that uses a tool and a subagent. Replace these
 files with what it records, keep field order and nesting untouched, and rewrite
@@ -34,6 +34,7 @@ contradiction degrades one field rather than failing a payload.
 | `user-prompt-submit.json` | `UserPromptSubmit` |
 | `pre-tool-use-shell.json` | `PreToolUse`, the shell tool with an argv `command` |
 | `post-tool-use-shell.json` | `PostToolUse` closing the same `tool_use_id` |
+| inline decoder cases | `PermissionRequest` and `request_user_input`, kept inline because their local rollout shapes are the regression under test |
 | `pre-tool-use-apply-patch.json` | `PreToolUse` for a tool whose arguments carry a whole patch |
 | `subagent-start.json` / `subagent-stop.json` | subagent context, with `agent_id` |
 | `stop.json` | `Stop` |

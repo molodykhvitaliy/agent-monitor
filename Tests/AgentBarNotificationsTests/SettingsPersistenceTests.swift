@@ -48,6 +48,30 @@ struct SettingsPersistenceTests {
                 == Provider.allCases.count * NotificationEvent.allCases.count)
     }
 
+    @Test("Legacy settings gain enabled Approval cells without resetting other choices")
+    func approvalCellsMigrate() throws {
+        let defaults = try #require(UserDefaults(suiteName: "agentbar.tests.\(UUID().uuidString)"))
+        var legacy = NotificationSettings()
+        legacy.preferences.removeAll { $0.event == .approval }
+        legacy.update(
+            EventPreference(
+                provider: .codex, event: .failed, isEnabled: false,
+                sound: .named("Custom Failure.aiff")))
+        defaults.set(try JSONEncoder().encode(legacy), forKey: "notifications.settings")
+
+        let loaded = UserDefaultsNotificationSettings(defaults: defaults).load()
+
+        #expect(loaded.preference(for: .claudeCode, event: .approval).isEnabled)
+        #expect(loaded.preference(for: .codex, event: .approval).isEnabled)
+        #expect(
+            loaded.preference(for: .codex, event: .approval).sound
+                == .named(BundledSound.waiting.fileName))
+        #expect(!loaded.preference(for: .codex, event: .failed).isEnabled)
+        #expect(
+            loaded.preference(for: .codex, event: .failed).sound
+                == .named("Custom Failure.aiff"))
+    }
+
     /// Losing a preference is survivable; quietly disabling every notification
     /// is not.
     @Test("An unreadable stored value degrades to the defaults, never to silence")

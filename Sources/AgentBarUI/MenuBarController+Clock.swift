@@ -82,4 +82,22 @@ extension MenuBarController {
         }
         statusItem?.update(from: model.snapshot)
     }
+
+    /// The Mac came back from sleep.
+    ///
+    /// > **A sweep, not a read, and a third signal alongside the two clocks
+    /// > above.** `ContinuousClock` counts through system sleep, so the
+    /// > watchdog's verdict on every session is already correct the instant the
+    /// > machine wakes — what has not happened is anybody asking. Push carries
+    /// > state moves and a sleeping Mac received none, so without this the panel
+    /// > and the status item show the state from before the lid closed until the
+    /// > forty-five-second closed clock next fires. Sweeping is what retires
+    /// > those rows rather than merely relabelling them.
+    public func systemDidWake() {
+        Task {
+            await model.sweepAndRefresh()
+            statusItem?.update(from: model.snapshot)
+            if let button = statusItem?.button { panel?.reposition(under: button) }
+        }
+    }
 }
