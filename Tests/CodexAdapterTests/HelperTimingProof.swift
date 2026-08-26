@@ -97,15 +97,20 @@ struct HelperTimingProof {
         return Samples(sorted: samples.sorted())
     }
 
-    @Test("The helper exits successfully with no endpoint to talk to")
-    func survivesWithoutAnEndpoint() throws {
+    @Test("Permission observation emits no decision even with no endpoint")
+    func permissionResponseIsEmpty() throws {
         guard let binary = Self.binary else { return }
         // No discovery file exists for this process's environment unless
         // AgentBar is running; either way the exit status must be zero and both
-        // streams must be empty, because Codex reads a non-zero exit from
-        // `PreToolUse` as a block.
+        // streams must be empty, because Codex reads `PermissionRequest` stdout
+        // as a decision.
         let result = try Self.execute(
-            binary, payload: Data(#"{"hook_event_name":"Stop"}"#.utf8),
+            binary,
+            payload: Data(
+                """
+                {"hook_event_name":"PermissionRequest","session_id":"s","cwd":"/tmp",
+                 "tool_name":"Bash","tool_input":{"command":"git push"}}
+                """.utf8),
             discovery: "/nonexistent/endpoint.json")
         #expect(result.status == 0)
         #expect(result.output.isEmpty)

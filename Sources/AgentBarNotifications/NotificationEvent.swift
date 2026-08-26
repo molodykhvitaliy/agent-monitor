@@ -1,7 +1,7 @@
 import AgentBarCore
 import Foundation
 
-/// The four things worth interrupting someone for.
+/// The five things worth notifying someone about.
 ///
 /// A separate, smaller vocabulary from `SessionStateKind`: these name an
 /// **event**, not a state, which is why `finished` may appear here while the
@@ -13,6 +13,8 @@ import Foundation
 public enum NotificationEvent: String, Sendable, Hashable, CaseIterable, Codable {
     /// An agent asked a specific question, and the question line came with it.
     case question
+    /// An agent is waiting for an approval in its own interface.
+    case approval
     /// An agent is blocked on a person with nothing more to say about it.
     case waiting
     /// A turn ended normally.
@@ -26,41 +28,38 @@ public enum NotificationEvent: String, Sendable, Hashable, CaseIterable, Codable
         switch self {
         case .question: "Question"
         case .waiting: "Waiting"
+        case .approval: "Approval"
         case .finished: "Finished"
         case .failed: "Failed"
         }
     }
 
-    /// One notification category per verb, registered from the first release so
-    /// that these four identifiers never have to change.
+    /// One notification category per verb.
     ///
     /// A category identifier is baked into every notification already delivered,
-    /// so renaming one later orphans them. Registering all four now — with no
+    /// so renaming one later orphans them. Registering all five now — with no
     /// actions attached — is what makes them safe to build on.
     ///
-    /// > **Approve/Deny will add a category of its own, not actions to
-    /// > `.waiting`.** The verb is chosen by the presence of a question line, so
-    /// > `waiting` is shared by a permission prompt and by an ordinary
-    /// > blocked-on-a-human event; hanging Approve and Deny on it would put
-    /// > permission buttons on notifications that are not permission requests.
-    /// > What step 07 guarantees is that these four keep their identifiers, not
-    /// > that one of them is the right place to grow a decision.
+    /// `approval` deliberately has no actions. A later Approve/Deny feature can
+    /// add them without putting permission buttons on an ordinary `.waiting`
+    /// notification, and without treating this monitor's observation id as a
+    /// decision handle.
     public var categoryIdentifier: String { "com.molodykhvitalii.AgentBar.\(rawValue)" }
 
     /// Whether this event asks the system to deliver at once and above a
     /// notification summary.
     ///
-    /// Three of the four do: a question, a block and a failure are all "an agent
-    /// has stopped and needs you", which is the single thing AgentBar exists to
-    /// tell someone. `finished` is news the user can read whenever they look —
+    /// Four of the five do: a question, an approval, a block and a failure are
+    /// all "an agent has stopped and needs you", which is the single thing
+    /// AgentBar exists to tell someone. `finished` is news the user can read whenever they look —
     /// marking it time-sensitive too would spend the privilege on the one event
-    /// that does not need it, and teach the user to ignore the other three.
+    /// that does not need it, and teach the user to ignore the other four.
     ///
     /// `.critical` is never used anywhere: it needs Apple's approval for health
     /// and safety cases, which this is not.
     public var isTimeSensitive: Bool {
         switch self {
-        case .question, .waiting, .failed: true
+        case .question, .waiting, .approval, .failed: true
         case .finished: false
         }
     }
@@ -80,6 +79,10 @@ public struct NotificationDraft: Sendable, Hashable {
     /// The one relevant detail line, already clamped, or `nil` when the title is
     /// the whole message.
     public let body: String?
+    /// Opaque state identity used only to distinguish otherwise identical
+    /// notifications. Permission observations set this to their local request
+    /// id so two approvals with the same summary remain separate news.
+    public let fingerprint: String?
     /// When the store observed the change this came from.
     public let at: Date
 
@@ -89,6 +92,7 @@ public struct NotificationDraft: Sendable, Hashable {
         project: ProjectRef,
         event: NotificationEvent,
         body: String?,
+        fingerprint: String? = nil,
         at: Date
     ) {
         self.sessionId = sessionId
@@ -96,6 +100,7 @@ public struct NotificationDraft: Sendable, Hashable {
         self.project = project
         self.event = event
         self.body = body
+        self.fingerprint = fingerprint
         self.at = at
     }
 

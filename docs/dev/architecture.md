@@ -69,7 +69,7 @@ enum EventKind: Sendable {
     case subagentStarted
     case subagentStopped
     case waitingInput(question: String?)            // one bounded display line
-    case waitingPermission(PermissionRequestRef)   // reserved, backlog
+    case waitingPermission(PermissionRequestRef)   // observed, never answered
     case turnFinished
     case failed(reason: String)
     case sessionEnded
@@ -87,10 +87,10 @@ it is a narrow one ([ADR-0005](../adr/ADR-0005-waiting-input-carries-a-question-
 the question an agent asked, bounded and redacted by the adapter that produced
 it, carried through to `SessionState.waitingInput` so the row and the
 notification can render it. It is a display value — nothing branches on it, no
-transition depends on it, and no watchdog allowance moves with it. Only the
-`AskUserQuestion` path fills it; a permission prompt's own `message` deliberately
-does not, because it is provider boilerplate present on one waiting path and not
-the other.
+transition depends on it, and no watchdog allowance moves with it. Claude Code's
+`AskUserQuestion` and Codex's exact `request_user_input` tool fill it. Permission
+prompts use `waitingPermission` instead, whose bounded summary is display-only
+and whose local id is never a reply handle.
 
 ### Project identity
 
@@ -535,6 +535,13 @@ It reads one JSON object from stdin and posts the bytes **unread** — no parsin
 no interpretation, no retry. Everything about what an event means happens in the
 app, on the far side of the socket.
 
+The signed bundle copy is a deployment source, not the hook command. Before a
+report or install, AgentBar atomically refreshes
+`~/Library/Application Support/AgentBar/bin/agentbar-helper`; all nine hooks name
+that stable AgentBar-owned path. Switching among Debug, distribution and
+installed app copies changes bytes at one path, not the trusted definition. A
+deployment failure leaves both the previous helper and `hooks.json` untouched.
+
 Four rules, each of which is a rule rather than a preference:
 
 - **It exits 0, always.** Codex reads a non-zero exit from `PreToolUse`,
@@ -690,19 +697,25 @@ Keeping the first three pure is what lets the verb table be tested case by case
 without a notification centre, an entitlement, or a user who has to click Allow.
 `NotificationPresenting` is the seam; the tests drive a recording double.
 
-**Three mechanisms stop a storm**, and they solve different problems. Within a
-1.5 s window only the newest draft per session survives, so a session that went
-waiting and then failed produces one notification saying it failed. Across
-windows an identical draft — same verb, same body — is dropped for twenty
-seconds, while a *different* question gets through, because that is genuinely new
-information. And every notification carries the session id as its notification
-identifier, so the notification centre itself replaces a session's previous
-banner rather than stacking a second one beside it. The thread identifier is the
-project, which is what groups a project's notifications together.
+**Three mechanisms stop a storm**, and they solve different problems. Question,
+Approval, Waiting and Failed are handed to the presenter on the next main-actor
+turn with no timer; an exact repeat for the same session is suppressed for 1.5
+seconds only after the first was delivered. Finished alone keeps the 1.5-second
+coalescing window, and its identical repeat window remains twenty seconds. Every
+notification also carries the session id as its notification identifier, so the
+notification centre replaces a session's previous banner rather than stacking a
+second one beside it. The thread identifier is the project, which groups a
+project's notifications together.
+
+A newer urgent state also invalidates an older deferred Finished draft for the
+same session. Without that timestamp check, the stale Finished timer could fire
+later and replace the actionable banner under the shared session identifier.
+Recent duplicate history is keyed by the complete event/body/state fingerprint,
+so an intervening approval does not make an earlier exact duplicate new again.
 
 The repeat window starts when a notification is **delivered**, not when one is
-considered: `drain()` hands the router one draft per session and the router
-records the delivery only after the gate has passed it. Otherwise a draft
+considered: both the immediate queue and deferred `drain()` record delivery only
+after the gate has passed a draft. Otherwise a draft
 suppressed by quiet hours would begin a twenty-second window during which the
 same news is refused for a second reason. A repeat is the one suppression the
 user could not observe anywhere, so it is reported through the same path as every
@@ -711,11 +724,10 @@ AgentBar is running and doing nothing at all.
 
 **One category per verb, registered from the first release**, because a category
 identifier is baked into every notification already delivered and renaming one
-orphans them. They carry no actions. Approve/Deny will add a category of its
-own rather than hanging buttons on `waiting`: the verb is chosen by the presence
-of a question line, so `waiting` is shared by a permission prompt and by an
-ordinary blocked-on-a-human event, and actions there would put permission buttons
-on notifications that are not permission requests.
+orphans them. They carry no actions. Approval already has a category of its own,
+separate from Question and Waiting, but it deliberately has no Approve/Deny
+buttons: the hook fingerprint is observation state rather than a supported
+decision channel.
 
 **Two `StateChange` shapes fire nothing**, and both are reachable: `from == nil`
 is the store adopting a session it had not seen, which would otherwise announce a
@@ -735,7 +747,7 @@ rather than to silence.
 **The settings window is a second UI seam.** `SettingsServices` is declared in
 `AgentBarUI` and implemented in `Apps/AgentBar`, exactly as `PanelServices` and
 `IntegrationStatus` are, because `AgentBarUI` and `AgentBarNotifications` are
-siblings and neither may import the other. The four verbs are therefore declared
+siblings and neither may import the other. The five verbs are therefore declared
 twice — `NotificationEvent` in the notifications module, `NotificationVerb` in
 the UI — and mapped one for one in the bridge. That duplication is the price of
 the boundary, and it is what stops a view importing a sound library.

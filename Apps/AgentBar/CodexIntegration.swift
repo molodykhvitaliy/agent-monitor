@@ -34,9 +34,12 @@ final class CodexIntegration: ProviderIntegration {
     /// still reports what is on disk, which is the difference between a panel
     /// that says `Not receiving events` and a panel with nothing in it.
     private let ingest: IngestService?
-    /// The helper this build of AgentBar would install, or `nil` when the app is
-    /// not running from a bundle that contains one.
-    private let helperURL: URL?
+    /// The helper embedded in this build, used only as the source of an atomic
+    /// deployment into Application Support.
+    private let bundledHelperURL: URL?
+    /// The command-stable path every installed Codex hook names. Moving or
+    /// rebuilding `AgentBar.app` cannot change this URL.
+    private let stableHelperURL: URL?
 
     /// Whether a Codex event has actually arrived since this launch.
     ///
@@ -71,11 +74,12 @@ final class CodexIntegration: ProviderIntegration {
     ) {
         self.ingest = ingest
         self.home = home ?? CodexConfigFile.defaultHome()
-        self.helperURL = helperURL ?? CodexHookCommand.bundledHelperURL()
+        bundledHelperURL = helperURL ?? CodexHookCommand.bundledHelperURL()
+        let applicationSupport = (try? IngestPaths.applicationSupport())?.directory
+        stableHelperURL = applicationSupport.map(CodexHelperDeployment.destination(in:))
         self.trustBaselineURL =
             trustBaselineURL
-            ?? (try? IngestPaths.applicationSupport())?.directory
-            .appending(path: "codex-trust-baseline.json")
+            ?? applicationSupport?.appending(path: "codex-trust-baseline.json")
     }
 
     var provider: Provider { .codex }
@@ -93,21 +97,26 @@ final class CodexIntegration: ProviderIntegration {
     }
 
     func status() async -> IntegrationStatus {
-        let endpoint = await currentEndpoint()
+        let endpoint: CodexEndpoint?
+        var deploymentFailure: String?
+        do {
+            endpoint = try await currentEndpoint()
+        } catch {
+            endpoint = nil
+            deploymentFailure = "\(error)"
+        }
         let report = await Self.readReport(
             home: home, baselineURL: trustBaselineURL, endpoint: endpoint,
             hasDelivered: hasDelivered, trustPending: trustPending)
         var status = Self.status(from: report)
-        // A bundle with no helper in it cannot install anything, and the report
-        // has no way to say so — it is a fact about this build, not about the
-        // user's configuration.
-        if helperURL == nil {
+        // Deployment is deliberately outside `hooks.json`: failure here leaves
+        // the user's existing definitions untouched and reports the local file
+        // operation that needs attention.
+        if let deploymentFailure {
             status = IntegrationStatus(
                 provider: .codex,
                 condition: status.condition == .connected ? .notReceiving : status.condition,
-                detail: String(
-                    localized: "This build of AgentBar has no helper to install",
-                    comment: "The app bundle is missing agentbar-helper"),
+                detail: deploymentFailure,
                 notes: status.notes,
                 coexistence: status.coexistence,
                 preventsEvents: true)
@@ -218,14 +227,11 @@ final class CodexIntegration: ProviderIntegration {
     }
 
     private func write() async -> IntegrationActionResult {
-        guard let helperURL else {
-            return .failed(
-                String(
-                    localized: """
-                        AgentBar cannot find its own helper, so there is nothing to point \
-                        Codex's hooks at.
-                        """,
-                    comment: "Install refused because the bundle has no helper"))
+        let helperURL: URL
+        do {
+            helperURL = try await deployedHelperURL()
+        } catch {
+            return .failed("\(error)")
         }
         let (result, requiresTrust) = await Self.install(
             home: home, baselineURL: trustBaselineURL,
@@ -279,7 +285,12 @@ final class CodexIntegration: ProviderIntegration {
     /// option here — see ADR-0008, which names it and says why. So the button
     /// does the only honest thing: it re-reads the state and says what it found.
     private func recheckTrust() async -> IntegrationActionResult {
-        let endpoint = await currentEndpoint()
+        let endpoint: CodexEndpoint?
+        do {
+            endpoint = try await currentEndpoint()
+        } catch {
+            return .failed("\(error)")
+        }
         let report = await Self.readReport(
             home: home, baselineURL: trustBaselineURL, endpoint: endpoint,
             hasDelivered: hasDelivered, trustPending: trustPending)
@@ -326,8 +337,33 @@ final class CodexIntegration: ProviderIntegration {
     /// Unlike the Claude Code endpoint this carries no port and no token: the
     /// helper reads the discovery file when it runs. What the binding decides
     /// here is only whether the hooks have anywhere to deliver to.
-    private func currentEndpoint() async -> CodexEndpoint? {
-        guard let helperURL, let ingest, await ingest.boundEndpoint != nil else { return nil }
+    private func currentEndpoint() async throws -> CodexEndpoint? {
+        let helperURL = try await deployedHelperURL()
+        guard let ingest, await ingest.boundEndpoint != nil else { return nil }
         return CodexEndpoint(helperURL: helperURL)
+    }
+
+    /// Refreshes the stable helper off the main actor before any report or
+    /// install can point Codex at it. This operation changes only AgentBar's own
+    /// Application Support directory; a failure never reaches `hooks.json`.
+    private func deployedHelperURL() async throws -> URL {
+        guard let bundledHelperURL else {
+            throw CodexHelperDeploymentError.deploymentFailed(
+                "this build of AgentBar has no bundled helper")
+        }
+        guard let stableHelperURL else {
+            throw CodexHelperDeploymentError.deploymentFailed(
+                "the Application Support directory is unavailable")
+        }
+        return try await Self.deployHelper(
+            source: bundledHelperURL, destination: stableHelperURL)
+    }
+
+    nonisolated private static func deployHelper(source: URL, destination: URL) async throws -> URL
+    {
+        try await Task.detached {
+            try CodexHelperDeployment(sourceURL: source, destinationURL: destination).deploy()
+            return destination
+        }.value
     }
 }

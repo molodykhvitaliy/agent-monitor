@@ -1,5 +1,6 @@
 import AgentBarCore
 import AgentBarIngest
+import AgentBarJSON
 import Foundation
 
 /// Translates a Codex hook payload into domain events.
@@ -48,27 +49,75 @@ public struct CodexEventDecoder: EventDecoding {
 
     /// What the payload says happened, in domain terms.
     ///
-    /// Two absences are worth naming. There is no `waitingInput` on any branch:
-    /// Codex's only "blocked on a human" event is `PermissionRequest`, which
-    /// AgentBar does not install (see `CodexHookHandler.monitoring`), so a Codex
-    /// session waiting on an approval reads as `working` until the watchdog
-    /// demotes it. And there is no `failed`: Codex has no counterpart to
-    /// `StopFailure`, so a turn that dies on an API error arrives as an ordinary
-    /// `Stop` if it arrives at all.
+    /// `request_user_input` and `PermissionRequest` are the two waits Codex can
+    /// expose without AgentBar taking part in the answer. There is no `failed`:
+    /// Codex has no counterpart to `StopFailure`, so a turn that dies on an API
+    /// error arrives as an ordinary `Stop` if it arrives at all.
     private func kind(of payload: CodexHookPayload) -> EventKind? {
         switch payload.event {
         case .sessionStart: .sessionStarted
         case .userPromptSubmit: .turnStarted
-        case .preToolUse: .toolStarted
-        case .postToolUse: .toolFinished
+        case .preToolUse:
+            payload.toolName == CodexToolInvocation.requestUserInputTool
+                ? .waitingInput(question: CodexToolInvocation.question(input: payload.toolInput))
+                : .toolStarted
+        case .postToolUse, .postToolUseFailure: .toolFinished
+        case .permissionRequest:
+            .waitingPermission(
+                PermissionRequestRef(
+                    id: Self.permissionRequestID(for: payload),
+                    summary: CodexToolInvocation.approvalSummary(
+                        tool: payload.toolName, input: payload.toolInput)))
         case .subagentStart: .subagentStarted
         case .subagentStop: .subagentStopped
         case .stop: .turnFinished
         case .sessionEnd: .sessionEnded
         // Documented events AgentBar does not install and does not act on. Named
         // rather than defaulted so adding one is a compiler error here first.
-        case .permissionRequest, .preCompact, .postCompact: nil
+        case .preCompact, .postCompact: nil
         case nil: nil
+        }
+    }
+
+    /// A stable, opaque observation id for a hook payload that documents no
+    /// request id of its own.
+    ///
+    /// The id is deliberately unusable as a decision handle. It exists only so
+    /// two deliveries of the same local request describe the same domain state;
+    /// an eventual Approve/Deny feature must use the App Server request id it is
+    /// replying to, never this fingerprint.
+    private static func permissionRequestID(for payload: CodexHookPayload) -> PermissionRequestID {
+        let canonicalInput = payload.toolInput.map(Self.canonicalized) ?? .null
+        let identity = JSONValue.object(
+            JSONObject([
+                ("turn_id", payload.turnId.map(JSONValue.string) ?? .null),
+                ("tool_name", payload.toolName.map(JSONValue.string) ?? .null),
+                ("tool_input", canonicalInput),
+            ]))
+        var fingerprint: UInt64 = 14_695_981_039_346_656_037
+        for byte in JSONWriter.data(identity) {
+            fingerprint ^= UInt64(byte)
+            fingerprint &*= 1_099_511_628_211
+        }
+        return PermissionRequestID(String(format: "codex:%016llx", fingerprint))
+    }
+
+    /// Sorts object keys recursively before hashing. `JSONObject` equality is
+    /// order-independent but its writer preserves source order, and two
+    /// semantically identical hook payloads must not gain different ids merely
+    /// because Codex changed field order.
+    private static func canonicalized(_ value: JSONValue) -> JSONValue {
+        switch value {
+        case .object(let object):
+            return .object(
+                JSONObject(
+                    object.pairs.sorted { $0.key < $1.key }.map {
+                        ($0.key, canonicalized($0.value))
+                    }))
+        case .array(let values):
+            return .array(values.map(canonicalized))
+        case .string, .number, .bool, .null:
+            return value
         }
     }
 

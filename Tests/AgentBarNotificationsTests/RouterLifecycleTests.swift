@@ -38,6 +38,82 @@ struct RouterLifecycleTests {
         #expect(presenter.posted.count == 1)
     }
 
+    @Test("A human-required event bypasses even a long coalescing window")
+    func urgentDeliveryIsImmediate() async throws {
+        let presenter = RecordingPresenter()
+        let router = NotificationRouter(
+            presenter: presenter,
+            store: InMemoryNotificationSettings(),
+            sounds: shippedSounds,
+            clock: ManualClock(),
+            calendar: Calendar(identifier: .gregorian),
+            coalescingWindow: .seconds(60))
+        await router.start()
+
+        router.record([Fixture.change(to: .waitingInput(question: "Which branch?"))])
+        // This suite runs beside hundreds of tests on the cooperative pool, so
+        // wall time is not a stable latency oracle. A sixty-second configured
+        // window and a bounded wait prove the event took the zero-delay path;
+        // the isolated acceptance probe measures the 100 ms product budget.
+        try await untilPosted(presenter, within: .seconds(5))
+        #expect(presenter.posted.count == 1)
+        #expect(presenter.posted.first?.title.hasPrefix("Question") == true)
+        router.stop()
+    }
+
+    @Test("A new urgent state prevents stale Finished from replacing its banner")
+    func urgentStateInvalidatesPendingFinished() async throws {
+        let presenter = RecordingPresenter()
+        let router = NotificationRouter(
+            presenter: presenter,
+            store: InMemoryNotificationSettings(),
+            sounds: shippedSounds,
+            clock: ManualClock(),
+            calendar: Calendar(identifier: .gregorian),
+            coalescingWindow: .seconds(60))
+        await router.start()
+        router.record([
+            Fixture.change(to: .idle, at: Fixture.epoch),
+            Fixture.change(
+                to: .waitingInput(question: "Continue?"),
+                at: Fixture.epoch.addingTimeInterval(0.1)),
+        ])
+
+        try await untilPosted(presenter, within: .seconds(5))
+        router.stop()
+        await router.flush()
+
+        #expect(presenter.posted.map(\.title) == ["Question · Claude Code · agentbar"])
+    }
+
+    /// Isolated wall-clock acceptance proof. The ordinary suite leaves this
+    /// gated because hundreds of parallel tests can starve the cooperative pool
+    /// without changing the router's timer-free path.
+    @Test("Urgent notification queue latency stays below 100 ms when isolated")
+    func urgentLatencyProof() async {
+        guard
+            ProcessInfo.processInfo.environment["AGENTBAR_NOTIFICATION_LATENCY_PROOF"] == "1"
+        else { return }
+        let presenter = RecordingPresenter()
+        let router = await RouterHarness.started(presenter: presenter, sounds: shippedSounds)
+        let started = ContinuousClock.now
+
+        router.record([
+            Fixture.change(
+                to: .waitingPermission(
+                    PermissionRequestRef(id: PermissionRequestID("permission"))))
+        ])
+        let deadline = started + .seconds(1)
+        while presenter.posted.isEmpty, ContinuousClock.now < deadline {
+            await Task.yield()
+        }
+        let elapsed = ContinuousClock.now - started
+        print("urgent notification queue latency: \(elapsed)")
+        #expect(presenter.posted.count == 1)
+        #expect(elapsed < .milliseconds(100))
+        router.stop()
+    }
+
     /// Polls until the presenter has something, or gives up.
     ///
     /// Generous, because the deadline is not what is being measured — the
@@ -54,7 +130,7 @@ struct RouterLifecycleTests {
 
     /// `try? await Task.sleep` swallows the cancellation, so a cancelled task
     /// runs on to its next statement. Without an explicit check that is an app
-    /// announcing four agents on its way out.
+    /// announcing five agents on its way out.
     @Test("A stop during the window cancels the batch rather than posting it")
     func stopCancelsThePendingBatch() async throws {
         let presenter = RecordingPresenter()

@@ -117,7 +117,7 @@ extension RenderProof {
                 NotificationVerb.allCases.map { verb in
                     NotificationCell(
                         provider: provider, verb: verb, isEnabled: provider == .claudeCode,
-                        soundID: "AgentBar \(verb.title).aiff")
+                        soundID: StubSettingsServices.defaultSoundID(for: verb))
                 }
             })
         services.caffeineIndicator = CaffeineIndicator(

@@ -21,6 +21,10 @@ enum CodexToolInvocation {
     /// not of the provider.
     static let limit = 120
 
+    /// The canonical local function tool emitted by current Codex clients when
+    /// the model asks the user one or more structured questions.
+    static let requestUserInputTool = "request_user_input"
+
     /// Argument names that identify a call, in the order they are preferred.
     ///
     /// `command` first because the shell tool is the one that matters most, and
@@ -41,6 +45,98 @@ enum CodexToolInvocation {
             return condense(key == "url" ? stripQuery(text) : text)
         }
         return nil
+    }
+
+    /// The first usable question in `request_user_input`, plus how many other
+    /// usable questions the same prompt contains.
+    ///
+    /// The nested shape is provider data and stops here. A malformed or future
+    /// shape still produces a neutral wait line rather than becoming an
+    /// ordinary tool call and hiding that Codex needs the user.
+    static func question(input: JSONValue?) -> String {
+        guard let questions = input?.object?["questions"]?.array else {
+            return "Codex needs your input"
+        }
+        func firstLine(for key: String) -> String? {
+            questions.lazy.compactMap { value -> String? in
+                guard let text = value.object?[key]?.string else { return nil }
+                let line = condense(text)
+                return line.isEmpty ? nil : line
+            }.first
+        }
+        guard let first = firstLine(for: "question") ?? firstLine(for: "header") else {
+            return "Codex needs your input"
+        }
+        let remaining = max(0, questions.count - 1)
+        guard remaining > 0 else { return first }
+        let suffix = " (+\(remaining) more)"
+        return condense(first, limit: max(1, limit - suffix.count)) + suffix
+    }
+
+    /// One line naming what Codex is asking permission to do.
+    ///
+    /// `description` has priority only on permission requests: it is Codex's
+    /// human-readable approval reason. Ordinary tool rows still prefer the
+    /// concrete command or path in `summarise`.
+    static func approvalSummary(tool: String?, input: JSONValue?) -> String {
+        if let description = input?.object?["description"]?.string {
+            let line = condense(description)
+            if !line.isEmpty, !containsCredentialShape(line) { return line }
+        }
+        if let line = safeApprovalInvocation(input: input) { return line }
+        if let tool {
+            let line = condense(tool)
+            if !line.isEmpty { return line }
+        }
+        return "Codex requested approval"
+    }
+
+    /// A deliberately lossy command/path line for a lock-screen surface.
+    /// Ordinary tool rows may show the bounded invocation; an approval can be
+    /// visible before the Mac is unlocked, so it keeps only an executable plus
+    /// a harmless-looking subcommand, or a path's final component.
+    private static func safeApprovalInvocation(input: JSONValue?) -> String? {
+        guard let object = input?.object else { return nil }
+        for key in ["command", "cmd"] {
+            guard let value = object[key], let text = scalar(value) else { continue }
+            if let summary = safeCommandSummary(text) { return summary }
+        }
+        for key in ["file_path", "path", "filename", "file"] {
+            guard let text = object[key]?.string else { continue }
+            let path = URL(filePath: text).lastPathComponent
+            if !path.isEmpty { return condense(path) }
+        }
+        return nil
+    }
+
+    private static func safeCommandSummary(_ text: String) -> String? {
+        let line = condense(text)
+        guard !line.isEmpty, !containsCredentialShape(line) else { return nil }
+        let parts = line.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard let first = parts.first, !first.contains("=") else { return nil }
+        let executable = URL(filePath: first.trimmingCharacters(in: .shellQuotes)).lastPathComponent
+        guard !executable.isEmpty else { return nil }
+
+        guard parts.count > 1 else { return executable }
+        let subcommand = parts[1].trimmingCharacters(in: .shellQuotes)
+        let allowedSubcommands: [String: Set<String>] = [
+            "git": [
+                "add", "branch", "checkout", "clone", "commit", "diff", "fetch", "log", "merge",
+                "pull", "push", "rebase", "restore", "status", "switch", "tag",
+            ],
+            "swift": ["build", "package", "run", "test"],
+        ]
+        return allowedSubcommands[executable]?.contains(subcommand) == true
+            ? condense("\(executable) \(subcommand)") : executable
+    }
+
+    private static func containsCredentialShape(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        return [
+            "authorization:", "bearer ", "token=", "secret=", "password=",
+            "passwd=", "api-key", "api_key", "apikey", "cookie:", "credential=",
+            "sk-", "ghp_", "xoxb-", "akia",
+        ].contains { lower.contains($0) }
     }
 
     /// A string, a number, or an array of them joined the way a shell would
@@ -70,9 +166,14 @@ enum CodexToolInvocation {
     }
 
     /// One line, whitespace collapsed, bounded.
-    static func condense(_ text: String) -> String {
+    static func condense(_ text: String, limit: Int = limit) -> String {
         let collapsed = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         guard collapsed.count > limit else { return collapsed }
+        guard limit > 1 else { return "…" }
         return String(collapsed.prefix(limit - 1)) + "…"
     }
+}
+
+extension CharacterSet {
+    fileprivate static let shellQuotes = CharacterSet(charactersIn: "'\"")
 }

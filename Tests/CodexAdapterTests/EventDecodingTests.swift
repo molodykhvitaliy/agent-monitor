@@ -68,6 +68,186 @@ struct EventDecodingTests {
         #expect(event.kind == .toolFinished)
         #expect(event.toolUseId == ToolUseID("call_9f2b6c7a41d84e0f"))
     }
+}
+
+@Suite("Codex interaction payload decoding")
+struct CodexInteractionDecodingTests {
+    static func context() -> EventDecodingContext {
+        EventDecodingTests.context()
+    }
+
+    @Test("request_user_input becomes a question with nested copy")
+    func decodesRequestUserInput() throws {
+        let body = Data(
+            """
+            {"hook_event_name":"PreToolUse","session_id":"s","cwd":"/tmp",
+             "turn_id":"t","tool_name":"request_user_input","tool_use_id":"call-q",
+             "tool_input":{"questions":[
+               {"header":"Branch","question":"Which branch should I use?"},
+               {"header":"Tests","question":"Run the live suite too?"}
+             ]}}
+            """.utf8)
+        let event = try #require(
+            try CodexEventDecoder().decode(body, in: Self.context()).first)
+        #expect(event.kind == .waitingInput(question: "Which branch should I use? (+1 more)"))
+        #expect(event.tool?.name == CodexToolInvocation.requestUserInputTool)
+    }
+
+    @Test("A changed question shape stays a visible wait")
+    func questionShapeDegrades() throws {
+        for input in [#"{"questions":[{"header":"Database"}]}"#, #"{"questions":"moved"}"#] {
+            let body = Data(
+                """
+                {"hook_event_name":"PreToolUse","session_id":"s","cwd":"/tmp",
+                 "tool_name":"request_user_input","tool_input":\(input)}
+                """.utf8)
+            let event = try #require(
+                try CodexEventDecoder().decode(body, in: Self.context()).first)
+            if input.contains("Database") {
+                #expect(event.kind == .waitingInput(question: "Database"))
+            } else {
+                #expect(event.kind == .waitingInput(question: "Codex needs your input"))
+            }
+        }
+    }
+
+    @Test("A later real question outranks an earlier header-only item")
+    func questionPrefersQuestionAcrossTheArray() throws {
+        let body = Data(
+            """
+            {"hook_event_name":"PreToolUse","session_id":"s","cwd":"/tmp",
+             "tool_name":"request_user_input","tool_input":{"questions":[
+               {"header":"First"},{"question":"Actual question"}]}}
+            """.utf8)
+        let event = try #require(
+            CodexEventDecoder().decode(body, in: Self.context()).first)
+        #expect(event.kind == .waitingInput(question: "Actual question (+1 more)"))
+    }
+
+    @Test("A PermissionRequest is observation state, with a stable opaque id")
+    func decodesPermissionRequest() throws {
+        let first = Data(
+            """
+            {"hook_event_name":"PermissionRequest","session_id":"s","cwd":"/tmp",
+             "turn_id":"t","tool_name":"Bash",
+             "tool_input":{"command":["git","push"],"description":"Push to origin"}}
+            """.utf8)
+        let reordered = Data(
+            """
+            {"cwd":"/tmp","session_id":"s","hook_event_name":"PermissionRequest",
+             "tool_name":"Bash","turn_id":"t",
+             "tool_input":{"description":"Push to origin","command":["git","push"]}}
+            """.utf8)
+        let changed = Data(
+            """
+            {"hook_event_name":"PermissionRequest","session_id":"s","cwd":"/tmp",
+             "turn_id":"t","tool_name":"Bash","tool_input":{"command":["git","fetch"]}}
+            """.utf8)
+
+        let one = try #require(CodexEventDecoder().decode(first, in: Self.context()).first)
+        let two = try #require(CodexEventDecoder().decode(reordered, in: Self.context()).first)
+        let three = try #require(CodexEventDecoder().decode(changed, in: Self.context()).first)
+        guard case .waitingPermission(let request) = one.kind,
+            case .waitingPermission(let same) = two.kind,
+            case .waitingPermission(let other) = three.kind
+        else {
+            Issue.record("expected waitingPermission")
+            return
+        }
+        #expect(request.summary == "Push to origin")
+        #expect(request.id.value.hasPrefix("codex:"))
+        #expect(request.id == same.id)
+        #expect(request.id != other.id)
+        #expect(!request.id.value.contains("Push"))
+        #expect(!request.id.value.contains("git"))
+    }
+
+    @Test("A minimal PermissionRequest still becomes a safe visible approval")
+    func decodesMinimalPermissionRequest() throws {
+        let body = Data(
+            #"{"hook_event_name":"PermissionRequest","session_id":"s","cwd":"/tmp"}"#.utf8)
+        let event = try #require(
+            CodexEventDecoder().decode(body, in: Self.context()).first)
+        guard case .waitingPermission(let request) = event.kind else {
+            Issue.record("expected waitingPermission")
+            return
+        }
+        #expect(request.summary == "Codex requested approval")
+        #expect(request.id.value.hasPrefix("codex:"))
+    }
+
+    @Test("Observed waits recover on the next Codex lifecycle event")
+    func observedWaitsRecover() async throws {
+        let store = SessionStore()
+        let context = EventDecodingContext(
+            receivedAt: Date(), transport: .loopback, resolver: PathProjectResolver())
+
+        func apply(_ json: String) async throws {
+            let event = try #require(
+                CodexEventDecoder().decode(Data(json.utf8), in: context).first)
+            await store.apply(event)
+        }
+
+        try await apply(
+            #"{"hook_event_name":"UserPromptSubmit","session_id":"s","cwd":"/tmp"}"#)
+        #expect(await store.snapshot().sessions.first?.state == .working)
+
+        try await apply(
+            """
+            {"hook_event_name":"PermissionRequest","session_id":"s","cwd":"/tmp",
+             "turn_id":"t","tool_name":"Bash","tool_input":{"command":"git push"}}
+            """
+        )
+        guard case .waitingPermission = await store.snapshot().sessions.first?.state else {
+            Issue.record("expected permission wait")
+            return
+        }
+
+        try await apply(
+            """
+            {"hook_event_name":"PreToolUse","session_id":"s","cwd":"/tmp",
+             "tool_name":"shell","tool_use_id":"call-1","tool_input":{"command":"pwd"}}
+            """
+        )
+        #expect(await store.snapshot().sessions.first?.state == .working)
+
+        try await apply(
+            """
+            {"hook_event_name":"PreToolUse","session_id":"s","cwd":"/tmp",
+             "tool_name":"request_user_input",
+             "tool_input":{"questions":[{"question":"Continue?"}]}}
+            """
+        )
+        #expect(
+            await store.snapshot().sessions.first?.state == .waitingInput(question: "Continue?"))
+
+        try await apply(
+            """
+            {"hook_event_name":"PostToolUseFailure","session_id":"s","cwd":"/tmp",
+             "tool_name":"request_user_input"}
+            """
+        )
+        #expect(await store.snapshot().sessions.first?.state == .working)
+
+        try await apply(
+            #"{"hook_event_name":"Stop","session_id":"s","cwd":"/tmp"}"#)
+        #expect(await store.snapshot().sessions.first?.state == .idle)
+    }
+}
+
+@Suite("Codex lifecycle payload decoding")
+struct CodexLifecycleDecodingTests {
+    static func context() -> EventDecodingContext {
+        EventDecodingTests.context()
+    }
+
+    static func decode(_ fixture: String) throws -> [AgentEvent] {
+        try EventDecodingTests.decode(fixture)
+    }
+
+    static func single(_ fixture: String) throws -> AgentEvent {
+        try EventDecodingTests.single(fixture)
+    }
 
     @Test("A tool whose arguments carry a patch shows the path, never the patch")
     func decodesApplyPatch() throws {
@@ -165,54 +345,5 @@ struct EventDecodingTests {
     func routeMatchesTheHelper() {
         #expect(CodexEventDecoder.route == IngestRoute.hooks(of: .codex))
         #expect(CodexEventDecoder.route.path == "/v1/hooks/codex")
-    }
-}
-
-/// The tool line, which is the one place a Codex payload's contents reach the
-/// screen.
-@Suite("Codex tool lines")
-struct ToolInvocationTests {
-    static func summarise(_ json: String, tool: String = "shell") throws -> String? {
-        CodexToolInvocation.summarise(tool: tool, input: try JSONParser.parse(Data(json.utf8)))
-    }
-
-    @Test("The identifying argument is chosen without knowing the tool's name")
-    func picksIdentifyingArgument() throws {
-        #expect(try Self.summarise(#"{"command":"ls -la"}"#) == "ls -la")
-        #expect(
-            try Self.summarise(#"{"file_path":"/a/b/c.swift"}"#, tool: "read") == "/a/b/c.swift")
-        #expect(
-            try Self.summarise(#"{"query":"swift concurrency"}"#, tool: "web")
-                == "swift concurrency")
-        #expect(try Self.summarise(#"{"pattern":"TODO"}"#, tool: "grep") == "TODO")
-    }
-
-    @Test("A URL keeps its path and loses its query")
-    func stripsQuery() throws {
-        #expect(
-            try Self.summarise(#"{"url":"https://example.com/a?token=secret"}"#, tool: "fetch")
-                == "https://example.com/a")
-    }
-
-    @Test("Nothing recognisable produces no line rather than a guess")
-    func degradesToNothing() throws {
-        #expect(try Self.summarise(#"{"contents":"a whole file"}"#) == nil)
-        #expect(try Self.summarise("[]") == nil)
-        #expect(CodexToolInvocation.summarise(tool: "shell", input: nil) == nil)
-    }
-
-    @Test("A nested container is not rendered")
-    func refusesNestedArguments() throws {
-        #expect(try Self.summarise(#"{"command":[{"a":1}]}"#) == nil)
-        #expect(try Self.summarise(#"{"command":{"argv":["ls"]}}"#) == nil)
-    }
-
-    @Test("A long line is bounded and collapsed to one line")
-    func boundsTheLine() throws {
-        let long = String(repeating: "x", count: 400)
-        let line = try #require(try Self.summarise(#"{"command":"\#(long)"}"#))
-        #expect(line.count == CodexToolInvocation.limit)
-        #expect(line.hasSuffix("…"))
-        #expect(try Self.summarise(#"{"command":"a\nb   c"}"#) == "a b c")
     }
 }

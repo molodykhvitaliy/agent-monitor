@@ -169,10 +169,10 @@ struct RenderProof {
         return model
     }
 
-    /// The four squares a banner can carry, at the size they are generated and
+    /// The five squares a banner can carry, at the size they are generated and
     /// again with the colour taken out — because the rule they have to obey is
     /// "silhouette first", and a colour render cannot show whether they do.
-    @Test("The four attachment squares, in colour and in grey")
+    @Test("The five attachment squares, in colour and in grey")
     func renderAttachments() throws {
         for verb in NotificationVerb.allCases {
             guard
@@ -223,7 +223,7 @@ struct RenderProof {
                 NotificationVerb.allCases.map { verb in
                     NotificationCell(
                         provider: provider, verb: verb, isEnabled: provider == .claudeCode,
-                        soundID: "AgentBar \(verb.title).aiff")
+                        soundID: StubSettingsServices.defaultSoundID(for: verb))
                 }
             })
         services.caffeineIndicator = CaffeineIndicator(

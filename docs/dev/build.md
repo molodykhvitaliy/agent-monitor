@@ -181,12 +181,14 @@ AgentBar.app/Contents/
 Bundle identifier `com.molodykhvitalii.AgentBar`; the helper is
 `com.molodykhvitalii.AgentBar.helper`.
 
-**The helper ships inside the app from the first build on purpose.** Codex
-records hook trust against the SHA of the hook definition, and that definition
-contains the helper's path. A path that moves between releases re-triggers the
-trust prompt and silently breaks event delivery until the user notices
-([platform-integration.md §2.5](platform-integration.md)). Fixing the location
-now costs nothing; changing it later costs every user a re-trust.
+**The helper ships inside the app as a signed deployment source.** Before Codex
+status or installation is evaluated, AgentBar atomically copies it to
+`~/Library/Application Support/AgentBar/bin/agentbar-helper`, preserving its
+executable mode. All hooks name that stable AgentBar-owned path because Codex
+trust covers the complete hook definition, including the command. Debug,
+distribution and installed copies can therefore refresh the executable without
+rewriting the command or causing repeated trust drift
+([ADR-0014](../adr/ADR-0014-codex-helper-has-a-stable-agentbar-owned-path.md)).
 
 **Unsandboxed, deliberately.** `AgentBar.entitlements` sets
 `com.apple.security.app-sandbox` to `false` rather than omitting it, because the

@@ -216,8 +216,8 @@ struct RouterTests {
         #expect(router.sounds.problem(with: .silent) == nil)
     }
 
-    @Test("A burst on one session reaches the presenter once")
-    func burstIsCoalesced() async {
+    @Test("Urgent news survives a burst while Finished remains coalesced")
+    func burstPreservesUrgentNews() async {
         let presenter = RecordingPresenter()
         let router = await startedRouter(presenter: presenter)
         router.record([
@@ -228,8 +228,12 @@ struct RouterTests {
         router.stop()
         await router.flush()
 
-        #expect(presenter.posted.count == 1)
-        #expect(presenter.posted.first?.title.hasPrefix("Finished") == true)
+        #expect(
+            presenter.posted.map(\.title) == [
+                "Waiting · Claude Code · agentbar",
+                "Failed · Claude Code · agentbar",
+                "Finished · Claude Code · agentbar",
+            ])
     }
 
     @Test("Settings are persisted through the store, and re-read on the way back")
@@ -306,5 +310,28 @@ struct RouterTests {
         let posted = try #require(presenter.posted.first)
         #expect(posted.title == "Finished · agentbar")
         #expect(posted.titleWithoutBadge == "Finished · Claude Code · agentbar")
+    }
+}
+
+@MainActor
+@Suite("Approval notification routing")
+struct RouterApprovalTests {
+    @Test("A permission wait posts the separate Approval category and Waiting sound")
+    func deliversApproval() async throws {
+        let presenter = RecordingPresenter()
+        let router = await RouterHarness.started(
+            presenter: presenter, sounds: RouterHarness.shippedSounds)
+        let request = PermissionRequestRef(
+            id: PermissionRequestID("codex:1"), summary: "Push to origin")
+        router.record([Fixture.change(to: .waitingPermission(request))])
+        router.stop()
+        await router.flush()
+
+        let posted = try #require(presenter.posted.first)
+        #expect(posted.title.hasPrefix("Approval"))
+        #expect(posted.body == "Push to origin")
+        #expect(posted.categoryIdentifier == NotificationEvent.approval.categoryIdentifier)
+        #expect(posted.isTimeSensitive)
+        #expect(posted.sound == .named("AgentBar Waiting.aiff"))
     }
 }

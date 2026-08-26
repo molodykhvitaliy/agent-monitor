@@ -13,7 +13,9 @@
 // Everything it does resolves to exit code 0. Codex reads a non-zero exit from
 // `PreToolUse`, `PostToolUse` or `UserPromptSubmit` as a *block* — a monitor
 // that could block a tool call is the failure this project is built to avoid —
-// and stdout is parsed as hook output, so both streams stay empty unless
+// and stdout is parsed as hook output. `PermissionRequest` uses that output for
+// a decision, so the same empty stdout is also the proof that AgentBar observed
+// rather than answered it. Both streams stay empty unless
 // `AGENTBAR_HELPER_DEBUG` asks for a line on stderr.
 
 import CodexAdapter

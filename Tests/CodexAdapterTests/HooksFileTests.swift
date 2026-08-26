@@ -49,6 +49,7 @@ struct HooksFileTests {
             #expect(entry["async"] == nil)
             #expect(groups[0].object?["matcher"] == nil)
         }
+        #expect(hooks[CodexHookEvent.permissionRequest.rawValue] != nil)
     }
 
     @Test("`SessionEnd` carries the platform's own one-second cap")

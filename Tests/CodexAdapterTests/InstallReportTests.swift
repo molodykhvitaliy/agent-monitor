@@ -91,7 +91,7 @@ struct InstallReportTests {
         #expect(installer.report(for: nil).state == .endpointUnavailable)
     }
 
-    @Test("A moved app is one drift, not eight")
+    @Test("A legacy app-bundle command is one migration drift, not nine")
     func reportsMovedHelperOnce() throws {
         let home = try ScratchCodexHome()
         let installer = CodexInstaller(home: home.directory)
@@ -120,7 +120,7 @@ struct InstallReportTests {
         #expect(drift == [.helperMissing(path: endpoint.helperURL.path(percentEncoded: false))])
     }
 
-    @Test("A repair after a move rewrites the same eight entries and asks for trust again")
+    @Test("A repair after a move rewrites the same nine entries and asks for trust again")
     func repairAsksForTrustAgain() throws {
         let home = try ScratchCodexHome()
         let baseline = home.directory.appending(path: "trust-baseline.json")
@@ -135,7 +135,7 @@ struct InstallReportTests {
         let moved = try Self.endpoint(home)
         let outcome = try installer.install(moved)
         #expect(outcome.changed)
-        // The old entries were replaced, not joined: eight in, eight out.
+        // The old entries were replaced, not joined: nine in, nine out.
         let hooks = CodexHooksFile.installedHooks(in: try JSONParser.parse(home.hooksData))
         #expect(hooks.count == CodexHookHandler.monitoring.count)
         #expect(hooks.allSatisfy { $0.command == moved.command })

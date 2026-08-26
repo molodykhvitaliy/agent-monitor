@@ -30,7 +30,7 @@ final class StubSettingsServices: SettingsServices {
                 cells: NotificationVerb.allCases.map {
                     NotificationCell(
                         provider: .claudeCode, verb: $0, isEnabled: true,
-                        soundID: "AgentBar \($0.title).aiff")
+                        soundID: Self.defaultSoundID(for: $0))
                 })
     }
 
@@ -52,11 +52,18 @@ final class StubSettingsServices: SettingsServices {
             SoundChoice(
                 id: "agentbar.sound.default", name: "Default", group: .standard, isPlayable: false)
         ]
-            + NotificationVerb.allCases.map {
+            + [
+                NotificationVerb.question, .waiting, .finished, .failed,
+            ].map {
                 SoundChoice(
-                    id: "AgentBar \($0.title).aiff", name: "AgentBar \($0.title)",
+                    id: Self.defaultSoundID(for: $0),
+                    name: Self.defaultSoundID(for: $0).replacingOccurrences(of: ".aiff", with: ""),
                     group: .bundled, isPlayable: true)
             } + userSoundChoices
+    }
+
+    static func defaultSoundID(for verb: NotificationVerb) -> String {
+        "AgentBar \(verb == .approval ? NotificationVerb.waiting.title : verb.title).aiff"
     }
 
     func previewSound(id: String) { previewed.append(id) }
@@ -73,7 +80,7 @@ final class StubSettingsServices: SettingsServices {
     }
     func openSystemNotificationSettings() {}
     func chooseApplication() async -> FocusApplication? { chosenApplication }
-    var testResult = TestNotificationResult(text: "Sent 4 test notifications", isFault: false)
+    var testResult = TestNotificationResult(text: "Sent 5 test notifications", isFault: false)
 
     func sendTestNotifications(for provider: Provider) async -> TestNotificationResult {
         tested.append(provider)
@@ -287,6 +294,7 @@ struct NotificationVerbTests {
     func shapesMatchTheStates() {
         #expect(NotificationVerb.question.shape == .waiting)
         #expect(NotificationVerb.waiting.shape == .waiting)
+        #expect(NotificationVerb.approval.shape == .waiting)
         #expect(NotificationVerb.finished.shape == .idle)
         #expect(NotificationVerb.failed.shape == .failed)
     }
@@ -317,6 +325,9 @@ struct SettingsPreviewTests {
         #expect(model.preview?.verb == .question)
 
         model.setCellEnabled(false, provider: .claudeCode, verb: .question)
+        #expect(model.preview?.verb == .approval)
+
+        model.setCellEnabled(false, provider: .claudeCode, verb: .approval)
         #expect(model.preview?.verb == .waiting)
 
         model.setCellEnabled(false, provider: .claudeCode, verb: .waiting)

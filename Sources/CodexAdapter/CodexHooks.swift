@@ -14,6 +14,10 @@ public enum CodexHookEvent: String, Sendable, Hashable, CaseIterable {
     case userPromptSubmit = "UserPromptSubmit"
     case preToolUse = "PreToolUse"
     case postToolUse = "PostToolUse"
+    /// Not in the Codex 0.148 lifecycle list, but decoded defensively if a
+    /// client emits the Claude-compatible spelling. It is deliberately not
+    /// installed as a tenth handler.
+    case postToolUseFailure = "PostToolUseFailure"
     case permissionRequest = "PermissionRequest"
     case preCompact = "PreCompact"
     case postCompact = "PostCompact"
@@ -77,15 +81,13 @@ extension CodexHookHandler {
 
     /// The handlers the MVP installs, in the order they are written.
     ///
-    /// Eight events, and the three absences are each a decision:
+    /// Nine events, and the two absences are each a decision:
     ///
-    /// - **`PermissionRequest` is not installed.** Approvals are the backlog
-    ///   item, and this is the event they would arrive on; subscribing to it now
-    ///   would put AgentBar in the path of a permission prompt for a state it
-    ///   cannot yet show. The cost is stated plainly rather than hidden: until
-    ///   that item lands, a Codex session blocked on an approval reads as
-    ///   `working` until the watchdog demotes it, because Codex has no other
-    ///   event that means "blocked on a human".
+    /// - **`PermissionRequest` is observation-only.** The helper returns no
+    ///   output and exits successfully, so Codex's own approval prompt remains
+    ///   the only place a decision can be made. Installing the event lets the
+    ///   domain show the wait without moving the Approve/Deny backlog item into
+    ///   this monitor.
     /// - **`PreCompact` / `PostCompact` are not installed.** Compaction is not a
     ///   state the panel shows, and each extra entry is another hook the user has
     ///   to review before any of them run.
@@ -97,6 +99,7 @@ extension CodexHookHandler {
         CodexHookHandler(event: .userPromptSubmit, timeout: defaultTimeout),
         CodexHookHandler(event: .preToolUse, timeout: defaultTimeout),
         CodexHookHandler(event: .postToolUse, timeout: defaultTimeout),
+        CodexHookHandler(event: .permissionRequest, timeout: defaultTimeout),
         CodexHookHandler(event: .subagentStart, timeout: defaultTimeout),
         CodexHookHandler(event: .subagentStop, timeout: defaultTimeout),
         CodexHookHandler(event: .stop, timeout: defaultTimeout),
@@ -112,7 +115,8 @@ extension CodexHookHandler {
 /// and the only character that needs escaping inside single quotes is the single
 /// quote itself.
 public enum CodexHookCommand {
-    /// The helper's file name, inside the app bundle and inside the command.
+    /// The helper's file name, inside the app bundle, Application Support and
+    /// the installed command.
     /// Recognition keys off this rather than the whole path, because the path
     /// changes when the app is moved and the entry then has to be *recognised*
     /// in order to be repaired.
@@ -167,15 +171,12 @@ public enum CodexHookCommand {
         helperPath(in: command) != nil
     }
 
-    /// Where the helper sits in a running app bundle: a sibling of the
+    /// Where the source helper sits in a running app bundle: a sibling of the
     /// executable, at `Contents/MacOS/agentbar-helper`.
     ///
-    /// **This path is the trust key.** Codex hashes the hook definition, the
-    /// definition contains this string, and a changed hash sends the user back
-    /// to `/hooks` to review the hook again. A fixed location inside the bundle
-    /// is what keeps an app update from re-triggering that prompt; moving the
-    /// app itself still does, which the installer detects and reports rather
-    /// than silently repairing behind the user's back.
+    /// Hooks do not name this URL. `CodexHelperDeployment` copies it to a
+    /// stable Application Support path first, so moving or rebuilding the app
+    /// does not change the definition Codex trusts.
     public static func bundledHelperURL(
         executableURL: URL? = Bundle.main.executableURL
     ) -> URL? {

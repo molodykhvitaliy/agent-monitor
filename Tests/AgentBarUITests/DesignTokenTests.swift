@@ -21,13 +21,13 @@ struct DesignTokenTests {
         }
     }
 
-    /// Twenty, per `docs/dev/design-system.md` § How this reaches the code.
+    /// Twenty-one, per `docs/dev/design-system.md` § How this reaches the code.
     /// `stateIdle` and `focusRing` are deliberately not among them: idle borrows
     /// `ink400` and the focus ring is the system accent, which is the user's
     /// choice and not ours.
     @Test("The catalog holds exactly the tokens the design system names")
     func tokenCountMatchesTheDesignSystem() {
-        #expect(ColorToken.allCases.count == 20)
+        #expect(ColorToken.allCases.count == 21)
     }
 
     @Test("Every token has a distinct light and dark value")

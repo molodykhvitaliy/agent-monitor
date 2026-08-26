@@ -105,6 +105,7 @@ enum Fixture {
         provider: Provider = .claudeCode,
         event: NotificationEvent = .finished,
         body: String? = nil,
+        fingerprint: String? = nil,
         at: Date = epoch
     ) -> NotificationDraft {
         NotificationDraft(
@@ -113,6 +114,7 @@ enum Fixture {
             project: Self.project(),
             event: event,
             body: body,
+            fingerprint: fingerprint,
             at: at)
     }
 }
