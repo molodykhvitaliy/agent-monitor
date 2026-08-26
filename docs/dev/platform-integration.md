@@ -556,6 +556,13 @@ everywhere, 1 second on `SessionEnd`. Measured for the compiled helper on
 **p50 6.5 ms on an idle machine and 11 ms under load**, against a `/bin/cat`
 baseline of 1.0 ms and 1.8 ms through the same harness.
 
+CI re-measures it on every code change through `make timing-proofs`, which runs
+the helper against that same baseline in an otherwise idle process and asserts
+both halves: the helper's own share stays inside 25 ms, and no single run passes
+the one second above. Before that target existed the proof needed a built binary
+nobody handed it, so it skipped itself and reported green — see
+[build.md](build.md).
+
 > **A hook's timeout is Codex's business, not the helper's.** Codex may or may
 > not kill a command that overruns, and the helper is a grandchild of Codex
 > behind the shell that runs it — so a helper that can wait indefinitely is a

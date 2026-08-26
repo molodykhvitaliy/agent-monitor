@@ -89,11 +89,22 @@ struct RouterLifecycleTests {
     /// Isolated wall-clock acceptance proof. The ordinary suite leaves this
     /// gated because hundreds of parallel tests can starve the cooperative pool
     /// without changing the router's timer-free path.
-    @Test("Urgent notification queue latency stays below 100 ms when isolated")
+    ///
+    /// Gated through a trait rather than an early `return`, so a run without the
+    /// variable reports **skipped**. The guard this replaced reported *passed*,
+    /// which is why the measurement went unnoticed and unmeasured in CI until
+    /// `make timing-proofs` existed to supply the variable.
+    ///
+    /// The 100 ms bound is measured against 2.5-8.2 ms over five isolated runs
+    /// on a developer Mac, and the queue is one async round trip — but it has
+    /// never run on a three-core runner. If it starts failing there, the answer
+    /// is the one `LatencyTests` documents, not a bigger number.
+    @Test(
+        "Urgent notification queue latency stays below 100 ms when isolated",
+        .enabled(
+            if: ProcessInfo.processInfo.environment["AGENTBAR_NOTIFICATION_LATENCY_PROOF"]
+                == "1"))
     func urgentLatencyProof() async {
-        guard
-            ProcessInfo.processInfo.environment["AGENTBAR_NOTIFICATION_LATENCY_PROOF"] == "1"
-        else { return }
         let presenter = RecordingPresenter()
         let router = await RouterHarness.started(presenter: presenter, sounds: shippedSounds)
         let started = ContinuousClock.now

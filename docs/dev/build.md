@@ -16,6 +16,7 @@ make bootstrap      # brew install xcodegen swiftlint xcbeautify, then generate
 make build          # xcodebuild the app bundle
 make verify-bundle  # build, then assert the resulting bundle's layout
 make test           # swift test — no Xcode needed
+make timing-proofs  # verify-bundle, then the stopwatch suites run alone
 make lint           # swiftlint --strict, then swift-format lint --strict
 make format         # swift-format in place
 make check          # lint + test + tos-check + check-generated — before every commit
@@ -31,16 +32,34 @@ because the suites live in the Swift package rather than in an Xcode target, so
 ⌘U in Xcode does nothing — use the terminal or a package test target's inline
 run button.
 
-Four suites are **off unless asked for**, because they do something to the machine
-rather than only to memory. All are ordinary parts of the suite otherwise, and
-each is worth running when the surface it covers changes:
+Five suites are **off unless asked for**, because they do something to the machine
+rather than only to memory, or because they need something the package alone
+cannot give them. All are ordinary parts of the suite otherwise, and each is
+worth running when the surface it covers changes:
 
 ```bash
 AGENTBAR_RENDER=/tmp/agentbar swift test --filter AgentBarUITests    # writes PNGs
 AGENTBAR_POWER_LIVE=1 swift test --filter AgentBarPowerTests         # real assertion
 AGENTBAR_HELPER_BINARY=… swift test --filter HelperTimingProof       # the built helper
 AGENTBAR_CODEX_LIVE=1 swift test --filter LiveReading                # the real account
+AGENTBAR_NOTIFICATION_LATENCY_PROOF=1 swift test --filter urgentLatency  # the queue
 ```
+
+Each is gated by a `.enabled(if:)` / `.disabled(if:)` **trait**, so an
+unasked-for run reports *skipped* rather than passed. That distinction is not
+cosmetic: the third and the fifth used an early `return` instead, which reports
+*passed*, and both went unmeasured in CI for eleven steps because nobody had
+reason to look.
+
+One variable in the same family gates nothing. `AGENTBAR_LATENCY_PROOF=1` tells
+`LatencyTests` to assert its tail rather than its median — that suite always
+runs, and the variable chooses the statistic, not whether it executes. Why there
+is a choice to make is
+[a stopwatch cannot share a runner](#a-stopwatch-cannot-share-a-runner).
+
+`make timing-proofs` sets that variable and the third and fifth above, and
+supplies the built helper. It is how the timing measurements are meant to be
+taken, and what CI runs.
 
 The first renders every panel state and the settings window so a person can look
 at them; it is what caught the provider badge drawing an ✕. The second takes a
@@ -60,15 +79,22 @@ AGENTBAR_HELPER_BINARY="$products/AgentBar.app/Contents/MacOS/agentbar-helper" \
   swift test --filter HelperTimingProof
 ```
 
-It compares against `/bin/cat` through the same harness, so what it asserts is
-the helper's own share of the run rather than what this machine charges to start
-any process at all — the number that would otherwise fail on a busy laptop.
+`make timing-proofs` does all of that and runs the suite alone; the recipe
+above is for when only this one is wanted. It compares against `/bin/cat` through
+the same harness, so what it asserts is the helper's own share of the run rather
+than what this machine charges to start any process at all — the number that
+would otherwise fail on a busy laptop.
 
 The fourth reads the developer's own Codex limits through the installed binary.
-It is gated for a different reason from the other three: it costs a network round
+It is gated for a different reason from the others: it costs a network round
 trip made by Codex against a real account, which is exactly the thing that must
 never happen on a timer or on a runner. `ProcessTransportTests` covers the same
 code against a shell script standing in for `codex`, and that one runs always.
+
+The fifth measures how long an urgent notification waits in the router's queue.
+It is gated only because hundreds of parallel tests can starve the cooperative
+pool without changing the router's timer-free path — the same reason, and the
+same remedy, as the ingest suite above.
 
 ### Two kinds of schema drift, caught in two places
 
@@ -102,6 +128,68 @@ ship a matrix whose every default silently plays the system sound, with no error
 anywhere ([ADR-0006](../adr/ADR-0006-notification-sounds-are-files-agentbar-can-resolve.md)). It depends on `build`,
 because certifying a bundle left over from an earlier commit is the failure it
 exists to catch. CI runs it after `make build`, where the rebuild is a no-op.
+
+## A stopwatch cannot share a runner
+
+`make test` is `swift test --parallel`: swift-testing runs every suite
+concurrently **in one process on one cooperative pool**. That is the right trade
+for 831 correctness tests and the wrong one for a measurement. A GitHub
+`macos-26` runner has three cores, and the suites competing for them include an
+architecture scan that spends sixteen seconds of CPU and a pile of timer-driven
+power and deadline tests.
+
+The ingest latency suite showed exactly what that costs. Across twenty-two CI
+runs its median held between 0.30 ms and 0.88 ms while its p99 walked from 8 ms
+to 120 ms — in step with the number of tests co-scheduled beside it, not with any
+change to `AgentBarIngest`. The tail eventually crossed the 100 ms ceiling and
+failed a pull request that had not touched the module.
+
+So the assertion follows the environment:
+
+- under `make test` the ingest suite asserts a **median** and the other two are
+  skipped. A handful of 120 ms stalls cannot move the median of 300 samples, and
+  every regression the suite exists to catch — a per-request handshake, a lock
+  held across a socket read, an accidental sleep — costs milliseconds on *every*
+  request and moves it. `DeadlineTests.expiresPromptly` reached the same design
+  independently.
+- `make timing-proofs` runs those suites with `--no-parallel` and nothing else in
+  the process, where the numbers belong to the code. Isolated on a developer Mac
+  the ingest p99 is 0.4 ms against a 100 ms ceiling; the isolated number on a
+  three-core runner is not yet known, and the first green run is worth reading.
+
+Where a tail is asserted at all, it is asserted against something real. The
+helper proof used to bound its `p95` at 100 ms, which was arithmetic rather than
+a claim: `p95` over forty runs is the second-worst sample, so one stalled process
+launch decided it, and over eight isolated runs on an idle Mac that number moved
+between 8.8 ms and 75.8 ms. It now asserts the two things that mean something —
+the helper's own share above a `/bin/cat` baseline measured on the same machine
+(median, 5-7 ms against a 25 ms budget) and that no single run passes the one
+second Codex gives a `SessionEnd` hook.
+
+The target is also the only place two of the three measurements run at all.
+`HelperTimingProof` needs a built helper and `RouterLifecycleTests`'s urgent-queue
+proof needs an environment variable, and both used to skip with an early `return`
+inside the test — which reports **passed**. That is how they sat green and
+unmeasured through eleven steps of CI. Both are gated by a trait now, like every
+other conditional suite here, so a skip reports *skipped*.
+
+`timing-proofs` does not rely on that alone. It refuses to run without the built
+helper, and it requires each proof's own printed line to be present — including
+the `(isolated: tail asserted)` that the ingest suite prints only when the strict
+statistic was in force. Three separate ways to a false green, all closed:
+`swift test --filter` exits 0 when it matches nothing, a trait-skipped suite exits
+0 too, and a test whose environment variable never arrived prints numbers that
+look identical to asserted ones.
+
+It depends on `verify-bundle` rather than on CI's step order, for the reason
+`verify-bundle` depends on `build`: these numbers get attributed to a commit and
+transcribed into [platform-integration.md](platform-integration.md) §2.6, and
+timing a bundle left over from an earlier commit attributes them to the wrong
+code.
+
+**`make check` does not cover the tails.** It cannot: `timing-proofs` needs a
+built app bundle and `check` is deliberately Xcode-free. The tails are a CI gate,
+not a pre-commit one.
 
 ## The module graph is the architecture
 

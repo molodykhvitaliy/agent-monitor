@@ -19,6 +19,10 @@ XCODEBUILD_FLAGS := -project $(PROJECT) -scheme $(SCHEME) \
 # Directories holding first-party Swift. Kept in one place so the linters and
 # the formatter cannot drift apart on what they cover.
 SWIFT_PATHS := Sources Tests Apps
+# The suites `make timing-proofs` runs alone. Matched against test and suite
+# names, so it catches the urgent-queue proof inside the notification
+# lifecycle suite without dragging the rest of that suite in.
+TIMING_PROOF_FILTER := Latency|HelperTimingProof
 
 .PHONY: help
 help: ## Show available targets
@@ -47,22 +51,38 @@ build: generate ## Build the app
 	  xcodebuild build $(XCODEBUILD_FLAGS); \
 	fi
 
+# Resolving BUILT_PRODUCTS_DIR is the same problem in two targets, and two
+# copies that must agree is the situation `SWIFT_PATHS` exists to avoid. Leaves
+# `$$products` set for the recipe that expands it.
+#
+# Two constraints on any future caller, because breaking either fails quietly
+# rather than loudly: expand it **after `$(STRICT)`** — it relies on `-e` for
+# nothing itself but everything downstream does — and keep it on the **same
+# backslash-continued logical line** as what follows. On its own recipe line it
+# would be a separate shell, leaving the next line with no `set -u` and an empty
+# `$$products`, which yields wrong paths instead of an error.
+#
+# `-showBuildSettings` is read whole rather than piped into a reader that closes
+# early: xcodebuild takes EPIPE on the next line and aborts with 134.
+define RESOLVE_PRODUCTS
+settings=$$(xcodebuild -showBuildSettings $(XCODEBUILD_FLAGS) 2>&1) || { \
+  printf '%s\n' "$$settings" >&2; \
+  echo "error: xcodebuild -showBuildSettings failed — cannot locate the bundle" >&2; \
+  exit 1; \
+}; \
+products=$$(printf '%s\n' "$$settings" \
+  | awk -F' = ' '/ BUILT_PRODUCTS_DIR = /{ if (!seen++) print $$2 }'); \
+if [ -z "$$products" ]; then \
+  echo "error: BUILT_PRODUCTS_DIR is absent from the build settings" >&2; exit 1; \
+fi;
+endef
+
 # Depends on build: a bundle left over from an earlier commit would otherwise be
 # certified as if it were the current one, which is the failure this target
 # exists to catch.
 .PHONY: verify-bundle
 verify-bundle: build ## Assert the built app bundle has the layout later steps depend on
-	@$(STRICT) \
-	settings=$$(xcodebuild -showBuildSettings $(XCODEBUILD_FLAGS) 2>&1) || { \
-	  printf '%s\n' "$$settings" >&2; \
-	  echo "error: xcodebuild -showBuildSettings failed — cannot locate the bundle" >&2; \
-	  exit 1; \
-	}; \
-	products=$$(printf '%s\n' "$$settings" \
-	  | awk -F' = ' '/ BUILT_PRODUCTS_DIR = /{ if (!seen++) print $$2 }'); \
-	if [ -z "$$products" ]; then \
-	  echo "error: BUILT_PRODUCTS_DIR is absent from the build settings" >&2; exit 1; \
-	fi; \
+	@$(STRICT) $(RESOLVE_PRODUCTS) \
 	app="$$products/AgentBar.app"; \
 	if [ ! -d "$$app" ]; then \
 	  echo "error: no built bundle at $$app" >&2; exit 1; \
@@ -107,6 +127,62 @@ verify-bundle: build ## Assert the built app bundle has the layout later steps d
 .PHONY: test
 test: ## Run SPM module tests (no Xcode required)
 	@swift test --parallel
+
+# The measurements in the suite that only mean something when nothing else is
+# running. Under `make test` all three are either skipped or assert a median,
+# because swift-testing shares one cooperative pool across every suite and a tail
+# measured there belongs to the runner's scheduler rather than to this code — see
+# Tests/AgentBarIngestTests/LatencyTests.swift for the numbers that settled it.
+# Here the process runs them serially and alone, so the numbers belong to the
+# code and the strict assertions apply.
+#
+# Depends on `verify-bundle` for the reason that target depends on `build`: these
+# are numbers that get attributed to the current commit and transcribed into
+# docs/dev/platform-integration.md, and timing a bundle left over from an earlier
+# commit would attribute them to the wrong code. CI's step order would happen to
+# give the same guarantee; a dependency is a guarantee that survives reordering.
+#
+# Three ways this target could pass while measuring nothing, all closed. The
+# helper proof is skipped when the binary is missing; `swift test --filter`
+# **exits 0 when it matches nothing** — "Test run with 0 tests in 0 suites
+# passed" — so a renamed suite would leave it green for ever; and the ingest
+# tests print their numbers in both modes, so a line proves only that they ran
+# and not that AGENTBAR_LATENCY_PROOF reached them. Hence the markers include
+# `(isolated: tail asserted)`, which is printed only when the tail was asserted.
+.PHONY: timing-proofs
+timing-proofs: verify-bundle ## Run the timing proofs alone, where a tail means something
+	@$(STRICT) $(RESOLVE_PRODUCTS) \
+	helper="$$products/AgentBar.app/Contents/MacOS/agentbar-helper"; \
+	if [ ! -x "$$helper" ]; then \
+	  echo "error: no built helper at $$helper" >&2; \
+	  echo "  verify-bundle is a prerequisite and asserts this same path, so" >&2; \
+	  echo "  reaching this means the dependency was bypassed (make -o/-t, an" >&2; \
+	  echo "  edited prerequisite, a race). Kept because the next line exports" >&2; \
+	  echo "  it: without the binary the suite trait-disables itself, swift" >&2; \
+	  echo "  test still exits 0, and the proof would go unmeasured again." >&2; \
+	  exit 1; \
+	fi; \
+	log=$$(mktemp); \
+	trap 'rm -f "$$log"' EXIT; \
+	AGENTBAR_LATENCY_PROOF=1 \
+	AGENTBAR_NOTIFICATION_LATENCY_PROOF=1 \
+	AGENTBAR_HELPER_BINARY="$$helper" \
+	  swift test --no-parallel --filter '$(TIMING_PROOF_FILTER)' 2>&1 | tee "$$log"; \
+	for marker in \
+	  'ingest latency [keep-alive] (isolated: tail asserted)' \
+	  'ingest latency [connect + post] (isolated: tail asserted)' \
+	  'urgent notification queue latency' \
+	  'agentbar-helper: p50'; \
+	do \
+	  if ! grep -qF "$$marker" "$$log"; then \
+	    echo "error: nothing printed '$$marker' — that proof did not run," >&2; \
+	    echo "  or ran without asserting its strict bound. 'swift test --filter'" >&2; \
+	    echo "  exits 0 when it matches nothing; check TIMING_PROOF_FILTER and" >&2; \
+	    echo "  that the AGENTBAR_* variables above reached the test process." >&2; \
+	    exit 1; \
+	  fi; \
+	done; \
+	echo "timing proofs ok: all four measurements were taken in isolation"
 
 .PHONY: lint
 lint: ## Lint and check formatting of Swift sources

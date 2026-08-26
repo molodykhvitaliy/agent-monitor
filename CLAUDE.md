@@ -108,6 +108,7 @@ The Xcode project is **generated** from `project.yml` and is not committed.
 make bootstrap    # install xcodegen, generate the project
 make build        # build the app
 make test         # SPM tests, no Xcode needed
+make timing-proofs # the stopwatch suites, run alone — the CI-only tail gate
 make lint         # swiftlint --strict, then swift-format lint --strict
 make format       # apply swift-format in place
 make tos-check    # ToS boundary scan
