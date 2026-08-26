@@ -10,8 +10,13 @@ import Testing
 /// Split from `RouterTests`, which is about what a state change turns into. This
 /// suite is about **when** — the only stateful part of the module, and the part
 /// a decision test driving `flush()` by hand can never reach.
+/// The time limit is the bound on every wait in here, and it is deliberately the
+/// only one. `RecordingPresenter.untilPosted(atLeast:)` waits on a signal rather
+/// than on a clock — see the reasoning there — so a router that never delivers
+/// fails through the harness instead of through a hand-rolled deadline that a
+/// loaded runner can exhaust while the code is correct.
 @MainActor
-@Suite("Notification router lifecycle")
+@Suite("Notification router lifecycle", .timeLimit(.minutes(1)))
 struct RouterLifecycleTests {
 
     private var shippedSounds: SoundLibrary { RouterHarness.shippedSounds }
@@ -26,15 +31,12 @@ struct RouterLifecycleTests {
         router.record([Fixture.change()])
         #expect(presenter.posted.isEmpty)
 
-        // Waited *for*, not slept through. The claim is that the flush happens
-        // with nobody driving it, and a fixed sleep tests that claim against the
-        // scheduler as well: the window is 40 ms, but under a saturated
-        // cooperative pool — this suite runs alongside every other — the task
-        // that closes it can be minutes of CPU-seconds away from its turn. That
-        // is what made this the one test in the repository that failed under
-        // parallel load, roughly one run in three, while the code was correct
-        // every time.
-        try await untilPosted(presenter, within: .seconds(5))
+        // Waited *for*, not slept through, and waited on the post rather than on
+        // a clock. The claim is that the flush happens with nobody driving it;
+        // under a saturated cooperative pool — this suite runs alongside every
+        // other — the task that closes a 40 ms window can be seconds of wall
+        // time from its turn while being entirely correct.
+        try await presenter.untilPosted()
         #expect(presenter.posted.count == 1)
     }
 
@@ -52,10 +54,11 @@ struct RouterLifecycleTests {
 
         router.record([Fixture.change(to: .waitingInput(question: "Which branch?"))])
         // This suite runs beside hundreds of tests on the cooperative pool, so
-        // wall time is not a stable latency oracle. A sixty-second configured
-        // window and a bounded wait prove the event took the zero-delay path;
-        // the isolated acceptance probe measures the 100 ms product budget.
-        try await untilPosted(presenter, within: .seconds(5))
+        // wall time is not a stable latency oracle. The sixty-second configured
+        // window is what proves the event took the zero-delay path — arriving at
+        // all means it did not wait for the coalescer; the isolated acceptance
+        // probe measures the 100 ms product budget.
+        try await presenter.untilPosted()
         #expect(presenter.posted.count == 1)
         #expect(presenter.posted.first?.title.hasPrefix("Question") == true)
         router.stop()
@@ -79,7 +82,7 @@ struct RouterLifecycleTests {
                 at: Fixture.epoch.addingTimeInterval(0.1)),
         ])
 
-        try await untilPosted(presenter, within: .seconds(5))
+        try await presenter.untilPosted()
         router.stop()
         await router.flush()
 
@@ -130,15 +133,6 @@ struct RouterLifecycleTests {
     /// Generous, because the deadline is not what is being measured — the
     /// alternative to waiting long enough is a suite that fails for reasons that
     /// have nothing to do with the code.
-    private func untilPosted(
-        _ presenter: RecordingPresenter, within limit: Duration
-    ) async throws {
-        let deadline = ContinuousClock.now + limit
-        while presenter.posted.isEmpty, ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
-    }
-
     /// `try? await Task.sleep` swallows the cancellation, so a cancelled task
     /// runs on to its next statement. Without an explicit check that is an app
     /// announcing five agents on its way out.
