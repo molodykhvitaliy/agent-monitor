@@ -147,11 +147,18 @@ public final class NotificationRouter {
         }
     }
 
+    /// Delivers the urgent queue, re-reading the frontmost application per draft.
+    ///
+    /// > `flush()` reads it once for a batch drained in one turn, which is sound
+    /// > because the answer cannot change without a suspension. This loop
+    /// > suspends and `record()` appends while it runs, so a draft added after
+    /// > the user switched applications would be judged against the one they
+    /// > left — exactly the case focus suppression exists for.
     private func flushImmediate(generation: Int) async {
-        let frontmostIdentifier = frontmost.frontmostBundleIdentifier()
         while generation == immediateGeneration, !Task.isCancelled, !immediateQueue.isEmpty {
             let draft = immediateQueue.removeFirst()
-            await deliver(draft, frontmostBundleIdentifier: frontmostIdentifier)
+            await deliver(
+                draft, frontmostBundleIdentifier: frontmost.frontmostBundleIdentifier())
         }
         guard generation == immediateGeneration else { return }
         immediateTask = nil
@@ -201,7 +208,13 @@ public final class NotificationRouter {
         }
     }
 
-    /// Cancels a scheduled flush. For a clean shutdown.
+    /// Cancels the scheduled deliveries. For a clean shutdown.
+    ///
+    /// > **Both queues deliberately survive it**, because `flush()` promises
+    /// > that `stop(); flush()` loses nothing. The consequence is worth naming
+    /// > rather than removing: a `record()` after a `stop()` schedules a
+    /// > delivery carrying the drafts from before it. Nothing in the app does
+    /// > that, and emptying the queue here would make the drain lossy instead.
     public func stop() {
         flushTask?.cancel()
         flushTask = nil

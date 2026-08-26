@@ -59,6 +59,9 @@ public final class CaffeineController {
     @ObservationIgnored public let lease: Duration
 
     @ObservationIgnored private let assertion: any PowerAsserting
+    /// Keeps App Nap off while a hold is wanted, so the renewal loop below runs
+    /// at the cadence it was designed for. See `AppNapSuppressing`.
+    @ObservationIgnored private let appNap: any AppNapSuppressing
     @ObservationIgnored private let store: any CaffeineSettingsStoring
     @ObservationIgnored private var settings: CaffeineSettings
     /// How a fresh reading of the store is taken. Held rather than passed in on
@@ -82,10 +85,12 @@ public final class CaffeineController {
     public init(
         assertion: any PowerAsserting = IOKitPowerAssertion(),
         settings store: any CaffeineSettingsStoring = UserDefaultsCaffeineSettings(),
+        appNap: any AppNapSuppressing = ProcessActivitySuppression(),
         renewalInterval: Duration = CaffeineController.defaultRenewalInterval,
         lease: Duration = CaffeineController.defaultLease
     ) {
         self.assertion = assertion
+        self.appNap = appNap
         self.store = store
         self.renewalInterval = renewalInterval
         self.lease = lease
@@ -142,6 +147,9 @@ public final class CaffeineController {
         inFlight?.cancel()
         inFlight = nil
         releaseAssertion()
+        // Last, for the reason `apply` gives: nothing this controller does after
+        // here needs to be off App Nap's clock.
+        appNap.end()
         reading = CaffeineReading(mode: settings.mode)
     }
 
@@ -227,9 +235,18 @@ public final class CaffeineController {
             renewal?.cancel()
             renewal = nil
             releaseAssertion()
+            // After the release, never before it. The suppression exists to keep
+            // the renewal loop and this release path off App Nap's clock, so it
+            // is the last thing to go.
+            appNap.end()
             reading = CaffeineReading(demand: demand, isHolding: assertion.isHeld, failure: failure)
             return
         }
+        // Before the assertion is taken, not after: the whole point is that the
+        // renewal task which keeps this lease alive is not throttled, and the
+        // window between taking a hold and the first renewal is the longest one
+        // there is.
+        appNap.begin(reason: Self.assertionName)
         do {
             if assertion.isHeld {
                 try assertion.renew(details: demand.details, lease: lease)

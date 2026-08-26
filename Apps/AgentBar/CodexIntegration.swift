@@ -84,6 +84,34 @@ final class CodexIntegration: ProviderIntegration {
 
     var provider: Provider { .codex }
 
+    /// The last deployment failure, or `nil` when the helper is where it should
+    /// be. Held rather than recomputed, because deployment no longer happens on
+    /// every status read — see `prepare()`.
+    private var deploymentFailure: String?
+
+    /// Refreshes the deployed helper. Called once, at launch, before any report
+    /// is read.
+    ///
+    /// > **A status read used to do this, and that was two defects in one.** It
+    /// > made reading a report write to `~/Library/Application Support`, and it
+    /// > compared 2.2 MB byte for byte every time the panel opened. Worse, it
+    /// > meant the *uninstaller* could not win: the next panel open put the
+    /// > helper straight back. Deployment now happens where a deployment
+    /// > belongs — at launch, and when the user presses `Connect` or `Repair`.
+    /// > A helper that goes missing in between is not hidden by this change; it
+    /// > surfaces as `helperMissing` drift, which is what the `Repair` button is
+    /// > for.
+    func prepare() async {
+        do {
+            _ = try await deployedHelperURL()
+            deploymentFailure = nil
+        } catch {
+            deploymentFailure = "\(error)"
+            Self.logger.error(
+                "codex helper could not be deployed: \(error, privacy: .public)")
+        }
+    }
+
     /// Called from the push leg when a change carrying `.codex` arrives.
     func noteDelivery() {
         trustPending = false
@@ -97,31 +125,31 @@ final class CodexIntegration: ProviderIntegration {
     }
 
     func status() async -> IntegrationStatus {
-        let endpoint: CodexEndpoint?
-        var deploymentFailure: String?
-        do {
-            endpoint = try await currentEndpoint()
-        } catch {
-            endpoint = nil
-            deploymentFailure = "\(error)"
-        }
+        let endpoint = await currentEndpoint()
         let report = await Self.readReport(
             home: home, baselineURL: trustBaselineURL, endpoint: endpoint,
             hasDelivered: hasDelivered, trustPending: trustPending)
-        var status = Self.status(from: report)
-        // Deployment is deliberately outside `hooks.json`: failure here leaves
-        // the user's existing definitions untouched and reports the local file
-        // operation that needs attention.
-        if let deploymentFailure {
-            status = IntegrationStatus(
-                provider: .codex,
-                condition: status.condition == .connected ? .notReceiving : status.condition,
-                detail: deploymentFailure,
-                notes: status.notes,
-                coexistence: status.coexistence,
-                preventsEvents: true)
-        }
-        return status
+        let status = Self.status(from: report)
+        guard let deploymentFailure else { return status }
+        // Deployment is deliberately outside `hooks.json`: a failure here leaves
+        // the user's existing definitions untouched, so it degrades nothing on
+        // its own.
+        //
+        // > **It is a note, not a verdict, and that is a correction.** It used
+        // > to force the row to `Not receiving` and `preventsEvents`, which was
+        // > right only when the failure had actually left the hooks without a
+        // > helper — and wrong whenever an earlier launch had already deployed
+        // > one, where the integration goes on working. The installer answers
+        // > that question properly: a helper that is not there is `helperMissing`
+        // > drift, which already sets both. So this adds the reason and lets the
+        // > report keep the verdict.
+        return IntegrationStatus(
+            provider: .codex,
+            condition: status.condition,
+            detail: status.detail ?? deploymentFailure,
+            notes: status.notes + [deploymentFailure],
+            coexistence: status.coexistence,
+            preventsEvents: status.preventsEvents)
     }
 
     /// Reads both files **off the main actor**, for the same reason the Claude
@@ -166,24 +194,14 @@ final class CodexIntegration: ProviderIntegration {
         case .hooksUnreadable(let reason):
             condition = .settingsUnreadable
             detail = reason
-        case .needsRepair(let drift):
+        case .needsRepair:
             condition = .needsRepair
-            // Every drift case already carries a finished English sentence.
-            // Show the first and count the rest; the card formats nothing.
-            detail = drift.first.map { first in
-                drift.count > 1
-                    ? "\(first.description) and \(drift.count - 1) more"
-                    : first.description
-            }
-            // Most drift degrades the integration. These two stop it dead: the
-            // hooks name a helper that is not where Codex will look, so every
-            // one of them fails in the user's own session.
-            preventsEvents = drift.contains {
-                switch $0 {
-                case .helperMissing, .helperMoved: true
-                default: false
-                }
-            }
+            // Both sentences come from the report itself, in `CodexAdapter`
+            // where a suite reaches them. What is left here is the join onto the
+            // UI's vocabulary, which is the one thing that cannot move: no
+            // adapter may import `AgentBarUI`.
+            detail = report.driftSummary
+            preventsEvents = report.silencesEveryHandler
         }
 
         return IntegrationStatus(
@@ -230,7 +248,9 @@ final class CodexIntegration: ProviderIntegration {
         let helperURL: URL
         do {
             helperURL = try await deployedHelperURL()
+            deploymentFailure = nil
         } catch {
+            deploymentFailure = "\(error)"
             return .failed("\(error)")
         }
         let (result, requiresTrust) = await Self.install(
@@ -285,12 +305,7 @@ final class CodexIntegration: ProviderIntegration {
     /// option here — see ADR-0008, which names it and says why. So the button
     /// does the only honest thing: it re-reads the state and says what it found.
     private func recheckTrust() async -> IntegrationActionResult {
-        let endpoint: CodexEndpoint?
-        do {
-            endpoint = try await currentEndpoint()
-        } catch {
-            return .failed("\(error)")
-        }
+        let endpoint = await currentEndpoint()
         let report = await Self.readReport(
             home: home, baselineURL: trustBaselineURL, endpoint: endpoint,
             hasDelivered: hasDelivered, trustPending: trustPending)
@@ -337,10 +352,15 @@ final class CodexIntegration: ProviderIntegration {
     /// Unlike the Claude Code endpoint this carries no port and no token: the
     /// helper reads the discovery file when it runs. What the binding decides
     /// here is only whether the hooks have anywhere to deliver to.
-    private func currentEndpoint() async throws -> CodexEndpoint? {
-        let helperURL = try await deployedHelperURL()
-        guard let ingest, await ingest.boundEndpoint != nil else { return nil }
-        return CodexEndpoint(helperURL: helperURL)
+    ///
+    /// **Reads nothing and writes nothing.** The stable path is derived once, in
+    /// `init`, and whether a file is actually there is the installer's question
+    /// to answer — it already reports `helperMissing` when it is not.
+    private func currentEndpoint() async -> CodexEndpoint? {
+        guard let stableHelperURL, let ingest, await ingest.boundEndpoint != nil else {
+            return nil
+        }
+        return CodexEndpoint(helperURL: stableHelperURL)
     }
 
     /// Refreshes the stable helper off the main actor before any report or

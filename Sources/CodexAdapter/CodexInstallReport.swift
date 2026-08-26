@@ -149,6 +149,37 @@ public struct CodexInstallReport: Sendable, Hashable {
             true
         }
     }
+
+    /// The drift as one sentence: the first, and a count of the rest.
+    ///
+    /// Every drift case already carries a finished English sentence, so this
+    /// picks and counts rather than composing. `nil` when there is no drift.
+    ///
+    /// > **Here rather than in the app target**, which is where it used to live
+    /// > and where `swift test` could not reach it. The presentation decision it
+    /// > feeds stays there: `IntegrationStatus` lives in `AgentBarUI`, which no
+    /// > adapter may import.
+    public var driftSummary: String? {
+        guard case .needsRepair(let drift) = state, let first = drift.first else { return nil }
+        return drift.count > 1
+            ? "\(first.description) and \(drift.count - 1) more" : first.description
+    }
+
+    /// Whether what is on disk means **no** Codex hook can deliver.
+    ///
+    /// Most drift degrades the integration. These two stop it dead: the hooks
+    /// name a helper that is not where Codex will look, so every one of them
+    /// fails in the user's own session rather than merely posting somewhere
+    /// stale.
+    public var silencesEveryHandler: Bool {
+        guard case .needsRepair(let drift) = state else { return false }
+        return drift.contains {
+            switch $0 {
+            case .helperMissing, .helperMoved: true
+            default: false
+            }
+        }
+    }
 }
 
 /// What a write actually did.

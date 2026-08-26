@@ -29,6 +29,51 @@ struct HelperDeploymentTests {
         #expect(!leftovers.contains { $0.lastPathComponent.hasPrefix(".agentbar-helper.tmp.") })
     }
 
+    /// The pre-check that keeps a status read from comparing 2.2 MB byte for
+    /// byte. It has to answer *no* whenever the file would actually change —
+    /// including the case where only the length differs, which is what the
+    /// pre-check itself decides.
+    @Test("A helper of a different length is redeployed without a byte compare")
+    func aDifferentLengthIsNotAMatch() throws {
+        let scratch = try ScratchCodexHome()
+        let source = try scratch.makeHelper(at: "Debug.app/Contents/MacOS/agentbar-helper")
+        let support = scratch.directory.appending(path: "Application Support/AgentBar")
+        let destination = CodexHelperDeployment.destination(in: support)
+        let deployment = CodexHelperDeployment(sourceURL: source, destinationURL: destination)
+        #expect(try deployment.deploy())
+        #expect(!(try deployment.deploy()))
+
+        // Longer, and still a valid executable: only the size distinguishes it.
+        try Data("#!/bin/sh\necho a much longer helper than before\n".utf8).write(to: source)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755], ofItemAtPath: source.path(percentEncoded: false))
+        #expect(try deployment.deploy())
+        #expect(try Data(contentsOf: destination) == Data(contentsOf: source))
+    }
+
+    /// Same length, different bytes — the case the pre-check cannot answer and
+    /// must therefore hand to the byte compare rather than call a match.
+    @Test("A helper of the same length but different bytes is still redeployed")
+    func sameLengthDifferentBytesIsNotAMatch() throws {
+        let scratch = try ScratchCodexHome()
+        let source = try scratch.makeHelper(at: "Debug.app/Contents/MacOS/agentbar-helper")
+        let support = scratch.directory.appending(path: "Application Support/AgentBar")
+        let destination = CodexHelperDeployment.destination(in: support)
+        let deployment = CodexHelperDeployment(sourceURL: source, destinationURL: destination)
+        #expect(try deployment.deploy())
+
+        let original = try Data(contentsOf: source)
+        var replacement = original
+        let last = replacement.count - 2
+        replacement[last] = replacement[last] == 0x41 ? 0x42 : 0x41
+        try replacement.write(to: source)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755], ofItemAtPath: source.path(percentEncoded: false))
+        #expect(replacement.count == original.count)
+        #expect(try deployment.deploy())
+        #expect(try Data(contentsOf: destination) == replacement)
+    }
+
     @Test("A deployment failure leaves the existing stable helper untouched")
     func failurePreservesDestination() throws {
         let scratch = try ScratchCodexHome()

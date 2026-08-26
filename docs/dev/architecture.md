@@ -525,22 +525,56 @@ trust decision that is not AgentBar's to make.
 
 ### The helper is a dumb pipe, and its logic is not in the helper
 
-`Apps/agentbar-helper/main.swift` is twenty lines. Everything it does lives in
-`CodexAdapter`, which the tool target links, because the alternative is the one
-piece of AgentBar that runs inside somebody else's process tree being the one
-piece `swift test` cannot reach. `CodexHelperRelay` is exercised against a live
-endpoint with a real store behind it; the entry point is what is left over.
+`Apps/agentbar-helper/main.swift` is about forty statements — the rest of its
+ninety-one lines is the comment header explaining why they are the only ones.
+Everything it does lives in `CodexAdapter`, which the tool target links, because
+the alternative is the one piece of AgentBar that runs inside somebody else's
+process tree being the one piece `swift test` cannot reach. `CodexHelperRelay`
+is exercised against a live endpoint with a real store behind it; the entry
+point is what is left over.
 
-It reads one JSON object from stdin and posts the bytes **unread** — no parsing,
-no interpretation, no retry. Everything about what an event means happens in the
-app, on the far side of the socket.
+It reads one JSON object from stdin and posts the bytes **unread** — no parsing
+and no interpretation. Everything about what an event means happens in the app,
+on the far side of the socket.
 
-The signed bundle copy is a deployment source, not the hook command. Before a
-report or install, AgentBar atomically refreshes
-`~/Library/Application Support/AgentBar/bin/agentbar-helper`; all nine hooks name
-that stable AgentBar-owned path. Switching among Debug, distribution and
-installed app copies changes bytes at one path, not the trusted definition. A
-deployment failure leaves both the previous helper and `hooks.json` untouched.
+It does try twice, and only in one direction: `CodexHelperRelay.relay` walks a
+destination ladder, the Unix socket first and the TCP port as a fallback. That
+can deliver the same payload twice — the socket accepting the bytes and then the
+read timing out looks identical to a refusal — which is safe because tool events
+carry `tool_use_id` and are deduplicated in the store, and everything else is
+idempotent. It is a fallback rather than a retry: the same destination is never
+attempted twice.
+
+The signed bundle copy is a deployment source, not the hook command. At launch,
+and again whenever the user presses `Connect` or `Repair`, AgentBar atomically
+refreshes `~/Library/Application Support/AgentBar/bin/agentbar-helper`; all nine
+hooks name that stable AgentBar-owned path. Switching among Debug, distribution
+and installed app copies changes bytes at one path, not the trusted definition.
+A deployment failure leaves both the previous helper and `hooks.json` untouched.
+
+**Reading a status does not deploy.** It used to, on every panel open, which made
+a report a write and compared 2.2 MB byte for byte to decide whether to make one
+— and meant the uninstaller could not win, because the next panel open put the
+helper straight back. A helper that goes missing between launches is not hidden
+by that: the installer reports `helperMissing` drift, which is what `Repair` is
+for.
+
+### The helper's whole budget, spawn included
+
+`CodexHookHandler.worstCaseHelperRun` is the arithmetic, and it is asserted
+against `sessionEndTimeout` rather than argued in a comment:
+
+| Term | Value | Why |
+|---|---|---|
+| Process spawn | 150 ms allowance | `execve` plus dyld loading a 2.2 MB binary. Measured p50 8.5 ms, max 74.2 ms over forty runs on an idle Mac |
+| `StandardInput.defaultCeiling` | 300 ms | About three times the worst legitimate drain — 93–105 ms for a 4 MB payload through a 64 KB pipe on a loaded machine |
+| `RelayTimeouts.total` | 400 ms | Bounds the whole exchange including both rungs of the destination ladder |
+| **Total** | **850 ms** | Against the 1 s Codex gives a `SessionEnd` hook |
+
+The first term is the one that used to be missing. Raising `sessionEndTimeout`
+instead is not the cheap way out: Codex keys hook trust to the hash of the whole
+definition, so a changed timeout sends every user back to `/hooks` to re-approve
+a hook they had already approved.
 
 Four rules, each of which is a rule rather than a preference:
 
@@ -822,6 +856,27 @@ without a clock of their own.
 failure a user cannot diagnose: the only other symptom is a Mac that fell asleep
 during a build, hours later, with nothing connecting the two.
 
+**App Nap is suppressed for exactly as long as a hold is wanted.** AgentBar is
+`LSUIElement` with no visible window for most of its life, which is textbook App
+Nap eligibility, and App Nap throttles timers — including the renewal loop above.
+Five renewal periods fit inside the lease, so the arithmetic survives throttling;
+but nothing measured it, and the failure mode is the Mac sleeping under a running
+build. `ProcessActivitySuppression` takes an activity when the hold begins and
+ends it when the hold does, so the question does not arise. It is
+`userInitiatedAllowingIdleSystemSleep` rather than `userInitiated`: the
+difference is `idleSystemSleepDisabled`, and AgentBar already holds a *leased*
+IOKit assertion for that. A second, unleased claim on idle sleep through
+`NSProcessInfo` would be a way to keep the Mac awake that `stop()` does not
+cover.
+
+**Waking is a nudge, not a correction.** `ContinuousClock` counts through system
+sleep — that is why the domain uses it — so the watchdog's verdict on every
+session is already right the instant the Mac comes back. What has not happened is
+anybody asking: push carries state moves and a sleeping Mac received none. One
+observer on `NSWorkspace.didWakeNotification` in the app target sweeps the menu
+bar and re-evaluates the assertion, which is the difference between a correct
+panel and a panel that shows yesterday for up to forty-five seconds.
+
 ## Codex limits
 
 The one quota AgentBar can legally show, and the only place it spawns a process.
@@ -948,6 +1003,122 @@ to produce a line nobody reads when things work. `account/usage/read` is
 implemented, tested, and **never called** — it reports what an account has spent
 rather than what it has left, the design has no surface for it, and AgentBar does
 not make a request whose answer nothing reads.
+
+## Diagnostics and the self-test
+
+AgentBar answers every hook with success whatever happens — that is the
+safe-superset rule, and it has no exceptions. The consequence is that a payload
+it could not decode, a token that no longer matches and a hook posting at a port
+nobody holds are all completely invisible from the agent's side. Until step 11
+the only record was `os_log`, which is a fine place for a developer to look and
+no place at all for the person the failure is happening to.
+
+`IngestDiagnosticsRecorder` is a **decorator** over the sink the endpoint was
+already writing to, so the unified log loses nothing — it is still the only
+record that survives a crash. It counts ten things and keeps the last hundred
+lines, bounded like everything else the endpoint holds. The counters answer the
+one question a user has when nothing is arriving: has anything been delivered,
+and was anything turned away.
+
+The self-test asks six questions in the order the chain runs — is the endpoint
+bound, is each provider's configuration installed and reaching it, is the Codex
+helper deployed, has macOS authorised notifications, is the power assertion
+healthy. Each answer carries a remedy when there is one to give and nothing when
+there is not; a check that fails with invented advice would be worse than one
+that says only what it found.
+
+It runs **twice**: on demand from Settings › Diagnostics, and once at launch,
+where the whole report goes to the unified log. A user who never opens the window
+still leaves a record of what was true when the app came up, which is the
+question a "nothing arrives" report starts from.
+
+The provider rows come from the same `IntegrationStatus` the panel's card
+renders, so the two surfaces cannot disagree about what is wrong.
+
+## Removal
+
+The installers have always known how to undo everything they wrote — merging
+rather than overwriting, preserving foreign entries byte for byte, and
+deliberately leaving `allowedHttpHookUrls` alone. What was missing until step 11
+was a door: nothing called them. Dragging `AgentBar.app` to the Trash left nine
+`http` handlers posting into a refused port and nine `command` handlers spawning
+a helper that still existed, on every tool call, for ever — which is the
+safe-superset rule failing in exactly the case it names.
+
+`AgentBarRemoval`, in the app target because it is the only place allowed to know
+both providers exist, runs nine steps and **never stops early**: a failure is
+recorded and the sequence carries on, because stopping at the first refusal
+leaves a user with a partly removed app and no list of what is still there.
+
+| Step | Location |
+|---|---|
+| Event endpoint | stopped first, so the socket and discovery file are retracted rather than unlinked from underneath a live listener |
+| Claude Code hooks | `~/.claude/settings.json` |
+| Codex hooks | `~/.codex/hooks.json` |
+| Codex trust record | `~/.codex/config.toml` — **left alone**, see below |
+| Codex helper | `~/Library/Application Support/AgentBar/bin/agentbar-helper` |
+| Login item | `SMAppService.mainApp` |
+| Application Support files | `~/Library/Application Support/AgentBar` |
+| Cached notification art | `~/Library/Caches/AgentBar` |
+| Stored settings | the app's `UserDefaults` persistent domain |
+
+Three rules shape it.
+
+**Hooks come out before the file they name.** A hook removal that fails leaves an
+executable that still exists, rather than nine entries pointing at nothing.
+
+**It never guesses on the way out.** Every step removes what AgentBar wrote, by
+the marker it wrote it with — a hook `url` on AgentBar's own loopback path, a
+hook `command` naming `agentbar-helper`, a file at a path this app derived. A
+step that cannot do that does not widen the match: it reports the exact file and
+the exact thing to look for in it. A settings file that will not parse is the
+case this matters most in, and it is also the case where the installer already
+refuses to write.
+
+The manual remedies are spelled **from the constants the installers match on** —
+`ClaudeCodeEndpoint.path` and `CodexHookCommand.executableName` — rather than
+written out, so an instruction cannot drift from the recogniser it describes.
+Neither names a port: the ladder moves it, and the path is the marker.
+
+**Some things are left alone, and that is not a failure.** `config.toml` holds
+Codex's record of the trust decision, and AgentBar never writes that file — for
+hooks or for anything else. The orphaned `[hooks.state]` entries are inert once
+the hooks are gone, and the report says so and says how to clear them by hand.
+Counting that as a fault would make every clean uninstall look unclean.
+
+**And the reassuring answer is the one it may never give when it did not look.**
+Three places could have said *nothing there* about something they had not
+checked, and none of them does: a system directory that would not resolve, a path
+the ownership guard refused, and a login item in `.requiresApproval` — which
+means *registered and waiting on the user*, and which an `== .enabled` test read
+as "not registered at all". Each reports a failure with the conventional path or
+the System Settings pane to go to.
+
+The one recursive delete is `AgentBarDirectory.remove(at:)`, in `AgentBarIngest`
+because that is the module that defines where AgentBar's own directory is — and
+where a suite can drive a recursive delete against a scratch tree. Its guard is
+the name, standardised, plus a refusal to follow a symbolic link: `fileExists`
+follows one, so a link called `AgentBar` pointing at somebody else's directory is
+the one way a name check can be talked round. Both halves are mutation-proved.
+
+**Stopping the endpoint does not depend on it being bound.** `IngestService`
+carries a `stopRequested` flag precisely because a stop issued while a bind is in
+flight would otherwise be overtaken by the start it was meant to cancel — and
+during that window `boundEndpoint` is `nil`. The removal calls `stop()`
+unconditionally and uses the reading only to choose the wording; skipping it
+would let the in-flight start republish the discovery file and re-bind the socket
+into a directory two steps later deletes.
+
+**The self-test is dropped rather than re-run.** A clean removal stops the
+endpoint and deletes the helper, so a reading taken afterwards necessarily
+reports both as faults — with remedies that would *undo the removal* — beside a
+summary saying both tools now behave as if AgentBar had never been installed. The
+diagnostics section says *not checked* until the user asks for one.
+
+The last step is the user's. AgentBar does not delete itself: a running
+application unlinking its own bundle is a trick, and the honest end of an
+uninstall is the person doing it dragging the app away. The section offers
+`Reveal in Finder` and `Quit` and stops there.
 
 ## Concurrency
 

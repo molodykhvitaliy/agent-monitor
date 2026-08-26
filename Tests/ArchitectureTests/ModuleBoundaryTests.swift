@@ -110,7 +110,12 @@ struct ModuleBoundaryTests {
         // Network.framework would have said nothing about the one module that
         // actually connects outwards. `CodexAdapter` holds the helper's relay;
         // `AgentBarPower` and `AgentBarIngest` need none of it.
-        "Darwin": ["CodexAdapter"],
+        //
+        // The helper's entry point drains stdin and the app reads its own
+        // `proc_pid_rusage` for the diagnostics surface, so both app targets
+        // import it too. Neither is a widening of the socket rule: the outbound
+        // syscalls have their own check below, and it runs over `Apps/` as well.
+        "Darwin": ["CodexAdapter", "AgentBar", "agentbar-helper"],
         // A power assertion is process-owned and released when the process
         // dies, which is the whole reason AgentBar takes one instead of
         // spawning `caffeinate`. One owner means one release path: an
@@ -216,16 +221,35 @@ struct ModuleBoundaryTests {
         )
     }
 
+    @Test("Every scanned tree is a directory with Swift in it")
+    func scannedTreesExist() throws {
+        let trees = try SourceTree.scannableTrees()
+        #expect(!trees.isEmpty, "nothing to scan — the scanner is looking in the wrong place")
+        for target in SourceTree.appTargets {
+            #expect(
+                trees.contains { $0.name == target },
+                """
+                \(target) is not in the scanned set. The four capability guards below cover \
+                Apps/ as well as Sources/, and a renamed app target would silently take \
+                1 600 lines back out of them.
+                """
+            )
+        }
+        // A tree that cannot be enumerated records its own issue inside
+        // `imports`; asking for them here is what makes that fire.
+        for tree in trees { _ = try SourceTree.imports(in: tree) }
+    }
+
     @Test("A restricted framework appears only where it is allowed")
     func restrictedFrameworksStayPut() throws {
-        let moduleNames = try SourceTree.moduleNames()
+        let trees = try SourceTree.scannableTrees()
         for (framework, allowed) in Self.frameworksRestrictedToModules {
-            for module in moduleNames.sorted() where !allowed.contains(module) {
-                let imports = try SourceTree.imports(inModule: module)
+            for tree in trees where !allowed.contains(tree.name) {
+                let imports = try SourceTree.imports(in: tree)
                 #expect(
                     !imports.contains(framework),
                     """
-                    \(module) imports \(framework), which only \(allowed.sorted()) may. \
+                    \(tree.name) imports \(framework), which only \(allowed.sorted()) may. \
                     Opening a socket outside AgentBarIngest is how the loopback-only \
                     guarantee in ADR-0002 stops being true — see docs/dev/tos-boundary.md.
                     """
@@ -234,16 +258,14 @@ struct ModuleBoundaryTests {
         }
     }
 
-    @Test("Nothing under Sources can originate a request to a remote host")
+    @Test("Nothing first-party can originate a request to a remote host")
     func noRemoteClientExists() throws {
-        let moduleNames = try SourceTree.moduleNames()
-        #expect(!moduleNames.isEmpty, "no modules found — the scanner looked in the wrong place")
-        for module in moduleNames.sorted() {
-            let hits = try SourceTree.occurrences(of: Self.remoteClientSymbols, inModule: module)
+        for tree in try SourceTree.scannableTrees() {
+            let hits = try SourceTree.occurrences(of: Self.remoteClientSymbols, in: tree)
             #expect(
                 hits.isEmpty,
                 """
-                \(module) references \(hits.sorted()). AgentBar answers connections and \
+                \(tree.name) references \(hits.sorted()). AgentBar answers connections and \
                 originates none; a remote HTTP client in the graph is the failure \
                 docs/dev/tos-boundary.md §5.2 exists to prevent.
                 """
@@ -253,13 +275,13 @@ struct ModuleBoundaryTests {
 
     @Test("Nothing outside the helper's relay dials out with a syscall")
     func noRawOutboundConnectionExists() throws {
-        let moduleNames = try SourceTree.moduleNames()
-        for module in moduleNames.sorted() where !Self.outboundSyscallsAllowedIn.contains(module) {
-            let hits = try SourceTree.occurrences(of: Self.outboundSyscalls, inModule: module)
+        let trees = try SourceTree.scannableTrees()
+        for tree in trees where !Self.outboundSyscallsAllowedIn.contains(tree.name) {
+            let hits = try SourceTree.occurrences(of: Self.outboundSyscalls, in: tree)
             #expect(
                 hits.isEmpty,
                 """
-                \(module) references \(hits.sorted()). Opening a socket by hand outside \
+                \(tree.name) references \(hits.sorted()). Opening a socket by hand outside \
                 \(Self.outboundSyscallsAllowedIn.sorted()) is how the loopback-only guarantee \
                 in ADR-0002 stops being true without anybody noticing.
                 """
@@ -269,14 +291,14 @@ struct ModuleBoundaryTests {
 
     @Test("Nothing outside the App Server client spawns a process")
     func noOtherModuleSpawns() throws {
-        let moduleNames = try SourceTree.moduleNames()
-        for module in moduleNames.sorted() where !Self.spawnAllowedIn.contains(module) {
-            let hits = try SourceTree.occurrences(of: Self.spawnSymbols, inModule: module)
+        let trees = try SourceTree.scannableTrees()
+        for tree in trees where !Self.spawnAllowedIn.contains(tree.name) {
+            let hits = try SourceTree.occurrences(of: Self.spawnSymbols, in: tree)
             #expect(
                 hits.isEmpty,
                 """
-                \(module) references \(hits.sorted()). Only \(Self.spawnAllowedIn.sorted()) may \
-                spawn a child, because only one module can be held to killing it — see \
+                \(tree.name) references \(hits.sorted()). Only \(Self.spawnAllowedIn.sorted()) \
+                may spawn a child, because only one module can be held to killing it — see \
                 docs/dev/architecture.md.
                 """
             )

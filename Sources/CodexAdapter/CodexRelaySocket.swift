@@ -18,6 +18,10 @@ enum RelaySocketError: Error, Sendable, Hashable, CustomStringConvertible {
     case pollFailed(Int32)
     case writeFailed(Int32)
     case readFailed(Int32)
+    /// The kernel refused to arm a send or receive timeout, so the exchange
+    /// would have been unbounded. Reported rather than ignored: an unbounded
+    /// syscall in the helper is an agent that waits on it.
+    case timeoutRefused(Int32)
 
     var description: String {
         switch self {
@@ -29,6 +33,8 @@ enum RelaySocketError: Error, Sendable, Hashable, CustomStringConvertible {
         case .pollFailed(let code): "poll(): \(String(cString: strerror(code)))"
         case .writeFailed(let code): "write(): \(String(cString: strerror(code)))"
         case .readFailed(let code): "read(): \(String(cString: strerror(code)))"
+        case .timeoutRefused(let code):
+            "setsockopt(SO_SNDTIMEO/SO_RCVTIMEO): \(String(cString: strerror(code)))"
         }
     }
 }
@@ -192,15 +198,37 @@ enum RelaySocket {
         return descriptor
     }
 
-    private static func configure(
+    /// Arms the kernel's own send and receive timeouts for what is left of the
+    /// budget.
+    ///
+    /// > **A spent budget is a refusal, not a zero.** POSIX documents a
+    /// > `SO_SNDTIMEO` or `SO_RCVTIMEO` of `{0, 0}` as *no timeout at all*, so
+    /// > rounding a sub-microsecond remainder down to zero would arm the exact
+    /// > inverse of what was asked — an unbounded blocking call on the one
+    /// > process that must never outlive the agent that spawned it. `timeval`
+    /// > floors at one microsecond and this throws when there is genuinely
+    /// > nothing left, so neither path can produce that value.
+    /// Internal rather than private so `RelayTimeoutConversionTests` can drive
+    /// it against a real descriptor: the guard below is unreachable through
+    /// `exchange`, where `connect` gives up on a spent budget first, and a
+    /// guard nothing can reach is a guard nothing proves.
+    static func configure(
         _ descriptor: Int32, timeouts: RelayTimeouts, deadline: ContinuousClock.Instant
     ) throws {
         let left = remaining(until: deadline)
+        guard left > .zero else { throw RelaySocketError.timedOut }
         var send = timeval(for: min(timeouts.send, left))
         var receive = timeval(for: min(timeouts.reply, left))
         let size = socklen_t(MemoryLayout<timeval>.size)
-        setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &send, size)
-        setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &receive, size)
+        // Both results are checked. A refused `setsockopt` leaves the socket
+        // blocking with no timeout, which is the failure this whole function
+        // exists to prevent, and it must not be invisible.
+        guard setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &send, size) == 0 else {
+            throw RelaySocketError.timeoutRefused(errno)
+        }
+        guard setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &receive, size) == 0 else {
+            throw RelaySocketError.timeoutRefused(errno)
+        }
     }
 
     // MARK: - Transfer
@@ -243,9 +271,12 @@ enum RelaySocket {
         var reply = Data()
         var buffer = [UInt8](repeating: 0, count: 512)
         while reply.count < limit, remaining(until: deadline) > .zero {
-            let remaining = limit - reply.count
+            // Not named `remaining`: the loop condition above calls the static
+            // `remaining(until:)`, and a local of that name in the same scope
+            // leaves the reader working out which one each line means.
+            let wanted = limit - reply.count
             let count = buffer.withUnsafeMutableBytes { destination in
-                recv(descriptor, destination.baseAddress, min(destination.count, remaining), 0)
+                recv(descriptor, destination.baseAddress, min(destination.count, wanted), 0)
             }
             if count > 0 {
                 reply.append(contentsOf: buffer[0..<count])
@@ -273,11 +304,22 @@ enum RelaySocket {
         return carried ? Int32.max : Int32(clamping: total)
     }
 
-    private static func timeval(for duration: Duration) -> Darwin.timeval {
+    /// A socket timeout, floored at one microsecond.
+    ///
+    /// The floor is the whole point. `{0, 0}` means *block for ever* to
+    /// `SO_SNDTIMEO` and `SO_RCVTIMEO`, so truncating a duration shorter than a
+    /// microsecond would turn the tightest budget into no budget — the one
+    /// direction this conversion may not fail in. The sibling
+    /// `milliseconds(_:)` truncates to `0` safely because `poll` reads that as
+    /// *return immediately*, which is the safe direction there.
+    static func timeval(for duration: Duration) -> Darwin.timeval {
         let components = duration.components
-        return Darwin.timeval(
-            tv_sec: Int(clamping: components.seconds),
-            tv_usec: Int32(clamping: components.attoseconds / 1_000_000_000_000))
+        let seconds = Int(clamping: components.seconds)
+        let microseconds = Int32(clamping: components.attoseconds / 1_000_000_000_000)
+        guard seconds > 0 || microseconds > 0 else {
+            return Darwin.timeval(tv_sec: 0, tv_usec: 1)
+        }
+        return Darwin.timeval(tv_sec: seconds, tv_usec: microseconds)
     }
 }
 
@@ -299,7 +341,7 @@ public struct RelayTimeouts: Sendable, Hashable {
     public var reply: Duration
 
     public init(
-        total: Duration = .milliseconds(500),
+        total: Duration = .milliseconds(400),
         connect: Duration = .milliseconds(100),
         send: Duration = .milliseconds(200),
         reply: Duration = .milliseconds(150)

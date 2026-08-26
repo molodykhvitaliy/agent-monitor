@@ -4,11 +4,39 @@ import Testing
 /// Reads the checked-out sources. Anchored on `#filePath` so it resolves the
 /// real working tree rather than a build sandbox.
 enum SourceTree {
-    static let sourcesDirectory = URL(filePath: #filePath)
+    static let repositoryRoot = URL(filePath: #filePath)
         .deletingLastPathComponent()  // ArchitectureTests
         .deletingLastPathComponent()  // Tests
         .deletingLastPathComponent()  // repository root
-        .appending(path: "Sources", directoryHint: .isDirectory)
+
+    static let sourcesDirectory = repositoryRoot.appending(
+        path: "Sources", directoryHint: .isDirectory)
+
+    /// The two bundles in `Apps/`, scanned as if they were modules.
+    ///
+    /// > **They are not modules and the guards apply to them anyway.** `Apps/`
+    /// > holds the assembly point and the Codex helper's entry point — about
+    /// > sixteen hundred lines including all the provider trust logic — and
+    /// > until this existed every boundary test scanned `Sources/` only. Nothing
+    /// > there violated any of them, which is not the same as nothing being able
+    /// > to: a `URLSession` or a `Process()` in `AgentBarMain.swift` would have
+    /// > passed `make check` completely, and the assembly point is exactly where
+    /// > a future edit reaches for both.
+    /// >
+    /// > They are kept out of `moduleNames()` because the dependency table
+    /// > mirrors `Package.swift` and these two have no entry there. The checks
+    /// > that are about *capability* rather than about the module graph run over
+    /// > `scannableTrees()`, which is both.
+    static let appTargets = ["AgentBar", "agentbar-helper"]
+
+    static let appsDirectory = repositoryRoot.appending(
+        path: "Apps", directoryHint: .isDirectory)
+
+    /// A directory the scanners walk, and the name it is reported under.
+    struct Tree: Hashable {
+        let name: String
+        let url: URL
+    }
 
     static func moduleNames() throws -> Set<String> {
         let entries = try FileManager.default.contentsOfDirectory(
@@ -23,8 +51,28 @@ enum SourceTree {
         )
     }
 
+    /// Every first-party Swift tree: the modules, then the two app targets.
+    static func scannableTrees() throws -> [Tree] {
+        let modules = try moduleNames().sorted().map {
+            Tree(name: $0, url: sourcesDirectory.appending(path: $0, directoryHint: .isDirectory))
+        }
+        let apps = appTargets.map {
+            Tree(name: $0, url: appsDirectory.appending(path: $0, directoryHint: .isDirectory))
+        }
+        return modules + apps
+    }
+
     static func imports(inModule module: String) throws -> Set<String> {
-        let root = sourcesDirectory.appending(path: module, directoryHint: .isDirectory)
+        try imports(
+            in: sourcesDirectory.appending(path: module, directoryHint: .isDirectory),
+            named: module)
+    }
+
+    static func imports(in tree: Tree) throws -> Set<String> {
+        try imports(in: tree.url, named: tree.name)
+    }
+
+    private static func imports(in root: URL, named module: String) throws -> Set<String> {
         var found: Set<String> = []
         var sawSwiftFile = false
 
@@ -51,7 +99,19 @@ enum SourceTree {
     /// Text matching, like the import scan: a symbol inside a string literal is
     /// reported too, which is the direction this check is allowed to fail in.
     static func occurrences(of symbols: [String], inModule module: String) throws -> [String] {
-        let root = sourcesDirectory.appending(path: module, directoryHint: .isDirectory)
+        try occurrences(
+            of: symbols,
+            in: sourcesDirectory.appending(path: module, directoryHint: .isDirectory),
+            named: module)
+    }
+
+    static func occurrences(of symbols: [String], in tree: Tree) throws -> [String] {
+        try occurrences(of: symbols, in: tree.url, named: tree.name)
+    }
+
+    private static func occurrences(
+        of symbols: [String], in root: URL, named module: String
+    ) throws -> [String] {
         guard let walker = FileManager.default.enumerator(atPath: root.path(percentEncoded: false))
         else {
             Issue.record("cannot enumerate \(root.path(percentEncoded: false))")

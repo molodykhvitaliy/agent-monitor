@@ -1305,14 +1305,14 @@ it never scrolls horizontally.
 
 **Added in v2**, and the one part of the mock this window had refused. The
 argument for refusing it was that there was no split view to give a selection
-fill to; the answer is that there is one now, because a settings window with
-seven sections and no navigation is a window you scroll to find things in.
+fill to; the answer is that there is one now, because a settings window with nine
+sections and no navigation is a window you scroll to find things in.
 
 A fixed 212 pt column: the app's mark and name, a hairline, then one row per
 section. The rows are `Notifications`, `Quiet Hours`, `While You're Working`,
-`Sounds`, `Caffeine`, `General` and `About` — the last two beyond what the mock
-drew, because the mock did not know about them and dropping either would have
-hidden a real setting. The mock's width is 200; the extra twelve points are what
+`Sounds`, `Caffeine`, `General`, `Diagnostics`, `About` and `Remove AgentBar` —
+the last four beyond what the mock drew, because the mock did not know about them
+and dropping any of them would have hidden a real surface. The mock's width is 200; the extra twelve points are what
 *While You're Working* needs at the system's own sidebar text size, and shrinking
 the text to fit a mock is the wrong way round.
 
@@ -1410,7 +1410,9 @@ begin rather than running under them.
 | `Sounds` | **Add Sound File…**, **Reveal Sounds Folder**, and every current sound problem |
 | `Caffeine` | The three-state setting, a live status line, and the limitation |
 | `General` | Launch at login, and its last error if it has one |
+| `Diagnostics` | The self-test, the endpoint's counters, this process's own resources, and the last hundred lines the endpoint reported — see below |
 | `About` | The running version, and the one claim about this app worth making in the interface: it reads what the two tools already tell it, on this Mac only, and makes no network request to Anthropic or OpenAI. Added in v2 so the sidebar's last row leads somewhere |
+| `Remove AgentBar` | The uninstaller, and the report it leaves — see below |
 
 Section headers use the panel's `sectionLabel` — 11 pt semibold, uppercase,
 tracked — in `ink400`. Every section has a footnote in Caption explaining the one
@@ -1529,6 +1531,96 @@ Beneath it, one live status line carrying the state shape as well as the sentenc
 `Caffeine is off`, or the system's own refusal in `stateFailed`. It is shown for
 **every** setting, including `Never`: a Caffeine switched off beside three working
 agents is exactly the situation a user opens this window to understand.
+
+### The Diagnostics section
+
+**Added in step 11.** The surface a user reaches when nothing is happening, and
+the reason it exists is a consequence of a rule rather than a feature request:
+AgentBar answers every hook with success whatever happens, so a payload it could
+not decode is invisible to the agent that sent it. Before this the only record
+was Console.app, which is not an answer to give a user.
+
+Three blocks, in the order the question gets answered.
+
+**The self-test.** One summary line carrying the worst verdict — pass, warn or
+fail, each with its own shape as well as its own ink, the same rule every row in
+this app follows — then one row per check: the loopback endpoint, each
+provider's hooks, the Codex helper, notification authorisation, and the power
+assertion. Each row is `title · detail`, with a remedy beneath it in the
+verdict's colour **when there is one to give**. A check that failed with invented
+advice would be worse than one that says only what it found. The provider rows
+read the same `IntegrationStatus` the panel's card does, so the two surfaces
+cannot disagree.
+
+**Warn is a real rung, not a soft fail.** `Not connected` is a choice as often as
+a fault, and `Installed, not trusted` is neither working nor broken. Painting
+either red would make the surface that exists to explain silence the thing that
+misexplains it. The two rungs that *are* failures are the ones where AgentBar
+itself is the problem: it is not listening, or it cannot read the file it would
+have to write.
+
+**Every rung but `Connected` ends with something to do.** A provider's second
+line is a diagnosis on some rungs and already an instruction on others, so the
+button on the panel's card is appended where it is missing rather than assumed —
+a diagnostics row with no next step is a row telling the user they are stuck.
+
+**The counters.** Ten numbers in monospaced digits: deliveries, applied, ignored,
+and the seven ways a request can be turned away. The seven are drawn in
+`stateFailed` when non-zero. They are not errors on their own — one unauthorised
+request is a hook still carrying an old token, which the panel offers to repair —
+but they are what a person scanning this block should see first.
+
+**The log.** The last hundred lines the endpoint reported, newest first, with the
+time in monospaced digits and the message in its severity's ink. Selectable.
+Empty is a sentence rather than an absence.
+
+`Run Again` re-takes the reading; `Copy` puts the whole report on the clipboard
+as plain text, which is what a bug report needs. The window takes one reading on
+appearance and never on a timer: it reads both providers' configuration files.
+
+### The Remove AgentBar section
+
+**Added in step 11**, and it is the one place the safe-superset rule was not
+actually being held: a deleted app left nine hooks in each provider's
+configuration, calling an endpoint that no longer answers.
+
+At rest: one destructive button, **Remove AgentBar's Hooks and Files…**, and a
+footnote saying why it exists — moving the app to the Trash does not remove its
+hooks. The confirmation dialog lists exactly what will be removed and states that
+each configuration file is backed up beside itself and that nothing anyone else
+put there is touched.
+
+Afterwards, the report replaces nothing and is added beneath: a summary line, then
+one row per step carrying `title · location · verdict`. Four verdicts, each with
+its own shape:
+
+| Verdict | Shape and ink | Means |
+|---|---|---|
+| `Removed` | working disc, `connected` | Something was actually removed. The detail names the backup **and its pattern**, because each installer keeps five |
+| `Nothing there` | idle ring, `ink400` | Nothing of AgentBar's was there. Never drawn as a fault: it is the outcome of removing twice |
+| `Left alone` | unknown shape, `stateUnknown` | AgentBar found something of its own and is not allowed to touch it. Carries a remedy. `~/.codex/config.toml` is the case this exists for |
+| `Still there` | failed shape, `stateFailed` | The removal did not happen. Carries the reason **and** a remedy naming the exact file and what to look for in it |
+
+Both remedy lines are selectable, because they are lines a person acts on.
+
+**`Nothing there` is the answer this section may never guess at.** Three rungs
+could have given it about something they had not checked — a system directory
+that would not resolve, a path the ownership guard refused, a login item in
+`.requiresApproval` — and all three report a failure with somewhere to go
+instead.
+
+**The Diagnostics section goes quiet after a removal.** The self-test taken
+afterwards would necessarily report the endpoint as `not listening` and the Codex
+helper as `not deployed`, with remedies that undo the removal, beside a summary
+saying nothing is left. It says *not checked*, and why, until the user asks.
+
+The section ends where AgentBar's authority does: *"AgentBar itself is still
+where you put it. Quit it, then move it to the Trash,"* with one caption beneath
+it — *sessions that are already running keep the old configuration until they
+end*, because both tools read their hook configuration at session start — and
+**Reveal AgentBar in Finder** and **Quit AgentBar**. The app does not delete itself — a running
+application unlinking its own bundle is a trick, and the last step of an
+uninstall belongs to the person doing it.
 
 ---
 

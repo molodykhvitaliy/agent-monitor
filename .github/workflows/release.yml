@@ -108,6 +108,24 @@ jobs:
           # Path only — never the password.
           echo "SIGNING_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
 
+      # `make lint` needs swiftlint and `make verify-bundle` needs xcodegen;
+      # neither ships on the image. xcbeautify does, and swift-format comes with
+      # the toolchain. Same line as ci.yml, deliberately.
+      - name: Install tooling
+        run: brew install xcodegen swiftlint
+
+      # The guard job above exists because a tag can point at a commit whose CI
+      # run was skipped. The same argument covers the suite: without this, a tag
+      # on a red commit produces a signed, notarized DMG. `check` is lint, tests,
+      # the ToS scan and the generated-model check; `verify-bundle` is the layout
+      # every later step depends on, and it builds the app, so `build-release.sh`
+      # finds a warm derived-data tree rather than paying for a second cold build.
+      - name: Test and verify the bundle
+        run: |
+          set -euo pipefail
+          make check
+          make verify-bundle
+
       - name: Build release
         env:
           SIGNING_ENABLED: ${{ steps.signing.outputs.enabled }}

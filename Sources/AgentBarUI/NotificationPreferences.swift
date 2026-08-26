@@ -308,4 +308,34 @@ public protocol SettingsServices: AnyObject {
     func caffeine() -> CaffeineIndicator
 
     func setCaffeine(_ setting: CaffeineSetting)
+
+    // MARK: - Diagnostics
+
+    /// Runs the self-test and gathers everything the diagnostics section shows.
+    ///
+    /// Touches the disk — it reads both providers' configuration — so it is
+    /// called when the window appears and when the user asks, never on a timer.
+    func diagnostics() async -> DiagnosticsReport
+
+    /// Puts the report on the clipboard, which is what a bug report needs.
+    func copyToPasteboard(_ text: String)
+
+    // MARK: - Removal
+
+    /// Takes AgentBar's hooks out of both providers' configuration and deletes
+    /// the files it created, reporting each one separately.
+    ///
+    /// Never throws and never stops early: every step in the report ran, and a
+    /// step that could not be carried out comes back as a `failed` carrying the
+    /// instruction the user needs. See `RemovalReport`.
+    func removeEverything() async -> RemovalReport
+
+    /// Shows `AgentBar.app` in the Finder, so the last step — moving it to the
+    /// Trash — is one the user can take without going looking for it. AgentBar
+    /// deliberately does not delete itself: a running application unlinking its
+    /// own bundle is a trick, and the honest end of an uninstall is the user
+    /// dragging it away.
+    func revealApplication()
+
+    func quitApplication()
 }

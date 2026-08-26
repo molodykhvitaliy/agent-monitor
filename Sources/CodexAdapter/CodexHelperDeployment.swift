@@ -132,12 +132,34 @@ public struct CodexHelperDeployment {
         return attributes[.posixPermissions] as? NSNumber ?? NSNumber(value: 0o755)
     }
 
+    /// Whether the file already at the destination is the one that would be
+    /// written.
+    ///
+    /// > **Size and mode before bytes.** `deploy()` runs on every status read,
+    /// > and `contentsEqual` on a 2.2 MB binary is a full compare of both files.
+    /// > Two files of different lengths cannot be equal, and the attributes are
+    /// > one `stat` each — which this already needed for the mode check. The
+    /// > byte compare stays as the answer, and is simply not reached in the case
+    /// > where it could only say no.
     private func deployedHelperMatches(sourcePath: String, mode: NSNumber) throws -> Bool {
         let destinationPath = destinationURL.path(percentEncoded: false)
-        return try fileManager.fileExists(atPath: destinationPath)
-            && fileManager.contentsEqual(atPath: sourcePath, andPath: destinationPath)
-            && Self.mode(of: destinationURL, fileManager: fileManager) == mode
-            && Self.isExecutableRegularFile(at: destinationURL, fileManager: fileManager)
+        guard fileManager.fileExists(atPath: destinationPath),
+            Self.isExecutableRegularFile(at: destinationURL, fileManager: fileManager),
+            try Self.mode(of: destinationURL, fileManager: fileManager) == mode,
+            let destinationSize = try Self.size(of: destinationPath, fileManager: fileManager),
+            let sourceSize = try Self.size(of: sourcePath, fileManager: fileManager),
+            destinationSize == sourceSize
+        else { return false }
+        return fileManager.contentsEqual(atPath: sourcePath, andPath: destinationPath)
+    }
+
+    /// The file's length in bytes, or `nil` when the attribute is not there to
+    /// read. A `nil` fails the guard above and so redeploys — the safe
+    /// direction, because a redeploy is an atomic copy and a wrong *match* is a
+    /// stale helper Codex would go on running.
+    private static func size(of path: String, fileManager: FileManager) throws -> Int? {
+        let attributes = try fileManager.attributesOfItem(atPath: path)
+        return (attributes[.size] as? NSNumber)?.intValue
     }
 
     private static func isExecutableRegularFile(at url: URL, fileManager: FileManager) -> Bool {

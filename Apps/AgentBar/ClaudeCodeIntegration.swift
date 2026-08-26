@@ -97,20 +97,14 @@ final class ClaudeCodeIntegration: ProviderIntegration {
         case .settingsUnreadable(let reason):
             condition = .settingsUnreadable
             detail = reason
-        case .needsRepair(let drift):
+        case .needsRepair:
             condition = .needsRepair
-            // Every drift case already carries a finished English sentence.
-            // Show the first and count the rest; the card formats nothing.
-            detail = drift.first.map { first in
-                drift.count > 1
-                    ? "\(first.description) and \(drift.count - 1) more"
-                    : first.description
-            }
-            // A repairable drift does not normally silence the integration —
-            // except `urlNotAllowed`, where the handlers are configured and not
-            // one of them will run. That distinction is what decides whether an
-            // empty panel says "All quiet" or shows the onboarding card.
-            preventsEvents = drift.contains(.urlNotAllowed)
+            // Both sentences come from the report itself, in `ClaudeCodeAdapter`
+            // where a suite reaches them. What is left here is the join onto the
+            // UI's vocabulary, which is the one thing that cannot move: no
+            // adapter may import `AgentBarUI`.
+            detail = report.driftSummary
+            preventsEvents = report.silencesEveryHandler
         }
 
         return IntegrationStatus(

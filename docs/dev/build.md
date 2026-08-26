@@ -269,10 +269,11 @@ AgentBar.app/Contents/
 Bundle identifier `com.molodykhvitalii.AgentBar`; the helper is
 `com.molodykhvitalii.AgentBar.helper`.
 
-**The helper ships inside the app as a signed deployment source.** Before Codex
-status or installation is evaluated, AgentBar atomically copies it to
-`~/Library/Application Support/AgentBar/bin/agentbar-helper`, preserving its
-executable mode. All hooks name that stable AgentBar-owned path because Codex
+**The helper ships inside the app as a signed deployment source.** At launch, and
+again when the user presses `Connect` or `Repair`, AgentBar atomically copies it
+to `~/Library/Application Support/AgentBar/bin/agentbar-helper`, preserving its
+executable mode. Deliberately **not** on every status read: a report that writes
+is a report that undoes an uninstall the moment the panel next opens. All hooks name that stable AgentBar-owned path because Codex
 trust covers the complete hook definition, including the command. Debug,
 distribution and installed copies can therefore refresh the executable without
 rewriting the command or causing repeated trust drift
@@ -286,6 +287,27 @@ sandbox forbids, and which is why the Mac App Store is a stated non-goal.
 Local and CI builds sign ad-hoc (`CODE_SIGN_IDENTITY = "-"`), so a clean
 checkout builds with no Apple Developer account. Developer ID signing, the
 hardened runtime and notarization arrive with step 12.
+
+## Two things a clean checkout cannot rebuild
+
+**The four notification sounds.** The `.aiff` files are committed, so a build is
+reproducible; what is not in the repository is what they were authored from.
+`scripts/make-sounds.py` converts rather than synthesises, and it defaults to
+`.scratch/audio-pack`, which is local-only and never committed
+([ADR-0010](../adr/ADR-0010-notification-sounds-are-an-authored-pack.md)). To
+change a sound, put the new source in that folder on the machine that has it and
+re-run the script; the script is committed so the encoding stays in one place.
+On any other machine, the committed `.aiff` files are the source.
+
+**A string catalogue, because there is not one.** There are 93
+`String(localized:comment:)` call sites and **no `.xcstrings`, no `.lproj` and no
+`defaultLocalization`**. At runtime every call falls back to its key, which is
+the English text, so the interface is correct — this is a recorded decision to
+ship English-only rather than an oversight. Two consequences worth knowing before
+anybody adds a catalogue: nothing is extractable today, so the 93 `comment:`
+strings reach no tool; and a catalogue added to `AgentBarUI` will need
+`bundle: .module` at every call site, because `String(localized:)` resolves
+against `Bundle.main`.
 
 ## Continuous integration
 

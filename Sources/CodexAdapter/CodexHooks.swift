@@ -77,7 +77,38 @@ extension CodexHookHandler {
     /// seconds"*, and it runs synchronously whatever `async` says. Asking for
     /// more than the default would lengthen shutdown for a value AgentBar does
     /// not need: the relay finishes in a few milliseconds or gives up.
+    ///
+    /// It is also the number `worstCaseHelperRun` is measured against, and
+    /// raising it is not the cheap way out of a tight margin: Codex keys hook
+    /// trust to the hash of the whole definition, so a changed timeout sends
+    /// every user back to `/hooks` to re-approve a hook they had already
+    /// approved.
     public static let sessionEndTimeout = 1
+
+    /// What a helper process may cost before its own code starts.
+    ///
+    /// Everything the helper *decides* is bounded by two constants it owns —
+    /// `StandardInput.defaultCeiling` and `RelayTimeouts.total` — and neither of
+    /// them can see the part that comes first: `execve`, dyld loading a 2.2 MB
+    /// binary and linking `CodexAdapter`, all before `main.swift` reads a byte.
+    /// `HelperTimingProof` measured that whole run at p50 8.5 ms and **74.2 ms
+    /// max over forty runs on an idle Mac**, so 150 ms is twice the worst
+    /// observed and is deliberately an allowance rather than a measurement — it
+    /// is a number the budget below is held to, not one the helper enforces.
+    public static let helperSpawnAllowance: Duration = .milliseconds(150)
+
+    /// The longest a helper process can take on any path, spawn included.
+    ///
+    /// > **The arithmetic that used to omit its first term.** The drain's
+    /// > ceiling and the relay's total were chosen against each other and their
+    /// > sum described as "the worst path", which left the process start-up out
+    /// > of a budget whose whole purpose is to fit inside a platform timeout.
+    /// > `CodexHooksTests` asserts this against `sessionEndTimeout`, so the next
+    /// > change to either constant has to answer for the margin rather than
+    /// > rediscover it.
+    public static var worstCaseHelperRun: Duration {
+        helperSpawnAllowance + StandardInput.defaultCeiling + RelayTimeouts().total
+    }
 
     /// The handlers the MVP installs, in the order they are written.
     ///
