@@ -222,6 +222,7 @@ The Xcode project is generated from `project.yml` and is not committed.
 |---|---|
 | [CONTRIBUTING.md](CONTRIBUTING.md) | how to build, check and propose a change |
 | [SECURITY.md](SECURITY.md) | reporting a vulnerability, and what is in scope |
+| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | the terms of participation, and who actually reads a report |
 | [CLAUDE.md](CLAUDE.md) | project instructions (also `AGENTS.md`) |
 | [docs/dev/architecture.md](docs/dev/architecture.md) | module boundaries, domain model |
 | [docs/dev/build.md](docs/dev/build.md) | build system, toolchain, bundle layout, distribution |

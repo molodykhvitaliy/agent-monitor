@@ -98,3 +98,7 @@ the ADR is part of the change.
 
 Bugs and features go through the issue templates. For anything security-shaped,
 read [SECURITY.md](SECURITY.md) first — please do not open a public issue for it.
+
+Participation here is covered by the [Code of Conduct](CODE_OF_CONDUCT.md), which
+also says plainly that this project has one maintainer rather than a moderation
+team, and where to go when that is not the right address.

@@ -1,0 +1,21 @@
+version: 2
+
+# Only GitHub Actions. AgentBar has no package dependencies — `Package.swift`
+# declares none, and that is a property worth keeping rather than a gap to fill.
+#
+# The actions are pinned to commit SHAs, which is the right way to depend on
+# somebody else's code in a workflow that can publish a release. The cost of a
+# SHA pin is that it goes stale silently: nothing tells you the tag moved, or
+# that the version you froze had a security fix six months ago. This is what
+# tells you.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "ci"
+    labels:
+      - dependencies
+    # One pull request per run, so a quiet repository does not wake up to four.
+    open-pull-requests-limit: 2
