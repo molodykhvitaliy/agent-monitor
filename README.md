@@ -120,7 +120,8 @@ bundle.
 
 ## Downloading instead
 
-Each tagged release carries `AgentBar-<version>.zip` and its SHA-256. That build
+Every [tagged release](https://github.com/molodykhvitaliy/agent-monitor/releases)
+carries `AgentBar-<version>.zip` and its SHA-256. That build
 is **ad-hoc signed and not notarized**, because notarization requires the
 membership this project does not have. macOS quarantines anything a browser
 downloads, so Gatekeeper will refuse it until you say otherwise:
@@ -167,12 +168,12 @@ and **Remove AgentBar**.
 
 <img src="docs/assets/screenshots/diagnostics.png" alt="The Diagnostics settings section: a self-test reporting the loopback endpoint, both hook integrations, the helper, notification permission and the wake assertion, followed by the endpoint's delivery counters and the recent deliveries it logged" width="880">
 
-AgentBar answers **every** hook with success whatever happens, because a hook that
-fails is a hook that can stall the agent that called it. The cost of that promise
-is that a payload it could not read is invisible to the agent — so Diagnostics is
-where it becomes visible instead: a self-test over every integration, the
-endpoint's own counters, this process's resource use, and the last hundred
-deliveries it saw.
+AgentBar answers **every** hook with success whatever happens, because the one
+thing a status layer must never do is change what the agent does. The cost of
+that promise is that a payload it could not read is invisible to the agent that
+sent it — so Diagnostics is where it becomes visible instead: a self-test over
+every integration, the endpoint's own counters, this process's resource use, and
+the last hundred deliveries it saw.
 
 ## Removing it
 
@@ -221,6 +222,7 @@ The Xcode project is generated from `project.yml` and is not committed.
 |---|---|
 | [CONTRIBUTING.md](CONTRIBUTING.md) | how to build, check and propose a change |
 | [SECURITY.md](SECURITY.md) | reporting a vulnerability, and what is in scope |
+| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | the terms of participation, and who actually reads a report |
 | [CLAUDE.md](CLAUDE.md) | project instructions (also `AGENTS.md`) |
 | [docs/dev/architecture.md](docs/dev/architecture.md) | module boundaries, domain model |
 | [docs/dev/build.md](docs/dev/build.md) | build system, toolchain, bundle layout, distribution |
