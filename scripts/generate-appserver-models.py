@@ -7,8 +7,9 @@ that contract by hand is how the original spec draft acquired four wrong field
 names, so the models are generated instead and CI asserts the generated file
 matches the schema it came from.
 
-Only the three account responses AgentBar actually reads are generated. The
-schema carries 248 v2 definitions; generating all of them would be a large
+Only the three account responses AgentBar actually reads are generated, along
+with the definitions those three can reach. ``schemas/appserver/v2`` holds 249
+per-file roots at Codex ``0.148.0``; generating all of them would be a large
 unused surface with no owner.
 
 Drift is caught by ``make check-generated``, which regenerates and asks git
@@ -42,6 +43,9 @@ ROOTS = [
 # records that we decline it.
 SUPPRESSED_FIELDS = {
     "ChatgptAccount.email": "AgentBar never holds the account's identity.",
+    "GetAccountTokenUsageResponse.threadUsage": (
+        "AgentBar shows what is left, never what was spent."
+    ),
 }
 
 HEADER = """\
@@ -256,8 +260,16 @@ def emit_struct(name: str, node: dict) -> list[str]:
     out = doc(node, "")
     for key in sorted(SUPPRESSED_FIELDS):
         if key.startswith(f"{name}."):
-            out.append(f"/// `{key.split('.', 1)[1]}` is deliberately not decoded — "
-                       f"{SUPPRESSED_FIELDS[key]}")
+            # Wrapped like any other doc comment: an unwrapped one is a
+            # lint failure a maintainer would have to trace back to a reason
+            # string they lengthened by a word.
+            out += doc(
+                {
+                    "description": f"`{key.split('.', 1)[1]}` is deliberately not "
+                    f"decoded — {SUPPRESSED_FIELDS[key]}"
+                },
+                "",
+            )
     out.append(f"public struct {name}: Sendable, Hashable, Decodable {{")
     for key, swift, optional, child in fields:
         out += doc(child, "    ")
@@ -371,17 +383,110 @@ def emit(name: str, node: dict) -> list[str]:
     return emit_struct(name, node)
 
 
+def referenced_types(node: object, owner: str | None = None) -> set[str]:
+    """Definition names ``node`` reaches, following the suppression list.
+
+    ``owner`` is the definition the properties belong to, which is what makes a
+    suppressed field's own subtree invisible here.
+    """
+    found: set[str] = set()
+    if isinstance(node, dict):
+        for key, child in node.items():
+            if key == "$ref" and isinstance(child, str):
+                found.add(child.rsplit("/", 1)[-1])
+            elif key == "properties" and owner is not None and isinstance(child, dict):
+                for prop, value in child.items():
+                    if f"{owner}.{prop}" in SUPPRESSED_FIELDS:
+                        continue
+                    found |= referenced_types(value)
+            elif key == "oneOf" and isinstance(child, list):
+                # A union's branches are emitted as structs under their own
+                # titles, so suppression is keyed on the branch — matching
+                # ``emit_union`` → ``emit_struct`` → ``properties_of``. Walking
+                # them under the union's name instead would let a declined
+                # branch field keep its type in the build.
+                for branch in child:
+                    title = branch.get("title") if isinstance(branch, dict) else None
+                    found |= referenced_types(branch, title)
+            else:
+                found |= referenced_types(child)
+    elif isinstance(node, list):
+        for child in node:
+            found |= referenced_types(child)
+    return found
+
+
+def reachable_definitions(definitions: dict[str, dict], roots: list[tuple[str, dict]]) -> set[str]:
+    """The definitions the generated roots can actually arrive at.
+
+    Declining a field has to drop the types only that field reached, or the
+    surface AgentBar refused to decode stays in the build under another name.
+    Pruning is otherwise inert: every definition the three roots carry is
+    reachable, so this removes nothing that anything reads.
+    """
+    seen: set[str] = set()
+    frontier: set[str] = set()
+    for name, node in roots:
+        frontier |= referenced_types(node, name)
+    while frontier:
+        name = frontier.pop()
+        if name in seen or name not in definitions:
+            continue
+        seen.add(name)
+        frontier |= referenced_types(definitions[name], name)
+    return seen
+
+
 def dependency_order(definitions: dict[str, dict]) -> list[str]:
     """Alphabetical: Swift needs no forward declarations, and stable output
     matters more than a topological order nobody reads."""
     return sorted(definitions)
 
 
+def check_suppressions_resolve(definitions: dict[str, dict], roots: list[tuple[str, dict]]) -> None:
+    """Fails when a suppression names a property the schema no longer has.
+
+    ``SUPPRESSED_FIELDS`` is keyed by plain strings, so a field renamed upstream
+    would quietly stop matching and the surface AgentBar declined would return
+    to the build with nothing to announce it. A refusal has to be checked, not
+    assumed.
+    """
+    owners: dict[str, dict] = dict(definitions)
+    owners.update(dict(roots))
+    for node in list(owners.values()):
+        for branch in node.get("oneOf", []):
+            title = branch.get("title")
+            if title:
+                owners[title] = branch
+
+    for key in sorted(SUPPRESSED_FIELDS):
+        owner, _, prop = key.partition(".")
+        node = owners.get(owner)
+        if node is None or prop not in node.get("properties", {}):
+            sys.exit(
+                f"error: suppressed field {key} is not in the schema. It was renamed or "
+                "removed upstream, so the suppression no longer refuses anything — "
+                "update SUPPRESSED_FIELDS to match the current contract."
+            )
+
+
 def generate() -> str:
     definitions, roots = load_roots()
-    suppressed = "\n".join(
-        f"//   {key} — {reason}" for key, reason in sorted(SUPPRESSED_FIELDS.items())
-    )
+    check_suppressions_resolve(definitions, roots)
+    reachable = reachable_definitions(definitions, roots)
+    definitions = {name: node for name, node in definitions.items() if name in reachable}
+    # Wrapped for the same reason the per-type note is: the header's width is
+    # decided by a reason string somebody will one day lengthen.
+    suppressed_lines: list[str] = []
+    for key, reason in sorted(SUPPRESSED_FIELDS.items()):
+        current = f"//   {key} —"
+        for word in reason.split():
+            if len(current) + 1 + len(word) > 96:
+                suppressed_lines.append(current)
+                current = "//    "
+            current += f" {word}"
+        suppressed_lines.append(current)
+    suppressed = "\n".join(suppressed_lines)
     lines = HEADER.format(suppressed=suppressed).split("\n")
     lines.append("")
     for name in dependency_order(definitions):

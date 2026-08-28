@@ -9,6 +9,8 @@
 //
 // Fields the generator deliberately omits:
 //   ChatgptAccount.email — AgentBar never holds the account's identity.
+//   GetAccountTokenUsageResponse.threadUsage — AgentBar shows what is left, never what was
+//     spent.
 
 import Foundation
 
@@ -629,6 +631,8 @@ public struct GetAccountRateLimitsResponse: Sendable, Hashable, Decodable {
     }
 }
 
+/// `threadUsage` is deliberately not decoded — AgentBar shows what is left, never what was
+/// spent.
 public struct GetAccountTokenUsageResponse: Sendable, Hashable, Decodable {
     public let dailyUsageBuckets: [AccountTokenUsageDailyBucket]?
     public let summary: AccountTokenUsageSummary

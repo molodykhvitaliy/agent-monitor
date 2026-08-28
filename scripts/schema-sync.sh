@@ -38,5 +38,9 @@ echo "App Server schema drifted:"
 diff -ru "$CHECKED_IN" "$FRESH" || true
 echo
 echo "Review the diff, run 'make generate-models', update docs/dev/platform-integration.md,"
-echo "then copy the fresh schema in with:  cp -R \"$FRESH\"/. $CHECKED_IN/"
+# `rsync --delete`, not `cp -R`: a copy adds and overwrites but never removes, so
+# a root the upstream schema drops would stay behind and this script would report
+# drift on every run for ever after — the same permanent-drift failure the
+# `diff -ruq` bug above caused, arriving through the other door.
+echo "then replace the checked-in schema with:  rsync -a --delete \"$FRESH\"/ $CHECKED_IN/"
 exit 1
