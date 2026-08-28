@@ -33,13 +33,14 @@ Mac that stays awake while work is running.
 Agents work autonomously for minutes and then stop, needing a human. AgentBar
 makes those pauses visible:
 
-- **Notifications** when an agent asks a question, waits on an approval, goes
-  quiet, finishes or fails — carrying which agent, what it needs, and which
-  project, with a configurable sound per provider and event type.
+- **Notifications** for the five moments that need you — an agent asked you
+  something, requested access, is blocked, finished its turn, or ended in an
+  error — each carrying which agent, what it needs and which project, with a
+  switch and a sound of its own per provider.
 - **Menu-bar status** — every session grouped by project, with its state, current
   tool, duration and subagent count.
-- **Codex subscription limits**, rendered from whatever usage windows the API
-  reports.
+- **Codex subscription limits**, rendered from whatever usage windows the local
+  `codex app-server` reports — never a figure AgentBar fetched itself.
 - **Caffeine** — keeps the Mac awake while an agent is working.
 - **Quiet Hours** and a **While You're Working** list, so a banner does not arrive
   in the middle of the night or on top of the app you are presenting from.
@@ -68,11 +69,11 @@ uninstalled, **both tools behave exactly as if it never existed.**
 
 | | |
 |---|---|
-| macOS | 26 or later |
-| Build | **Xcode** — not just the command-line tools; the build compiles a layered app icon with `actool` |
-| Tooling | [Homebrew](https://brew.sh), which `make bootstrap` uses to install xcodegen, swiftlint and xcbeautify |
-| Apple account | none — the build signs ad-hoc |
-| Agents | Claude Code, Codex, or both — hooks are installed for each, and a tool you do not run simply never calls them |
+| **macOS** | 26 or later |
+| **Build** | **Xcode** — not just the command-line tools; the build compiles a layered app icon with `actool` |
+| **Tooling** | [Homebrew](https://brew.sh), which `make bootstrap` uses to install xcodegen, swiftlint and xcbeautify |
+| **Apple account** | none — the build signs ad-hoc |
+| **Agents** | Claude Code, Codex, or both — hooks are installed for each, and a tool you do not run simply never calls them |
 
 The platform facts AgentBar depends on are verified against primary sources and
 recorded with a date in
