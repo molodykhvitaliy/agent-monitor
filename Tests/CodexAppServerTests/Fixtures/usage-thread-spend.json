@@ -1,0 +1,30 @@
+{
+  "summary": {
+    "lifetimeTokens": 524234972,
+    "peakDailyTokens": 150768901,
+    "longestRunningTurnSec": 9134,
+    "currentStreakDays": 11,
+    "longestStreakDays": 11
+  },
+  "dailyUsageBuckets": [
+    { "startDate": "2026-08-08", "tokens": 70989629 }
+  ],
+  "threadUsage": {
+    "threadId": "thr_0000000000000000",
+    "estimatedUsageCreditsMicros": 41200000,
+    "estimatedUsageUsdMicros": 1873400,
+    "groups": [
+      {
+        "model": "gpt-5.1-codex",
+        "reasoningEffort": "high",
+        "speed": "standard",
+        "inputTokens": 812004,
+        "cachedInputTokens": 640112,
+        "netNewInputTokens": 171892,
+        "outputTokens": 93318,
+        "totalTokens": 905322,
+        "estimatedUsageCreditsMicros": 41200000
+      }
+    ]
+  }
+}

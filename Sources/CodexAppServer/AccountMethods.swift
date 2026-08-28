@@ -5,7 +5,15 @@ import Foundation
 ///
 /// Each was checked against the binary on 2026-08-19, and the parameter column
 /// is not a detail: `account/read` is **rejected** without `params`
-/// (`-32600 missing field params`), while the other two take none at all.
+/// (`-32600 missing field params`), while `account/rateLimits/read` declares
+/// `"params": {"type": "null"}` and takes none at all.
+///
+/// `account/usage/read` took none either until `0.148.0`, which gave it an
+/// *optional* `params` carrying a `threadId`. Omitting it is still correct and
+/// is what `.omitted` sends. AgentBar does not send a `threadId`: asking for one
+/// thread's spend is how the reply comes to carry `threadUsage`, which the
+/// generated models deliberately decline. See docs/dev/platform-integration.md
+/// §3.2.
 public enum AccountMethods {
     /// Subscription limits. The one call the refresh cycle makes.
     public static let rateLimits = "account/rateLimits/read"

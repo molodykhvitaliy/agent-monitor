@@ -20,6 +20,7 @@ produce on demand.
 | `rate-limits-nonsense-numbers.json` | a percentage outside 0–100, a zero reset stamp, negative durations |
 | `account-*.json` | each `Account` branch, plus none at all and a kind that does not exist yet |
 | `usage-*.json` | the token counters, populated and entirely empty |
+| `usage-thread-spend.json` | a populated `threadUsage` — the per-thread cost the generated models refuse to decode |
 
 The rule every one of these exists to hold: **absent data renders as
 "unavailable", never as zero and never as a crash.** A fixture that decodes into

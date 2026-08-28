@@ -86,6 +86,40 @@ struct AccountDecodingTests {
         #expect(empty.dailyUsageBuckets == nil)
     }
 
+    /// The generator drops `GetAccountTokenUsageResponse.threadUsage` by policy,
+    /// for the reason it drops the account's email: AgentBar shows what a plan
+    /// has left, never what a turn cost, and a field that is never decoded
+    /// cannot be logged, stored or leaked by a later change.
+    ///
+    /// The fixture carries a fully populated one — a thread id, a dollar figure
+    /// and a per-model token breakdown — so this pins two things at once: that
+    /// the refusal holds, and that a response carrying it still decodes rather
+    /// than throwing.
+    @Test("A thread's spend is not decoded at all")
+    func neverHoldsAThreadsSpend() throws {
+        let raw = String(data: try Fixtures.data("usage-thread-spend"), encoding: .utf8) ?? ""
+        #expect(
+            raw.contains("estimatedUsageUsdMicros"),
+            "the fixture must still carry what the generator declines to read")
+
+        let usage = try Fixtures.decode(GetAccountTokenUsageResponse.self, "usage-thread-spend")
+        // The rest of the response survives: an unfamiliar key is ignored by the
+        // closed `CodingKeys` list, not treated as a malformed payload.
+        #expect(usage.summary.lifetimeTokens == 524_234_972)
+        #expect(usage.dailyUsageBuckets?.count == 1)
+
+        let fields = Mirror(reflecting: usage).children.compactMap(\.label)
+        #expect(
+            fields == ["dailyUsageBuckets", "summary"],
+            "no field may hold what a thread cost")
+        // Whatever the fields end up called, no figure from the declined branch
+        // may survive anywhere in the decoded value.
+        let described = String(describing: usage)
+        #expect(!described.contains("1873400"))
+        #expect(!described.contains("41200000"))
+        #expect(!described.contains("thr_"))
+    }
+
     @Test("A plan this build has never heard of keeps its name")
     func toleratesAnUnknownPlan() {
         #expect(PlanType(rawValue: "plus") == .plus)

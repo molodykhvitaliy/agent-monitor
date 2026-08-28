@@ -2,11 +2,20 @@
 
 Verified facts about the extension surfaces AgentBar builds on.
 
-**Verification date:** 2026-08-26 (§1 re-verified in full while building step 04;
+**Verification date:** 2026-08-28 (§1 re-verified in full while building step 04;
 `AskUserQuestion`'s `tool_input` shape added 2026-08-19 for step 06; §2
 re-verified against the hook reference and local payloads on 2026-08-26; **§3
-re-verified in full on 2026-08-19 while building step 10**)
-**Verified against:** Claude Code `2.1.233`, Codex CLI `0.148.0`, macOS `27.0`
+re-verified in full on 2026-08-19 while building step 10**; §1 and §2 re-checked
+against the current hook references on 2026-08-28 and §3's schema re-synced the
+same day, closing the platform-drift issue)
+**Verified against:** Claude Code `2.1.241`, Codex CLI `0.148.0`, macOS `27.0`
+
+> **What the 2026-08-28 re-check covered.** Every claim §1 and §2 make about the
+> events, payload fields, handler semantics, matchers and timeouts AgentBar
+> depends on was read again from the source pages. All of them held. Three things
+> had moved and are folded in below: the Notification matcher table grew (§1.7),
+> Codex now executes `mcp_tool` handlers as well as `command` ones (§2.2), and
+> the App Server schema drifted additively (§3.2). Nothing required a code change.
 
 > **Precedence rule.** Official platform documentation wins over this file, and
 > this file wins over the original `.scratch/notes/INITIAL_SPEC.md`. Every claim
@@ -73,6 +82,14 @@ Three deliberate differences from the original plan, each with a reason:
 
 Reserved for the Approve/Deny backlog item, not installed in the MVP:
 `PermissionRequest` (synchronous).
+
+> **`PostToolBatch` does not replace `PostToolUse`.** It *"[r]uns once after every
+> tool call in a batch has resolved"*, while *"`PostToolUse` fires once per tool,
+> which means it fires concurrently when Claude makes parallel tool calls"*. The
+> per-tool event is still what closes a per-tool row, so AgentBar stays on it and
+> installs no additional handler. Worth naming, because an event that sounds like a
+> batched replacement for one we depend on is exactly the kind of thing a future
+> re-verification would otherwise have to re-derive.
 
 **`WorktreeCreate` must never be installed.** Configuring it *replaces* Claude
 Code's own worktree creation — *"Because the hook replaces the default behavior
@@ -281,15 +298,40 @@ other character is present. Per-event matcher domains that matter to us:
 | `permission_prompt` | about six seconds after a permission request nobody has answered |
 | `idle_prompt` | about sixty seconds after Claude finished responding, and only if nobody has typed since |
 | `elicitation_dialog` / `elicitation_url_dialog` | six seconds after an MCP server opens a form |
+| `elicitation_complete` | an MCP server reports a URL-mode elicitation finished |
+| `elicitation_response` | an elicitation response is sent back to the server |
 | `agent_needs_input` / `agent_completed` | background sessions, **only while agent view is open in a terminal** |
 | `auth_success` | authentication completes |
+| `quota_auto_resume_fired` | Claude Code resumes a task a claude.ai usage limit had paused |
+| `quota_auto_resume_stale` | the limit reset while the machine slept for more than about thirty minutes, so it waits for `Enter` instead |
+| `quota_auto_resume_disabled` | it ends the wait without resuming |
 
-Every type name above is quoted from the documented matcher table. Only
-`permission_prompt` and `idle_prompt` have been observed on this machine; the two
-`elicitation_*` names AgentBar installs are documented and unobserved, so if they
-are ever wrong the handler is registered and simply never fires — a silent
-degradation rather than a fault, and worth re-checking the first time an MCP
-server raises one.
+Every type name above is quoted from the documented matcher table, which is
+twelve rows as of 2026-08-28. Only `permission_prompt` and `idle_prompt` have
+been observed on this machine; the two `elicitation_*` names AgentBar installs
+are documented and unobserved, so if they are ever wrong the handler is
+registered and simply never fires — a silent degradation rather than a fault,
+and worth re-checking the first time an MCP server raises one.
+
+> **A growing table costs AgentBar nothing, and it is worth knowing why.** Its
+> matcher is `permission_prompt|elicitation_dialog|elicitation_url_dialog`, which
+> contains only letters, `_` and `|` and therefore takes the **exact-match list**
+> branch of the rule above rather than the unanchored-regex branch: *"Exact
+> string, or list of exact strings separated by `|` or `,`"*. A new type name
+> cannot accidentally match one of ours by containing it, so the substring hazard
+> that would exist on the regex path does not exist here.
+>
+> The failure this arrangement does have is the opposite one: a type AgentBar
+> matches being **renamed** upstream. Exact matching means the handler is then
+> registered and silently never fires. That is what to re-check when this table
+> changes — the three names still being present, not the new ones being harmless.
+
+> **`permission_prompt` also covers a sandboxed command's network request**, and
+> that is the one prompt `PermissionRequest` is documented **not** to fire for.
+> In terminal sessions this needs Claude Code 2.1.246 or later; AgentBar is
+> verified against 2.1.241, so the case is documented and unobserved here. It
+> matters mainly to the Approve/Deny backlog item, whose design cannot assume
+> `PermissionRequest` sees every prompt a human is blocked on.
 
 > **Answering the step's research question:** `idle_prompt` does **not** mean
 > "waiting for input". It describes a human who walked away from a session that
@@ -301,9 +343,10 @@ server raises one.
 > Claude Code through the Agent SDK's `canUseTool` callback, where the
 > notification fires about six seconds after the ask and is **not** deferred by
 > typing. *"Before v2.1.233, `permission_prompt` didn't fire in these
-> sessions."* We verified against exactly 2.1.233, so this is the first version
-> where a VS Code user gets it at all — and a user on an older build will see no
-> waiting state from this source.
+> sessions."* That sentence still stands at 2.1.241, and 2.1.233 — the version
+> this was first verified against — is therefore the first where a VS Code user
+> gets it at all. A user on an older build will see no waiting state from this
+> source.
 >
 > The gap that leaves is a tool that blocks on a person without going through
 > permissions: `AskUserQuestion`. Nothing notifies for it, so the adapter maps
@@ -388,7 +431,19 @@ Structure:
 }
 ```
 
-Only `type: "command"` is executable today. Commands run **through a shell**,
+*"`command` and `mcp_tool` handlers are supported. `prompt` and `agent` handlers
+are parsed but skipped."* **AgentBar installs `command` only.** The helper is a
+compiled binary that needs nothing running, while an `mcp_tool` handler requires
+*"an already-connected MCP server"* — a dependency a monitor must not acquire,
+since its absence would be a hook that cannot fire.
+
+> **This corrects an earlier claim here that `command` was the only executable
+> type.** The App Server schema dates the change: the copy checked in from
+> `0.147.0` declared `HookHandlerType` as the enum `command | prompt | agent`,
+> and at `0.148.0` `HookMetadata` is a sum type carrying an `mcpTool` branch
+> (§3.2). Nothing AgentBar installs changes.
+
+Commands run **through a shell**,
 with the session `cwd` as their working directory — the entry already on this
 machine relies on `"$HOME"` expanding — so AgentBar single-quotes the helper's
 path rather than passing argv.
@@ -628,8 +683,9 @@ gap is caught locally, the schema→Swift gap is caught in CI, and a protocol
 change cannot reach a release with stale models behind it.
 
 Only three roots are generated — `GetAccountResponse`,
-`GetAccountRateLimitsResponse`, `GetAccountTokenUsageResponse`. The v2 schema
-carries 248 definitions and the rest have no owner here.
+`GetAccountRateLimitsResponse`, `GetAccountTokenUsageResponse` — together with
+the definitions those three can reach. `schemas/appserver/v2` holds 249 per-file
+roots at Codex `0.148.0`, and the rest have no owner here.
 
 **`schema-sync.sh` was broken until 2026-08-19** and had been since it was
 written: it ran `diff -ruq`, and BSD `diff` rejects `-u` together with `-q`
@@ -653,6 +709,44 @@ account/workspaceMessages/read
 95 methods total. Transports: stdio (default),
 `--listen ws://127.0.0.1:PORT`, `--listen unix://`.
 
+**Re-synced against `0.148.0` on 2026-08-28.** The schema moved, and every part
+of the move is either additive or outside what AgentBar reads. Recorded here so
+the next sync compares against a known baseline rather than a memory:
+
+- `GetAccountRateLimitsResponse` — the only call the refresh cycle makes —
+  **did not change at all**.
+- `GetAccountTokenUsageResponse` gained an optional `threadUsage`, carrying a
+  thread's estimated spend in credits and USD micros and its per-model token
+  counts. **AgentBar declines it**, the way it declines the account's email:
+  the panel says what a plan has left, never what a turn cost, and a field that
+  is never decoded cannot be logged or leaked by a later change. It is listed in
+  the generator's `SUPPRESSED_FIELDS`, and the generator now drops definitions
+  that only a suppressed field reached — otherwise declining a field just moves
+  its types into the build under another name.
+- The one *removal* is `HookHandlerType`, folded into a `HookMetadata` sum type
+  in `HooksListResponse` to carry Codex's new `mcpTool` hooks (§2.2). AgentBar
+  never calls `hooks/list` and generates no model for it.
+- **`account/usage/read` gained an optional `params`** — the one request-contract
+  change in this sync that touches a method AgentBar implements, and the reason
+  the new `NullableGetAccountTokenUsageParams` definition exists. It is
+  `anyOf [GetAccountTokenUsageParams, null]` and absent from `required`, where
+  `GetAccountTokenUsageParams` carries a single optional `threadId`:
+  *"When present, read estimated usage for this thread instead of account-wide
+  token activity."* `params: .omitted` therefore remains valid and no code
+  changes. **AgentBar never sends `threadId`** — the request-side half of
+  declining `threadUsage`, since asking for a thread's spend is how the reply
+  would come to carry it. This supersedes §3.3's row for this one method;
+  `account/rateLimits/read` still declares `"params": {"type": "null"}`.
+- Two thread notifications appeared — `ThreadQueueChangedNotification` and
+  `ThreadRevertedNotification` — on surfaces this module does not touch.
+- `GetAccountResponse`, the third generated root, is **unchanged**, as is
+  `GetAccountRateLimitsResponse`. Stated rather than implied: "not in the diff"
+  is only evidence if somebody wrote down that they looked.
+
+A drift that only adds optional fields is invisible to these models by
+construction: each generated type decodes a closed `CodingKeys` list, so an
+unfamiliar key is ignored rather than fatal.
+
 ### 3.3 Handshake and wire format
 
 `initialize` request → `initialized` notification → other methods.
@@ -666,7 +760,8 @@ Reproduced on 2026-08-19 against `0.147.0`:
 | **`"jsonrpc": "2.0"` is omitted on the wire.** Requests carry `id`/`method`/`params`; replies carry `id` plus `result` or `error` | documented — *"with the `"jsonrpc":"2.0"` header omitted on the wire"* — and confirmed by the binary |
 | The handshake is enforced | a call before it answers `{"error":{"code":-32600,"message":"Not initialized"},"id":1}` |
 | **`account/read` requires `params`** | omitting it answers `-32600 "Invalid request: missing field \`params\`"`; `{}` is accepted |
-| `account/rateLimits/read` and `account/usage/read` take **no** `params` | schema declares `"params": {"type": "null"}` |
+| `account/rateLimits/read` takes **no** `params` | schema declares `"params": {"type": "null"}` |
+| `account/usage/read` took no `params` at `0.147.0`, and at `0.148.0` takes an **optional** one | superseded by the re-sync — see §3.2. `params` is `anyOf [GetAccountTokenUsageParams, null]` and not `required`, so omitting it is still correct |
 | An **unknown method** is `-32600`, not `-32601`, and **still carries the id** | the envelope fails against a closed enum of method names: `"unknown variant \`account/thisDoesNotExist\`, expected one of …"` |
 | Replies arrive **out of order** | id 4 answered before id 3; id 79 before id 78. Correlation by id is mandatory |
 | Notifications interleave from the first moment | `configWarning` and `remoteControl/status/changed` arrive before anything is asked for |
