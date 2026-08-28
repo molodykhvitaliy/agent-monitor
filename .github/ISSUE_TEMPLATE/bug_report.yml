@@ -1,0 +1,67 @@
+name: Bug report
+description: Something AgentBar does, or fails to do
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Settings › **Diagnostics** › **Copy** produces a plain-text report — the
+        self-test, the endpoint's counters and its last hundred diagnostics. It
+        exists for this form. Paste it below unless the bug is that you cannot
+        open the window.
+
+        For anything security-shaped, use private reporting instead: see
+        [SECURITY.md](../blob/main/SECURITY.md).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: And what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: The smallest sequence that shows it. "Not reliably" is a useful answer — say so rather than guessing.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: AgentBar version
+      description: From Settings, or the tag or commit you built.
+    validations:
+      required: true
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: How did you install it
+      options:
+        - Built from source (make install)
+        - Downloaded the release .zip
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      description: "`sw_vers -productVersion`"
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Which agent
+      multiple: true
+      options:
+        - Claude Code
+        - Codex
+        - Neither / both / not sure
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics report
+      description: Settings › Diagnostics › Copy. Scan it before pasting — it names your project directories.
+      render: text

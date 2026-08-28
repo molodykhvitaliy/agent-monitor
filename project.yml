@@ -26,7 +26,10 @@ configs:
 
 settings:
   base:
-    MARKETING_VERSION: "0.1.0"
+    # Bumped by hand, and asserted against the tag: scripts/build-release.sh
+    # refuses to package when a `v*` tag disagrees with this, because a download
+    # named one version and reporting another is invisible afterwards.
+    MARKETING_VERSION: "0.9.0"
     CURRENT_PROJECT_VERSION: "1"
     MACOSX_DEPLOYMENT_TARGET: "26.0"
 
@@ -41,9 +44,17 @@ settings:
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     CLANG_ENABLE_OBJC_WEAK: YES
 
-    # Ad-hoc signing keeps a clean checkout buildable with no Apple Developer
-    # account, on CI as much as locally. Developer ID signing and the hardened
-    # runtime arrive with step 12.
+    # Ad-hoc signing is the distribution decision, not a placeholder: AgentBar is
+    # given away as source and as an unsigned build, so a clean checkout has to
+    # be buildable with no Apple Developer account — on CI as much as locally
+    # (ADR-0015). Developer ID signing arrives with step 13, and arrives as
+    # secrets rather than as a rewrite: scripts/build-release.sh already has the
+    # branch.
+    #
+    # ENABLE_HARDENED_RUNTIME is deliberately absent. It is a prerequisite for
+    # notarization and buys nothing without it, while adding runtime restrictions
+    # this build has never been tested under. Turning it on belongs with the
+    # certificate that makes it mean something.
     CODE_SIGN_STYLE: Manual
     CODE_SIGN_IDENTITY: "-"
     DEVELOPMENT_TEAM: ""

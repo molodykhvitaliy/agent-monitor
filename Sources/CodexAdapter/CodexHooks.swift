@@ -103,7 +103,7 @@ extension CodexHookHandler {
     /// > ceiling and the relay's total were chosen against each other and their
     /// > sum described as "the worst path", which left the process start-up out
     /// > of a budget whose whole purpose is to fit inside a platform timeout.
-    /// > `CodexHooksTests` asserts this against `sessionEndTimeout`, so the next
+    /// > `HelperBudgetTests` asserts this against `sessionEndTimeout`, so the next
     /// > change to either constant has to answer for the margin rather than
     /// > rediscover it.
     public static var worstCaseHelperRun: Duration {

@@ -14,7 +14,8 @@ violations=0
 
 # Source we author. Package manifests are included deliberately: ADR-0002 relies
 # on no remote HTTP client entering the dependency graph.
-targets=(Sources Tests Apps scripts .github project.yml Package.swift Package.resolved Makefile)
+targets=(Sources Tests Apps scripts .github project.yml Package.swift Package.resolved Makefile
+         CONTRIBUTING.md SECURITY.md)
 existing=()
 for t in "${targets[@]}"; do [ -e "$t" ] && existing+=("$t"); done
 if [ ${#existing[@]} -eq 0 ]; then

@@ -6,7 +6,7 @@ AgentBar is distributed to other people. A mistake here does not earn a warning 
 it gets the accounts of people who trusted us banned. When in doubt, do not ship
 it.
 
-Verification date: 2026-08-19.
+Verification date: 2026-08-28.
 
 ---
 
@@ -181,3 +181,57 @@ Anthropic and the cadence is Codex's:
 the tightest gap belongs to a panel somebody has open, why that gap is a minute
 rather than a second, and why it is **bounded** — an open panel stops asking
 after five minutes, because a window left up is not a person watching it.
+
+**2026-08-28** — re-verified before the first public release, which is the case
+§6 names explicitly. All three sources re-read in full.
+
+The Usage Policy is unchanged, still effective 2025-09-15. The Consumer Terms are
+effective 2025-10-08 and say nothing that reaches this project: their automation
+clause governs *"access the Services through automated or non-human means"* and
+AgentBar accesses the Services not at all, and their credential clause forbids
+sharing an account login, which AgentBar never sees.
+
+`code.claude.com/docs/en/legal-and-compliance` is unchanged in every sentence
+this project already depended on — OAuth "intended exclusively for purchasers …
+and native Anthropic applications", third-party developers told to use API keys
+and forbidden to "route requests through Free, Pro, or Max plan credentials".
+
+**Two passages are new since 2026-08-19, and both matter here.**
+
+The first extends the credential rule:
+
+> Moreover, developers may not collect, store, or intermediate Claude.ai
+> credentials or session tokens — sign-in to a Claude account must complete
+> through Anthropic's own flow.
+
+AgentBar is unaffected: it holds no credential, reads none, and has no sign-in of
+any kind. It is quoted because it is the sentence a future feature would break
+first — anything that proposed to *read* `~/.claude/.credentials.json`, even to
+display a plan name, is now doubly prohibited rather than merely inadvisable. §3
+already forbids it; this is the upstream text that agrees.
+
+The second is about names, and is newly load-bearing because the repository is
+becoming public:
+
+> You can accurately say, in plain text, that your product has Claude Code
+> preinstalled or that it runs Claude Code. But you can't use the Claude Code or
+> Anthropic names or logos as part of your own product, feature, or company name,
+> in your own logo, or in a way that suggests Anthropic built, endorses, or is
+> partnered with your product.
+
+AgentBar complies, and did before the paragraph existed:
+
+- the product name contains no provider name;
+- the README says only what AgentBar observes, in plain text, and now carries an
+  explicit statement that the project is not affiliated with or endorsed by
+  Anthropic or OpenAI;
+- the provider badges are **original generic marks** — a four-point sparkle and a
+  concave star — chosen for exactly this reason and recorded as a trademark
+  decision in `design-system.md` long before this reading;
+- the app icon carries neither provider's figure.
+
+The same restraint is owed to OpenAI, and the README's statement names both.
+
+Nothing about the distribution change — source-first, unsigned, public
+repository — touches the boundary. AgentBar's network surface after it is
+loopback, exactly as before; ADR-0015 adds no request to anybody.

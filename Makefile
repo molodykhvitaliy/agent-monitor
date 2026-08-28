@@ -14,8 +14,12 @@ STRICT := set -euo pipefail;
 
 PROJECT := AgentBar.xcodeproj
 SCHEME  := AgentBar
+# Debug for everyday work. `make release` and `make install` override it, and so
+# can a caller: `make verify-bundle CONFIGURATION=Release` certifies the bundle a
+# release actually ships, which is not the one `make build` produces.
+CONFIGURATION ?= Debug
 XCODEBUILD_FLAGS := -project $(PROJECT) -scheme $(SCHEME) \
-                    -configuration Debug -destination 'platform=macOS'
+                    -configuration $(CONFIGURATION) -destination 'platform=macOS'
 # Directories holding first-party Swift. Kept in one place so the linters and
 # the formatter cannot drift apart on what they cover.
 SWIFT_PATHS := Sources Tests Apps
@@ -123,6 +127,19 @@ verify-bundle: build ## Assert the built app bundle has the layout later steps d
 	  fi; \
 	done; \
 	echo "bundle ok: helper at Contents/MacOS/agentbar-helper, LSUIElement = true, 4 sounds, layered icon"
+
+# The two targets a person installing AgentBar actually runs. Both delegate to a
+# script rather than doing the work here, because `.github/workflows/release.yml`
+# runs the same script: a release built by CI and one built on this machine have
+# to be the same artifact, and two implementations that must agree is the
+# situation this Makefile avoids everywhere else.
+.PHONY: release
+release: ## Build a Release bundle into dist/ and package it for distribution
+	@./scripts/build-release.sh
+
+.PHONY: install
+install: ## Build a Release bundle and install it to /Applications
+	@./scripts/install-local.sh
 
 .PHONY: test
 test: ## Run SPM module tests (no Xcode required)

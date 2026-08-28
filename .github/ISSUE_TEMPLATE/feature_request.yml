@@ -1,0 +1,28 @@
+name: Feature request
+description: Something AgentBar should do
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Three things this project will not do, so you know before writing:
+        it makes no network request to Anthropic or OpenAI, it never approves a
+        permission on your behalf, and it never modifies or wraps either tool.
+        See [CONTRIBUTING.md](../blob/main/CONTRIBUTING.md).
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: The situation, rather than the feature. It is often solvable a way you had not considered.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you have in mind
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you tried or considered instead
