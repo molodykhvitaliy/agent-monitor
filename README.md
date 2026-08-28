@@ -1,7 +1,25 @@
+<div align="center">
+
+<img src="docs/assets/agentbar-icon.png" alt="" width="120" height="120">
+
 # AgentBar
 
-Native macOS menu-bar app for monitoring [Claude Code](https://code.claude.com)
-and [OpenAI Codex](https://learn.chatgpt.com) coding sessions.
+**Know the moment a coding agent needs you.**
+
+A native macOS menu-bar app that watches [Claude Code](https://code.claude.com)
+and [OpenAI Codex](https://learn.chatgpt.com) sessions: live status per project,
+a notification when an agent stops for a human, Codex subscription limits, and a
+Mac that stays awake while work is running.
+
+[![CI](https://github.com/molodykhvitaliy/agent-monitor/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/molodykhvitaliy/agent-monitor/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/molodykhvitaliy/agent-monitor?display_name=tag&label=release&color=2f81f7)](https://github.com/molodykhvitaliy/agent-monitor/releases/latest)
+[![macOS 26+](https://img.shields.io/badge/macOS-26%2B-1b2025?logo=apple&logoColor=white)](#requirements)
+[![Swift 6](https://img.shields.io/badge/Swift-6-f05138?logo=swift&logoColor=white)](Package.swift)
+[![Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-2f81f7)](LICENSE)
+
+<img src="docs/assets/screenshots/panel.png" alt="The AgentBar panel: sessions grouped by project, one Claude Code session working with its current command, one Codex session waiting, and the Codex subscription limits below" width="380">
+
+</div>
 
 > **Open source, built from source.** There is no Apple Developer Program
 > membership behind this project, so there is no signed, notarized download — and
@@ -23,6 +41,8 @@ makes those pauses visible:
 - **Codex subscription limits**, rendered from whatever usage windows the API
   reports.
 - **Caffeine** — keeps the Mac awake while an agent is working.
+- **Quiet Hours** and a **While You're Working** list, so a banner does not arrive
+  in the middle of the night or on top of the app you are presenting from.
 - **Diagnostics** — a self-test and the endpoint's own counters, so a user who
   sees nothing happening can find out why without opening Console.
 
@@ -32,14 +52,36 @@ AgentBar uses the **documented lifecycle hooks** of both tools. Claude Code post
 events to a loopback endpoint directly; Codex invokes a small compiled helper that
 relays them.
 
+```
+Claude Code ──[http hook]────────┐
+                                 ├──► loopback ingest ──► SessionStore ──► UI
+Codex ──[command hook]──► helper ─┘                          │
+                                                             ├──► notifications
+codex app-server ──[JSON-RPC/stdio]──► quota ────────────────┤
+                                                             └──► caffeine
+```
+
 It is a strictly additive layer. If AgentBar is not running, has crashed, or is
 uninstalled, **both tools behave exactly as if it never existed.**
 
-## Install
+## Requirements
 
-You need macOS 26 or later, **Xcode** (not just the command-line tools — the
-build compiles a layered app icon with `actool`), and [Homebrew](https://brew.sh),
-which `make bootstrap` uses to install the three tools it needs.
+| | |
+|---|---|
+| macOS | 26 or later |
+| Build | **Xcode** — not just the command-line tools; the build compiles a layered app icon with `actool` |
+| Tooling | [Homebrew](https://brew.sh), which `make bootstrap` uses to install xcodegen, swiftlint and xcbeautify |
+| Apple account | none — the build signs ad-hoc |
+| Agents | Claude Code, Codex, or both — hooks are installed for each, and a tool you do not run simply never calls them |
+
+The platform facts AgentBar depends on are verified against primary sources and
+recorded with a date in
+[docs/dev/platform-integration.md](docs/dev/platform-integration.md). The
+versions they were last checked against are pinned in
+[`.github/verified-versions.json`](.github/verified-versions.json), and a weekly
+workflow opens an issue when either tool moves past them.
+
+## Install
 
 ```bash
 git clone https://github.com/molodykhvitaliy/agent-monitor.git
@@ -106,6 +148,31 @@ Clearing quarantine is you deciding to trust a binary a stranger built. Building
 from source means you do not have to: it is the same application, from source you
 can read, and it never acquires the attribute in the first place.
 
+## Settings
+
+<img src="docs/assets/screenshots/notifications.png" alt="The Notifications settings section: a live preview of the menu bar and a banner, then a matrix of event types by provider, each with its own Notify switch and sound" width="880">
+
+The window opens onto a **live preview** of the menu bar and a banner as your
+current settings would produce them, so a toggle does not have to be imagined.
+Below it, every event type gets its own row and every provider its own column:
+what to notify about, and which sound, per pair.
+
+The rest of the sidebar is **Quiet Hours**, the **While You're Working**
+application list, **Sounds** — an authored pack, plus any `.aiff`, `.wav` or
+`.caf` you add — **Caffeine**, **General** for launch at login, **Diagnostics**,
+and **Remove AgentBar**.
+
+### When nothing seems to be happening
+
+<img src="docs/assets/screenshots/diagnostics.png" alt="The Diagnostics settings section: a self-test reporting the loopback endpoint, both hook integrations, the helper, notification permission and the wake assertion, followed by the endpoint's delivery counters and the recent deliveries it logged" width="880">
+
+AgentBar answers **every** hook with success whatever happens, because a hook that
+fails is a hook that can stall the agent that called it. The cost of that promise
+is that a payload it could not read is invisible to the agent — so Diagnostics is
+where it becomes visible instead: a self-test over every integration, the
+endpoint's own counters, this process's resource use, and the last hundred
+deliveries it saw.
+
 ## Removing it
 
 Settings › **Remove AgentBar** takes the hooks back out of
@@ -158,6 +225,7 @@ The Xcode project is generated from `project.yml` and is not committed.
 | [docs/dev/build.md](docs/dev/build.md) | build system, toolchain, bundle layout, distribution |
 | [docs/dev/platform-integration.md](docs/dev/platform-integration.md) | verified platform facts |
 | [docs/dev/tos-boundary.md](docs/dev/tos-boundary.md) | hard project limits |
+| [docs/dev/design-system.md](docs/dev/design-system.md) · [design-spec.md](docs/dev/design-spec.md) | tokens, and every surface and state |
 | [docs/adr/](docs/adr/) | architecture decision records |
 
 ## Affiliation
