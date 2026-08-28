@@ -15,6 +15,8 @@ against.
 make bootstrap      # brew install xcodegen swiftlint xcbeautify, then generate
 make build          # xcodebuild the app bundle
 make verify-bundle  # build, then assert the resulting bundle's layout
+make release        # Release build into dist/, packaged and checksummed
+make install        # Release build, then place it in /Applications
 make test           # swift test — no Xcode needed
 make timing-proofs  # verify-bundle, then the stopwatch suites run alone
 make lint           # swiftlint --strict, then swift-format lint --strict
@@ -231,6 +233,12 @@ drives it directly from a table.
 
 ## Toolchain
 
+**What a clean machine needs.** macOS 26 or later, **Xcode** — not just the
+command-line tools, because `actool` compiles the layered app icon and
+`xcodebuild` builds a scheme — and Homebrew, which `make bootstrap` uses to
+install xcodegen, swiftlint and xcbeautify. Nothing else, and no Apple Developer
+account: that is what `CODE_SIGN_IDENTITY = "-"` is protecting.
+
 **Strict concurrency needs no opt-in.** `Package.swift` declares
 `swiftLanguageModes: [.v6]`, and Xcode derives `SWIFT_STRICT_CONCURRENCY =
 complete` from `SWIFT_VERSION = 6.0`. Both are stated explicitly anyway so the
@@ -285,8 +293,138 @@ installer edits `~/.claude/settings.json` and `~/.codex/hooks.json` — which th
 sandbox forbids, and which is why the Mac App Store is a stated non-goal.
 
 Local and CI builds sign ad-hoc (`CODE_SIGN_IDENTITY = "-"`), so a clean
-checkout builds with no Apple Developer account. Developer ID signing, the
-hardened runtime and notarization arrive with step 12.
+checkout builds with no Apple Developer account. That is the shipping
+configuration, not a placeholder: there is no membership, so there is no
+Developer ID signing, no hardened runtime and no notarization
+([ADR-0015](../adr/ADR-0015-distribution-is-source-first-until-a-developer-id-exists.md)).
+See *Distribution* below.
+
+## Distribution
+
+AgentBar is given away as **source**, with an unsigned build as a convenience.
+There is no Apple Developer Program membership, so a Developer ID certificate,
+notarization and everything downstream of them — Sparkle, a Homebrew Cask, a
+Gatekeeper-clean download — are unavailable, not deferred by choice
+([ADR-0015](../adr/ADR-0015-distribution-is-source-first-until-a-developer-id-exists.md)).
+
+```bash
+make release   # dist/AgentBar.app, AgentBar-<version>.zip, and its .sha256
+make install   # the same build, placed in /Applications
+```
+
+Both call a script rather than doing the work in the recipe, because
+`.github/workflows/release.yml` calls the same script: an artifact a contributor
+can reproduce locally is the only thing that makes an unsigned download checkable
+at all.
+
+`scripts/build-release.sh` runs `make verify-bundle CONFIGURATION=Release` first.
+That check had only ever certified Debug — the `CONFIGURATION` variable exists so
+the bundle that actually ships goes through the layout assertions every earlier
+step leaned on. It then packages with `ditto -c -k --sequesterRsrc --keepParent`,
+never `zip -r`: an app bundle's signature is computed over symlinks, resource
+forks and extended attributes that `zip` discards.
+
+> **`--sequesterRsrc` is load-bearing, and for the opposite of the obvious
+> reason.** It parks bundle metadata in a `__MACOSX` directory, which looks like
+> clutter — so dropping it is tempting. Measured both ways on the real artifact:
+>
+> | Packaging | Extracted with plain `unzip` |
+> |---|---|
+> | `ditto -c -k --keepParent` | **`a sealed resource is missing or invalid`** |
+> | `ditto -c -k --sequesterRsrc --keepParent` | valid |
+>
+> Recipients use `unzip` or Finder, not `ditto -x -k`. The flag is what makes the
+> instruction in the README and the release notes actually work; without it, the
+> first thing a downloader would meet is a bundle macOS calls damaged.
+
+The Release product is a **universal binary** (`x86_64 arm64`, both the app and
+the helper) — 18 MB installed, 6.5 MB compressed.
+
+**The tag and the version must agree.** `build-release.sh` compares
+`GITHUB_REF_NAME` against `MARKETING_VERSION` and refuses to package a
+disagreement. A download named one version and reporting another from Diagnostics
+is invisible once it is in someone's hands.
+
+### What the signature is, and is not
+
+Measured on the produced bundle, not recalled:
+
+```
+$ codesign -dv dist/AgentBar.app
+Format=app bundle with Mach-O universal (x86_64 arm64)
+Signature=adhoc
+TeamIdentifier=not set
+
+$ codesign --verify --strict --deep dist/AgentBar.app
+dist/AgentBar.app: valid on disk
+dist/AgentBar.app: satisfies its Designated Requirement
+
+$ spctl --assess --type execute -vvv dist/AgentBar.app
+dist/AgentBar.app: rejected                      # exit 3
+```
+
+The seal is intact; there is simply no identity behind it. `codesign --verify` is
+still worth running — it is the only check that would catch a packaging step
+corrupting the signature — but it says nothing about provenance.
+
+Apple's own `syspolicy_check distribution` puts it exactly right:
+
+> **Adhoc Signed App** — *Severity: Warning.* This app is adhoc signed. While it
+> may run locally, adhoc signed apps are not suitable for distribution.
+>
+> **Notary Ticket Missing** — *Severity: Fatal.*
+
+"May run locally" is the entire distribution strategy.
+
+### Quarantine
+
+`spctl` rejects the bundle whether or not it is quarantined — but Gatekeeper only
+*enforces* on files carrying `com.apple.quarantine`, and that attribute is
+applied by whatever downloads a file, never by the build. So:
+
+- **A locally built bundle has no quarantine attribute** and is never assessed.
+  Verified: `xattr dist/AgentBar.app` lists only `com.apple.provenance` and
+  `com.apple.macl`.
+- **A downloaded one carries it on every file inside the bundle.** Verified by
+  quarantining `AgentBar-0.9.0.zip` and expanding it with `ditto -x -k`: the
+  attribute lands on **16 paths** — the bundle root, `Contents`, both
+  executables, `_CodeSignature`, every resource.
+
+Which is why the documented removal is recursive:
+
+```bash
+xattr -d -r com.apple.quarantine /Applications/AgentBar.app
+```
+
+That clears all sixteen and the signature survives it —
+`codesign --verify --strict --deep` still reports the bundle valid afterwards,
+which is worth knowing because removing extended attributes from a signed bundle
+sounds like it should not be safe.
+
+> **`-r` is not universal.** `/usr/bin/xattr` on macOS 27 supports it. A
+> `pip`-installed `xattr` earlier in `PATH` does not, and fails with `option -r
+> not recognized` — which looks like the command being wrong rather than the
+> binary being the wrong one. The README says so, because this happened on the
+> development machine.
+
+### Versioning
+
+`MARKETING_VERSION` (`CFBundleShortVersionString`) and `CURRENT_PROJECT_VERSION`
+(`CFBundleVersion`) both live in `project.yml` and are bumped by hand. A release
+is a `v<MARKETING_VERSION>` tag; the guard above keeps the two from drifting.
+`0.9.0` is the first public version — deliberately not `1.0.0`, because step 11's
+own bar is seven consecutive days of ordinary use and that week has not been run.
+
+### What a Developer ID would change
+
+Step 13, blocked on the membership. The pipeline is already shaped for it:
+`scripts/build-release.sh` has the signing branch, `release.yml` detects the
+secrets and imports a keychain, and `scripts/notarize.sh` **fails rather than
+no-ops** if it is ever reached — publishing something signed but unnotarized
+would look to a reader as though it had been through a process it had not.
+
+The branch has never executed. There is no certificate to test it with, and
+saying so is more useful than the code looking finished.
 
 ## Two things a clean checkout cannot rebuild
 
@@ -310,6 +448,13 @@ strings reach no tool; and a catalogue added to `AgentBarUI` will need
 against `Bundle.main`.
 
 ## Continuous integration
+
+CI spends macOS minutes carefully, and the reason it was written that way — a
+private repository bills them at 10× — stops applying the day the repository goes
+public. The frugality is kept anyway: the Linux guard job that runs the policy
+checks first is faster feedback regardless of price, and a doc-only change that
+skips a 25-minute macOS job is a better contributor experience than one that does
+not.
 
 `macos-26` is pinned rather than `macos-latest`. Per the published
 `actions/runner-images` manifest — read, not observed, since CI has not run yet

@@ -107,6 +107,8 @@ The Xcode project is **generated** from `project.yml` and is not committed.
 ```bash
 make bootstrap    # install xcodegen, generate the project
 make build        # build the app
+make release      # Release build into dist/, packaged and checksummed
+make install      # Release build, then place it in /Applications
 make test         # SPM tests, no Xcode needed
 make timing-proofs # the stopwatch suites, run alone — the CI-only tail gate
 make lint         # swiftlint --strict, then swift-format lint --strict
@@ -118,8 +120,14 @@ make check        # lint + test + tos-check + generated models — before every 
 
 Never edit a generated `.xcodeproj`. Change `project.yml` and regenerate.
 
-Module layout, toolchain settings, bundle layout and CI pinning are documented in
-[docs/dev/build.md](docs/dev/build.md).
+Module layout, toolchain settings, bundle layout, distribution and CI pinning are
+documented in [docs/dev/build.md](docs/dev/build.md).
+
+**AgentBar is distributed as source with an unsigned build**, because there is no
+Apple Developer Program membership — see
+[ADR-0015](docs/adr/ADR-0015-distribution-is-source-first-until-a-developer-id-exists.md).
+Signing, notarization, Sparkle and Homebrew belong to a deferred step 13. Do not
+add a promise of a signed release to any document.
 
 ## Platform targets
 
@@ -161,9 +169,14 @@ is **peaceful coexistence**: detect and report the overlap, change nothing.
 
 ## Working process
 
-`.scratch/` is local-only and never committed. The initiative plan lives in
-`.scratch/plan/agentbar/MASTER-PLAN.md`; execute one step at a time with the
-`step-execution` skill and keep `.scratch/handoff/agentbar/CURRENT.md` fresh.
+`.scratch/` is local-only and never committed, so **it is not in your clone and
+you do not need it** — the paths below exist only on the maintainer's machine and
+are named here so the workflow they describe is legible, not so you go looking.
+Contributors want [CONTRIBUTING.md](CONTRIBUTING.md) instead.
+
+The initiative plan lives in `.scratch/plan/agentbar/MASTER-PLAN.md`; execute one
+step at a time with the `step-execution` skill and keep
+`.scratch/handoff/agentbar/CURRENT.md` fresh.
 
 Before touching a provider adapter, installer or quota code, invoke the
 `platform-docs` skill. Remembered platform details are unreliable — the original

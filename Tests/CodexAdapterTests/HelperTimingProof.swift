@@ -162,12 +162,12 @@ struct HelperTimingProof {
         #expect(result.errorOutput.isEmpty)
     }
 
-    /// The drain is bounded by `StandardInput.defaultCeiling` — 400 ms total,
+    /// The drain is bounded by `StandardInput.defaultCeiling` — 300 ms total,
     /// which the quiet period cannot extend — so this test is coupled to the
     /// wall clock whether it means to be or not: a drain that timed out would
     /// hand the writer `EPIPE` and fail the two assertions below for the
     /// machine's reasons. Measured over five isolated runs it takes **7-10 ms**
-    /// for the whole 8 MB, roughly forty times inside that ceiling.
+    /// for the whole 8 MB, thirty to forty times inside that ceiling.
     ///
     /// The 93-105 ms that `CodexHelperRelay` records for 4 MB is the *same*
     /// drain, and the variable is load rather than the path: the same note gives

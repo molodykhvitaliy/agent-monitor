@@ -886,8 +886,11 @@ and select a provisioning profile in the Signing & Capabilities editor.
 
 That would cost a clean checkout its ability to build with no Apple Developer
 account, which is what `CODE_SIGN_IDENTITY = "-"` exists to protect (ADR-0003).
-The entitlement is therefore **deliberately absent** and belongs to step 12,
-which introduces Developer ID signing.
+The entitlement is therefore **deliberately absent** and belongs to step 13,
+which introduces Developer ID signing — and which is blocked on an Apple
+Developer Program membership this project does not have, so the entitlement is
+out of reach rather than merely deferred
+([ADR-0015](../adr/ADR-0015-distribution-is-source-first-until-a-developer-id-exists.md)).
 
 The notifications still set `interruptionLevel = .timeSensitive`. An unentitled
 app has the level silently downgraded to `.active`, so nothing is lost but the
@@ -916,7 +919,9 @@ prompt on first launch. What matters is where the app is when it first asks.
 Consequences, all of them acted on:
 
 - **Never run AgentBar straight out of `DerivedData`** if it will ever need
-  notifications. `make build && cp -R … /Applications/` first.
+  notifications. `make install` first — it builds Release and places the bundle
+  in `/Applications` with `ditto`, which is the whole reason that target is a
+  script rather than a sentence in the README.
 - The settings window shows the authorisation state and offers **Open System
   Settings** when the answer is `denied`, because a refusal cannot be re-prompted
   from inside the app.

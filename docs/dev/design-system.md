@@ -420,7 +420,9 @@ edges, and a mark has to have one answer.
 
 Build the shipping icon in **Icon Composer** (macOS 26's layered `.icon` format)
 from this SVG, not as a flat PNG, so the system applies its own depth treatment.
-Step 12 owns that.
+`Apps/AgentBar/AgentBar.icon` is that document, and `make verify-bundle` asserts
+its `network` and `apex` layers reach `Assets.car` — a layered icon can compile
+to a tile with no mark on it, and only the layers say so.
 
 ---
 
