@@ -123,6 +123,8 @@ struct AccountDecodingTests {
     @Test("A plan this build has never heard of keeps its name")
     func toleratesAnUnknownPlan() {
         #expect(PlanType(rawValue: "plus") == .plus)
+        #expect(PlanType(rawValue: "edu_plus") == .eduPlus)
+        #expect(PlanType(rawValue: "edu_pro") == .eduPro)
         #expect(PlanType(rawValue: "not_a_plan") == .unrecognised("not_a_plan"))
         // `unknown` is a value the server sends; `unrecognised` is one we did
         // not recognise. Collapsing them would lose the difference.

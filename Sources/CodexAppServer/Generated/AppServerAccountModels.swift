@@ -9,6 +9,9 @@
 //
 // Fields the generator deliberately omits:
 //   ChatgptAccount.email — AgentBar never holds the account's identity.
+//   GetAccountRateLimitsResponse.accountId — AgentBar never holds the account's identity.
+//   GetAccountRateLimitsResponse.rateLimitUpsell — AgentBar does not render backend-owned
+//     upsell content.
 //   GetAccountTokenUsageResponse.threadUsage — AgentBar shows what is left, never what was
 //     spent.
 
@@ -213,6 +216,8 @@ public enum PlanType: Sendable, Hashable, Decodable {
     case enterpriseCbpUsageBased
     case enterprise
     case edu
+    case eduPlus
+    case eduPro
     case unknown
     /// A value this build has never heard of. Schema drift degrades to a
     /// name the interface can still show, never to a decoding failure.
@@ -234,6 +239,8 @@ public enum PlanType: Sendable, Hashable, Decodable {
         case "enterprise_cbp_usage_based": self = .enterpriseCbpUsageBased
         case "enterprise": self = .enterprise
         case "edu": self = .edu
+        case "edu_plus": self = .eduPlus
+        case "edu_pro": self = .eduPro
         case "unknown": self = .unknown
         default: self = .unrecognised(rawValue)
         }
@@ -255,6 +262,8 @@ public enum PlanType: Sendable, Hashable, Decodable {
         case .enterpriseCbpUsageBased: "enterprise_cbp_usage_based"
         case .enterprise: "enterprise"
         case .edu: "edu"
+        case .eduPlus: "edu_plus"
+        case .eduPro: "edu_pro"
         case .unknown: "unknown"
         case .unrecognised(let value): value
         }
@@ -598,6 +607,9 @@ public struct GetAccountResponse: Sendable, Hashable, Decodable {
     }
 }
 
+/// `accountId` is deliberately not decoded — AgentBar never holds the account's identity.
+/// `rateLimitUpsell` is deliberately not decoded — AgentBar does not render backend-owned
+/// upsell content.
 public struct GetAccountRateLimitsResponse: Sendable, Hashable, Decodable {
     public let rateLimitResetCredits: RateLimitResetCreditsSummary?
     /// Backward-compatible single-bucket view; mirrors the historical payload.

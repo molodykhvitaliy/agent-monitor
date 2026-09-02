@@ -85,6 +85,13 @@ struct RateLimitMappingTests {
         #expect(
             response.rateLimits.rateLimitReachedType
                 == .unrecognised("something_nobody_has_shipped_yet"))
+        let topLevelFields = Mirror(reflecting: response).children.compactMap(\.label)
+        #expect(
+            topLevelFields == ["rateLimitResetCredits", "rateLimits", "rateLimitsByLimitId"],
+            "account identity and backend-owned upsell content must not be decoded")
+        let described = String(describing: response)
+        #expect(!described.contains("acct_must_not_survive_decoding"))
+        #expect(!described.contains("Backend-owned presentation"))
         // Two of the three map entries are unreadable — one has no `usedPercent`,
         // one is not an object at all — and they cost only themselves.
         let windows = RateLimitMapping.windows(from: response)

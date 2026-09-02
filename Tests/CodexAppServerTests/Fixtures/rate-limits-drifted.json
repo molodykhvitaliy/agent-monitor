@@ -1,4 +1,9 @@
 {
+  "accountId": "acct_must_not_survive_decoding",
+  "rateLimitUpsell": {
+    "headline": "Backend-owned presentation must not reach AgentBar",
+    "cta_url": "https://example.invalid/upsell"
+  },
   "rateLimits": {
     "limitId": "codex",
     "limitName": null,

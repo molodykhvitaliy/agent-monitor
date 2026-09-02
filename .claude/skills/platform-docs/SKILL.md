@@ -78,9 +78,12 @@ A stale GitHub issue does not override documented behaviour.
 
 Do not reintroduce these — they were wrong in the original spec draft:
 
-- Claude Code `PermissionRequest` returns `decision` as a **string**
-  (`allow|deny|escalate`) with `reason`. The nested
-  `{ behavior, updatedInput }` object is the **Codex** shape.
+- Claude Code `PermissionRequest` currently returns a nested `decision` object
+  with `behavior: allow|deny`; allow may carry `updatedInput` and
+  `updatedPermissions`, while deny may carry `message` and `interrupt`. This
+  supersedes the string format recorded during the 2026-08-28 verification.
+  Codex also uses a nested decision object, but its optional fields must be
+  verified separately.
 - Claude Code `PermissionRequest` **cannot block**; exit code 2 is ignored.
 - There is no top-level `worktree` field in the Claude Code hook payload.
 - Codex `SessionEnd` hooks are capped at 1s (3s max), not 600s.

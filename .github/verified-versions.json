@@ -1,8 +1,8 @@
 {
   "_comment": "Tool versions the docs/dev/platform-integration.md facts were verified against. The version-watch workflow opens an issue when upstream moves past these. Bump only together with a re-verification via the platform-docs skill.",
-  "verifiedOn": "2026-08-28",
+  "verifiedOn": "2026-09-02",
   "tools": {
-    "@anthropic-ai/claude-code": "2.1.241",
-    "@openai/codex": "0.148.0"
+    "@anthropic-ai/claude-code": "2.1.258",
+    "@openai/codex": "0.152.1"
   }
 }
