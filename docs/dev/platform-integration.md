@@ -9,11 +9,12 @@ references; §3 re-synced from the shipped App Server schema)
 > **What the 2026-09-02 re-check covered.** The hook events, payload fields,
 > handler semantics, matchers and timeouts AgentBar depends on still hold. The
 > reference pages gained additional lifecycle surface that AgentBar does not
-> subscribe to; none of the nine installed Codex handlers or the Claude HTTP
-> handlers needs to change. The App Server schema did move (§3.2): the two
-> account-limit roots gained new plan values and optional backend-owned fields.
-> Generated models were refreshed while continuing to decline account identity
-> and upsell content.
+> subscribe to. Claude's documented `PermissionRequest` output changed from a
+> string decision to a nested decision object (§1.4); that event remains reserved
+> for the Approve/Deny backlog, so none of the installed handlers needs to change.
+> The App Server schema did move (§3.2): the two account-limit roots gained new
+> plan values and optional backend-owned fields. Generated models were refreshed
+> while continuing to decline account identity and upsell content.
 
 > **Precedence rule.** Official platform documentation wins over this file, and
 > this file wins over the original `.scratch/notes/INITIAL_SPEC.md`. Every claim
@@ -122,7 +123,7 @@ Per-event fields, all verified against recorded payloads unless marked:
 
 | Event | Extra fields |
 |---|---|
-| `SessionStart` | `source`, `model` (optional), `agent_type`, `session_title` |
+| `SessionStart` | `source`; optional `model`, `agent_type`, `session_title`; on `resume`/`fork` when the transcript contains a prior Claude response, `seconds_since_last_response`, `context_tokens`, `prompt_cache_likely_expired`, `estimated_cache_write_usd` (2.1.251+) |
 | `UserPromptSubmit` | `prompt` |
 | `PreToolUse` | `tool_name`, `tool_input`, `tool_use_id` |
 | `PostToolUse` | the above plus `tool_response`, `duration_ms` |
@@ -162,25 +163,32 @@ a shape change makes the row less informative, never broken.
 > whole signal; attributing a worktree to its repository needs git metadata and
 > therefore a `ProjectResolving` that is allowed to read the disk.
 
-### 1.4 PermissionRequest decision format — corrected
+### 1.4 PermissionRequest decision format — changed again
 
-The documented Claude Code format is a **string** decision:
+The current Claude Code format is a **nested object**:
 
 ```json
 {
   "hookSpecificOutput": {
     "hookEventName": "PermissionRequest",
-    "decision": "allow",
-    "reason": "approved from AgentBar"
+    "decision": {
+      "behavior": "allow",
+      "updatedInput": { "command": "npm run lint" }
+    }
   }
 }
 ```
 
-`decision` ∈ `allow | deny | escalate`.
+`behavior` is `allow | deny`. An allow decision may also carry
+`updatedInput` and `updatedPermissions`; a deny decision may carry `message`
+and `interrupt`.
 
-> **The spec draft was wrong here.** It documented
-> `"decision": { "behavior": "allow", "updatedInput": {...} }` — that is the
-> **Codex** shape (§2.4), not Claude Code's. Do not mix them up.
+> **This supersedes the format recorded on 2026-08-28.** The reference then
+> documented a string `decision` with `allow | deny | escalate`. The current
+> `2.1.258` reference gives Claude and Codex the same outer
+> `decision.behavior` shape, but their event-specific optional fields are not
+> interchangeable. Re-read both references before implementing the Approve/Deny
+> backlog.
 
 Also documented and important for the backlog item:
 
