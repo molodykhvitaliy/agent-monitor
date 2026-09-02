@@ -2,20 +2,18 @@
 
 Verified facts about the extension surfaces AgentBar builds on.
 
-**Verification date:** 2026-08-28 (§1 re-verified in full while building step 04;
-`AskUserQuestion`'s `tool_input` shape added 2026-08-19 for step 06; §2
-re-verified against the hook reference and local payloads on 2026-08-26; **§3
-re-verified in full on 2026-08-19 while building step 10**; §1 and §2 re-checked
-against the current hook references on 2026-08-28 and §3's schema re-synced the
-same day, closing the platform-drift issue)
-**Verified against:** Claude Code `2.1.241`, Codex CLI `0.148.0`, macOS `27.0`
+**Verification date:** 2026-09-02 (§1 and §2 re-read against the current hook
+references; §3 re-synced from the shipped App Server schema)
+**Verified against:** Claude Code `2.1.258`, Codex CLI `0.152.1`, macOS `27.0`
 
-> **What the 2026-08-28 re-check covered.** Every claim §1 and §2 make about the
-> events, payload fields, handler semantics, matchers and timeouts AgentBar
-> depends on was read again from the source pages. All of them held. Three things
-> had moved and are folded in below: the Notification matcher table grew (§1.7),
-> Codex now executes `mcp_tool` handlers as well as `command` ones (§2.2), and
-> the App Server schema drifted additively (§3.2). Nothing required a code change.
+> **What the 2026-09-02 re-check covered.** The hook events, payload fields,
+> handler semantics, matchers and timeouts AgentBar depends on still hold. The
+> reference pages gained additional lifecycle surface that AgentBar does not
+> subscribe to; none of the nine installed Codex handlers or the Claude HTTP
+> handlers needs to change. The App Server schema did move (§3.2): the two
+> account-limit roots gained new plan values and optional backend-owned fields.
+> Generated models were refreshed while continuing to decline account identity
+> and upsell content.
 
 > **Precedence rule.** Official platform documentation wins over this file, and
 > this file wins over the original `.scratch/notes/INITIAL_SPEC.md`. Every claim
@@ -27,10 +25,9 @@ same day, closing the platform-drift issue)
 
 ## 1. Claude Code hooks
 
-Source: <https://code.claude.com/docs/en/hooks> — re-read in full on 2026-08-18
-while building the adapter. Several claims in the previous version of this
-section were wrong; they are corrected below and the wrong ones are named so
-they do not come back.
+Source: <https://code.claude.com/docs/en/hooks> — re-read in full on 2026-09-02.
+Several claims in an early version of this section were wrong; they are
+corrected below and the wrong ones are named so they do not come back.
 
 ### 1.1 Handler types
 
@@ -363,7 +360,7 @@ that was refused. A refused call stays open until the turn ends, where
 
 ## 2. Codex hooks
 
-Source: <https://learn.chatgpt.com/docs/hooks>
+Source: <https://learn.chatgpt.com/docs/hooks> — re-read in full on 2026-09-02.
 
 > **The documentation moved.** `developers.openai.com/codex/*` now 308-redirects
 > to `learn.chatgpt.com/docs/*`. The URLs in the original spec draft are stale;
@@ -684,8 +681,8 @@ change cannot reach a release with stale models behind it.
 
 Only three roots are generated — `GetAccountResponse`,
 `GetAccountRateLimitsResponse`, `GetAccountTokenUsageResponse` — together with
-the definitions those three can reach. `schemas/appserver/v2` holds 249 per-file
-roots at Codex `0.148.0`, and the rest have no owner here.
+the definitions those three can reach. `schemas/appserver/v2` holds 263 per-file
+roots at Codex `0.152.1`, and the rest have no owner here.
 
 **`schema-sync.sh` was broken until 2026-08-19** and had been since it was
 written: it ran `diff -ruq`, and BSD `diff` rejects `-u` together with `-q`
@@ -706,8 +703,11 @@ account/login/start, account/login/cancel, account/logout
 account/workspaceMessages/read
 ```
 
-95 methods total. Transports: stdio (default),
+At `0.148.0`, 95 methods total. Transports: stdio (default),
 `--listen ws://127.0.0.1:PORT`, `--listen unix://`.
+
+At `0.152.1` the total is 98 methods: `thread/items/list`, `thread/turns/list`
+and `thread/revert` were added. They are outside AgentBar's account-limits use.
 
 **Re-synced against `0.148.0` on 2026-08-28.** The schema moved, and every part
 of the move is either additive or outside what AgentBar reads. Recorded here so
@@ -742,6 +742,21 @@ the next sync compares against a known baseline rather than a memory:
 - `GetAccountResponse`, the third generated root, is **unchanged**, as is
   `GetAccountRateLimitsResponse`. Stated rather than implied: "not in the diff"
   is only evidence if somebody wrote down that they looked.
+
+**Re-synced against `0.152.1` on 2026-09-02.** The schema grew from 249 to 263
+v2 roots. Most changes are additive thread, realtime, project, auth-recovery,
+MCP-status, review and computer-use surfaces outside this module. The changes
+that reach AgentBar's generated account models are:
+
+- `PlanType` gained `edu_plus` and `edu_pro`; both are now generated as explicit
+  forward-compatible enum cases.
+- `GetAccountRateLimitsResponse` gained optional `accountId` and
+  `rateLimitUpsell`. AgentBar deliberately decodes neither. `accountId` is
+  account identity, which this app never holds; `rateLimitUpsell` is opaque,
+  backend-owned presentation content, while AgentBar renders only measured
+  quota state. Closed `CodingKeys` therefore make both additions harmless.
+- `GetAccountTokenUsageResponse` did not change. No adapter or request-contract
+  change was required.
 
 A drift that only adds optional fields is invisible to these models by
 construction: each generated type decodes a closed `CodingKeys` list, so an

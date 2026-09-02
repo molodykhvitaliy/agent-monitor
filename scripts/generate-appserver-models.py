@@ -43,6 +43,12 @@ ROOTS = [
 # records that we decline it.
 SUPPRESSED_FIELDS = {
     "ChatgptAccount.email": "AgentBar never holds the account's identity.",
+    "GetAccountRateLimitsResponse.accountId": (
+        "AgentBar never holds the account's identity."
+    ),
+    "GetAccountRateLimitsResponse.rateLimitUpsell": (
+        "AgentBar does not render backend-owned upsell content."
+    ),
     "GetAccountTokenUsageResponse.threadUsage": (
         "AgentBar shows what is left, never what was spent."
     ),
